@@ -7,9 +7,9 @@ import type { JsonSchema } from '../llm/provider.ts';
 import type { Template } from '../render/render.ts';
 import { TEXT_SIZES, effectiveSlots, itemCount, itemRange } from '../template/manifest.ts';
 import type { Direction, PatternDef, TextSize } from '../template/manifest.ts';
-import { buildCatalog, describeCatalog, planPattern, readItems } from './catalog.ts';
+import { budgetScale, buildCatalog, describeCatalog, planPattern, readItems } from './catalog.ts';
 import type { CatalogContext, ImageDensity } from './catalog.ts';
-import { PlanError, asker, directionOf, hasFigures } from './plan.ts';
+import { PlanError, SLIDE_KIND_RULE, asker, directionOf, hasFigures, planRoom } from './plan.ts';
 import type { PlanOptions } from './plan.ts';
 import { cleanText, suppliesText, systemPrompt, writeSlides } from './write.ts';
 import type { WriteJob } from './write.ts';
@@ -155,6 +155,7 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
     imageDensity: options.imageDensity ?? 'medium',
     figures,
     textScale: deck.textScale ?? 1,
+    templateScale: manifest.textScale ?? 1,
   };
   const currentSize = (Object.entries(TEXT_SIZES).find(([, factor]) => factor === context.textScale)?.[0] ?? 'normal') as TextSize;
   if (options.patterns) context.allow = options.patterns;
@@ -180,11 +181,12 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
       'Return the slides of the deck after the change, in their new order.',
       '- from: the number of the existing slide a slide is based on, or 0 for a new slide. Leave a slide out to delete it.',
       '- pattern: keep the pattern of an existing slide unless the request calls for a different layout.',
+      `  ${SLIDE_KIND_RULE}`,
       '- change: what to write or change on that slide. Leave it empty for every slide the request does not touch.',
       '- images: true only when the pictures or icons of that slide should change.',
       '- items: for a pattern with a row of items, the number the slide has after the change.',
     ].join('\n'),
-    offer.patterns.length > 0 ? `Patterns for new slides ("?" marks an optional slot):\n${describeCatalog(offer, context.textScale)}` : '',
+    offer.patterns.length > 0 ? `Patterns for new slides ("?" marks an optional slot):\n${describeCatalog(offer, budgetScale(context))}` : '',
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -237,10 +239,12 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
 
   const mostItems = Math.max(0, ...patternIds.map((id) => itemRange(definitions.get(id) as PatternDef)).map((range) => (range && range.max > range.min ? range.max : 0)));
   const planSchema = editPlanSchema(patternIds, deck.slides.length, fieldNames, mostItems);
-  let plan = readPlan(await asker(options.llm, systemPrompt(currentLanguage, 'deck'), options.signal)(planRequest, planSchema));
+  // The edit plan says a little more for each slide than an outline does, and may add slides.
+  const room = planRoom(deck.slides.length + 10) * 1.5;
+  let plan = readPlan(await asker(options.llm, systemPrompt(currentLanguage, 'deck'), options.signal, 'low')(planRequest, planSchema, room));
   if (plan.problem) {
     const retry = `${planRequest}\n\nYour previous answer could not be used: ${plan.problem}. Answer again.`;
-    plan = readPlan(await asker(options.llm, systemPrompt(currentLanguage, 'deck'), options.signal)(retry, planSchema));
+    plan = readPlan(await asker(options.llm, systemPrompt(currentLanguage, 'deck'), options.signal, 'low')(retry, planSchema, room));
     if (plan.problem) throw new PlanError(`The model did not produce a usable edit plan: ${plan.problem}`);
   }
 

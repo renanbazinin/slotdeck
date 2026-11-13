@@ -58,6 +58,7 @@ These do not stop rendering. `renderDeck` and the planner return them.
 | --- | --- | --- |
 | `No pattern of template "x" can be used: ...` | Nothing in the manifest can be filled with what was supplied. The reasons follow. | See the reasons below. |
 | `The model did not produce a usable outline: ...` | The model's answer did not have the expected shape. | Retry. If it repeats, check that your provider returns parsed JSON that follows the schema. |
+| `Template "x" has no plain text pattern, so a text-only deck cannot be planned from it` | `textOnly` was asked for, and no pattern of the manifest is plain text. | Add a plain text pattern to the manifest (see [layout-freedom.md](layout-freedom.md)), or plan without `textOnly`. |
 | `The plan uses patterns that cannot be filled with what was supplied: a, b` | A plan was made with icons, assets or fields that are not passed now. | Pass the same `icons`, `assets`, `fields` and `layout` to every step. |
 | `Slide 3: pattern "x" needs icons, and no icon set was supplied` | The same, for an edit. | As above. |
 
@@ -129,6 +130,10 @@ Plain `Error`s from `renderDeck`. They mean the manifest and the pptx disagree, 
 | `Gemini did not answer within 180 seconds` | The request hung. Retry, or raise `timeoutMs`. |
 | `Gemini did not return valid JSON: ...` | The model's text was not JSON. Retry. |
 | `Gemini interaction ended with status "..."` | The service did not complete the request; the reason follows when it gives one. |
+| `Gemini's answer was cut off at the limit of 9552 tokens, twice. ...` | The model wrote until the output limit, twice in a row. It is nearly always a model running away inside one text field (see "Runaway answers" in [providers.md](providers.md)). Try again. If it keeps happening, set `thinkingLevel: 'low'`; if the limit is too small for a legitimately large answer, set `maxOutputTokens`. |
+| `Gemini request failed (400): Request blocked due to copyright/recitation content` | The service's recitation filter tripped on an ordinary answer. It happens at random. The adapter already sent the request twice; try again. |
+| `Gemini request failed (400): Thinking level ... is not supported for this model` | The `thinkingLevel` set on the adapter is not one the model accepts (`minimal` is refused by some models). Use `low`, or leave it unset. |
+| `Gemini request failed (429): Your project has exceeded its monthly spending cap` | The key's project reached the spending cap set for it. Nothing works until the cap is raised in the provider's console. |
 | `Gemini returned no image` | The image model answered without a picture, often because the prompt was refused. |
 
 ## The result looks wrong
@@ -141,7 +146,10 @@ Plain `Error`s from `renderDeck`. They mean the manifest and the pptx disagree, 
 | Cards are in reverse order in a right-to-left deck | The pattern's items are not declared as a row. | Add a `repeat` (`setRepeat`) or `sequences`. |
 | Hebrew or Arabic text is left-aligned | The manifest keeps alignment. | Set `alignOnDirectionChange: 'flip'` on the manifest or the slot. |
 | A font changes for another script | The template's font lacks that script. | Set a complex-script font in the template. |
+| Body text looks small | The engine keeps the template's own font sizes, and the template was designed with small body text (9 pt on a 10-inch slide is common in decks exported from Google Slides). | For every deck: set `textScale` on the manifest, such as `1.3`. For one deck: `textSize: 'large'` on the brief, `text_size` in the chat tool, or `textScale` on the deck. See "Larger text" in [layout-freedom.md](layout-freedom.md). |
 | The planner never uses a pattern | It is not offered. | See "Reasons a pattern is not offered". Also check the pattern's `description`: the model chooses by it. |
+| A deck that was asked to be "text only" has cards, tables or charts | The wish did not reach the planner as a wish about slides: only "no pictures" was passed (`imageDensity: 'none'`, or `image_density` in the chat tool), which still allows cards, tables and charts. | Set `textOnly: true` on the brief, or `text_only: true` in `plan_presentation`. See "Asking for a kind of slide" in [generating.md](generating.md). |
+| A text-only deck uses one layout for every content slide | The template has one plain text pattern besides its opening and closing. | Add more plain text patterns to the manifest as derived patterns: a list without its photo, a quotation, two paragraphs side by side. |
 | A slide states a number or contact detail that nobody gave | The model invented it. | Figures are guarded only for patterns marked `figures` and for charts. State details in the brief and review the deck. |
 
 ## Known limits

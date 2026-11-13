@@ -145,8 +145,11 @@ Every change is an object with `op`. `pattern` is a pattern id, `slot` a slot na
 #### `setManifest`
 
 ```ts
-{ op: 'setManifest', name?: string, language?: string, direction?: 'ltr' | 'rtl', alignOnDirectionChange?: 'flip' | 'keep' }
+{ op: 'setManifest', name?: string, language?: string, direction?: 'ltr' | 'rtl', alignOnDirectionChange?: 'flip' | 'keep', textScale?: number | null }
 ```
+
+`textScale` enlarges the body text of every deck made from the template (`1.3` for 30% larger); `null` or `1`
+returns to the designed size.
 
 #### `addPattern`
 
@@ -294,6 +297,13 @@ Smaller table text and fewer columns (the cell budget is measured for you):
 
 ```ts
 { op: 'setSlot', pattern: 'table', slot: 'table', maxColumns: 5, bodyText: { size: 9 }, headerText: { size: 10, bold: true } }
+```
+
+Larger body text in every deck, for a template whose own body text is small (render the sample deck afterwards
+to see that everything still fits):
+
+```ts
+{ op: 'setManifest', textScale: 1.3 }
 ```
 
 Mirror alignment for right-to-left decks, but keep the line beside the logo where it is:

@@ -5,9 +5,10 @@ import type { Issue, LayoutMode } from '../deck/validate.ts';
 import { isImageRef } from '../deck/spec.ts';
 import type { DeckSpec, ImageRef, SlideSpec, SlotValue } from '../deck/spec.ts';
 import type { JsonSchema } from '../llm/provider.ts';
+import { textBudget } from '../template/manifest.ts';
 import type { TemplateManifest } from '../template/manifest.ts';
 import { readImageInfo } from '../util/image.ts';
-import { contentSchema } from './catalog.ts';
+import { budgetScale, contentSchema } from './catalog.ts';
 import type { CatalogContext, UsablePattern, WriteItem } from './catalog.ts';
 
 export function systemPrompt(language: string, source: 'brief' | 'deck'): string {
@@ -140,7 +141,7 @@ export interface WriteJob extends WriteItem {
 }
 
 export interface WriteArgs {
-  ask: (prompt: string, schema: JsonSchema) => Promise<unknown>;
+  ask: (prompt: string, schema: JsonSchema, room?: number) => Promise<unknown>;
   /** The writing prompt. Repair rounds append the previous answer and its problems. */
   request: string;
   jobs: WriteJob[];
@@ -158,6 +159,27 @@ export interface WriteArgs {
  * written slides go back to the model, up to `maxRepairs` times. Returns the last draft with
  * every issue it still has; the caller decides what is fatal.
  */
+/**
+ * How many tokens the content of some slides may take: every slot at its budget, with room to
+ * spare. It is a ceiling for the model's answer, so that an answer that runs away is cut short.
+ */
+export function contentRoom(jobs: Array<{ pattern: UsablePattern }>, context: CatalogContext): number {
+  let characters = 0;
+  let slots = 0;
+  for (const { pattern } of jobs) {
+    for (const planned of pattern.slots) {
+      slots++;
+      const { slot } = planned;
+      if (slot.kind === 'text') characters += textBudget(slot, budgetScale(context)).maxChars ?? 400;
+      else if (slot.kind === 'table') characters += (slot.maxColumns ?? 4) * ((slot.maxRows ?? 4) + 1) * (slot.maxCellChars ?? 30);
+      else if (slot.kind === 'chart') characters += 400;
+      else characters += planned.mode === 'photo' ? 500 : 60; // a photo is described in a sentence or two
+    }
+  }
+  // A token is rarely shorter than a character, even in scripts that tokenise badly; names and punctuation come on top.
+  return Math.ceil((characters + slots * 40) * 1.5) + 500;
+}
+
 export async function writeSlides(args: WriteArgs): Promise<{ deck: DeckSpec; issues: Issue[] }> {
   const { jobs, context } = args;
   const schema = contentSchema(jobs, context);
@@ -178,7 +200,8 @@ export async function writeSlides(args: WriteArgs): Promise<{ deck: DeckSpec; is
   // Only slides that were just written can be fixed by asking again.
   const repairable = (issues: Issue[]) => issues.filter((issue) => issue.slide !== undefined && numbers.has(issue.slide));
 
-  let answer = await args.ask(args.request, schema);
+  const room = contentRoom(jobs, context);
+  let answer = await args.ask(args.request, schema, room);
   let draft = build(answer);
   for (let attempt = 1; attempt <= args.maxRepairs; attempt++) {
     const problems = repairable(draft.issues);
@@ -190,7 +213,7 @@ export async function writeSlides(args: WriteArgs): Promise<{ deck: DeckSpec; is
       `It has these problems:\n${problems.map((issue) => `- s${issue.slide}${issue.slot ? `.${issue.slot}` : ''}: ${issue.message}`).join('\n')}`,
       'Return the full content again with these problems fixed. Change nothing else.',
     ].join('\n\n');
-    answer = await args.ask(repair, schema);
+    answer = await args.ask(repair, schema, room);
     draft = build(answer);
   }
   return draft;

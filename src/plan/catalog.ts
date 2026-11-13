@@ -1,6 +1,6 @@
 import type { LayoutMode } from '../deck/validate.ts';
 import type { JsonSchema } from '../llm/provider.ts';
-import { effectiveSlots, itemRange, textBudget } from '../template/manifest.ts';
+import { effectiveSlots, itemRange, tableAtScale, textBudget } from '../template/manifest.ts';
 import type { ChartSlotDef, ImageSlotDef, PatternDef, SlotDef, TableSlotDef, TemplateManifest, TextSlotDef } from '../template/manifest.ts';
 
 /** An icon the app offers; the planning model picks from these by id. */
@@ -31,8 +31,10 @@ export interface CatalogContext {
   imageDensity: ImageDensity;
   /** Whether patterns built around numbers may be offered. */
   figures: boolean;
-  /** Size of body text as a factor on the template's; larger text gets smaller budgets. */
+  /** Size of the deck's body text as a factor on the template's; larger text gets smaller budgets. */
   textScale: number;
+  /** The template's own factor on body text, applied on top. Defaults to 1. */
+  templateScale?: number;
   /** Restrict planning to these pattern ids. */
   allow?: string[];
 }
@@ -130,6 +132,18 @@ export function planPattern(
   return { pattern };
 }
 
+/** The factor that budgets are worked out with: the deck's text size on top of the template's. */
+export const budgetScale = (context: CatalogContext): number => context.textScale * (context.templateScale ?? 1);
+
+/**
+ * Whether a slide made from the pattern is running text and nothing else: a title with paragraphs
+ * or a list. Cards, figures, tables, charts, icons and pictures all make a pattern something more.
+ * A picture that the pattern always drops does not count.
+ */
+export function isPlainText(def: PatternDef): boolean {
+  return !def.repeat && !def.figures && def.slots.every((slot) => slot.kind === 'text' || slot.empty === 'drop');
+}
+
 /** Works out which patterns can be filled with what the caller supplied, and which of their slots the model writes. */
 export function buildCatalog(manifest: TemplateManifest, context: CatalogContext): Catalog {
   const patterns: UsablePattern[] = [];
@@ -143,7 +157,8 @@ export function buildCatalog(manifest: TemplateManifest, context: CatalogContext
   return { patterns, excluded };
 }
 
-function limits(slot: SlotDef, scale = 1): string {
+function limits(given: SlotDef, scale = 1): string {
+  const slot = given.kind === 'table' ? tableAtScale(given, scale) : given;
   if (slot.kind === 'table') {
     const parts: string[] = [];
     if (slot.maxColumns !== undefined) parts.push(`at most ${slot.maxColumns} columns`);
@@ -185,27 +200,29 @@ export function describeCatalog(catalog: Catalog, textScale = 1): string {
             planned.mode === 'text' || planned.mode === 'paragraphs'
               ? limits(slot, textScale) || 'text'
               : planned.mode === 'table' || planned.mode === 'chart'
-                ? [planned.mode, limits(slot)].filter(Boolean).join(': ')
+                ? [planned.mode, limits(slot, textScale)].filter(Boolean).join(': ')
                 : planned.mode;
           return `${itemSlot.get(slot.name)?.label ?? slot.name}${planned.required ? '' : '?'} (${kind})`;
         })
         .join('; ');
       const count = repeat && range && range.max > range.min ? `\n  items: ${range.min} to ${range.max} ${repeat.item}s, numbered N = 1, 2, ...` : '';
-      return `- ${pattern.def.id}: ${pattern.def.description}\n  slots: ${slots}${count}`;
+      // Said in so many words, so that a wish for text-only slides can be met without guessing from the slots.
+      const plain = isPlainText(pattern.def) ? ' Plain text.' : '';
+      return `- ${pattern.def.id}: ${pattern.def.description}${plain}\n  slots: ${slots}${count}`;
     })
     .join('\n');
 }
 
 function slotSchema(planned: PlannedSlot, context: CatalogContext): JsonSchema {
   const { slot } = planned;
-  const note = [slot.description, limits(slot, context.textScale)].filter(Boolean).join('. ');
+  const note = [slot.description, limits(slot, budgetScale(context))].filter(Boolean).join('. ');
 
   switch (planned.mode) {
     case 'text':
       return { type: 'string', description: note || 'Text' };
     case 'paragraphs': {
       const schema: JsonSchema = { type: 'array', items: { type: 'string' }, minItems: 1, description: note || 'One string per paragraph' };
-      const most = textBudget(planned.slot, context.textScale).maxParagraphs;
+      const most = textBudget(planned.slot, budgetScale(context)).maxParagraphs;
       if (most !== undefined) schema.maxItems = most;
       return schema;
     }
@@ -323,7 +340,7 @@ export function outlineSchema(catalog: Catalog, count: { min: number; max: numbe
           type: 'object',
           properties: {
             pattern: { type: 'string', enum: catalog.patterns.map((pattern) => pattern.def.id) },
-            purpose: { type: 'string', description: 'The one point this slide makes, in a sentence' },
+            purpose: { type: 'string', description: 'The one point this slide makes: a single sentence of at most 25 words' },
             ...itemsProperty(catalog),
           },
           required: ['pattern', 'purpose'],

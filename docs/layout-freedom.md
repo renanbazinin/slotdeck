@@ -72,6 +72,29 @@ or, on a brief for the planner, `textSize: 'large'` (1.25) or `'x-large'` (1.5).
   shows the model the reduced budgets, so it writes less.
 - Through `editDeck`, "make the text larger" sets the scale and rewrites only the slides whose text no longer
   fits.
+- Table text and chart labels follow the scale where the manifest states their size (`bodyText.size`,
+  `headerText.size`, `text.size`), and a table cell then holds less.
+
+### Larger text for a whole template
+
+The engine keeps the template's own font sizes. A template designed with small body text, such as 9 pt on a
+10-inch-wide slide, therefore gives decks with small body text. To change that once, for every deck, set
+`textScale` on the manifest:
+
+```json
+{ "version": 1, "name": "corporate", "direction": "rtl", "textScale": 1.3, "patterns": [ ... ] }
+```
+
+With `changeManifest`: `{ op: 'setManifest', textScale: 1.3 }`.
+
+- It works exactly like a deck's `textScale` and applies to the same slots (body text: 12 pt and under by
+  default), but for every deck made from the template.
+- Budgets shrink to match, in validation, in what the planner shows the model, and in `sampleDeck`: a slot
+  that held 240 characters holds 142 at 1.3. Render the sample deck after setting it to see that everything
+  still fits.
+- A deck's own text size goes on top. With a template at 1.3, a deck at `large` (1.25) shows body text at about
+  1.6 times the designed size.
+- A slot that should keep its size can opt out with `"scales": false`.
 
 ## 4. Derived patterns
 

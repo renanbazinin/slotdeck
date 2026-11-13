@@ -1,6 +1,6 @@
 {
   "name": "slotdeck",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Turn a PowerPoint template into new decks: a model plans the slides, the code clones the template's own slides and fills them.",
   "keywords": [
     "pptx",

@@ -172,6 +172,14 @@ function directionOf(language: string): Direction;
 
 The reading direction of a BCP 47 language tag.
 
+### `isPlainText`
+
+```ts
+function isPlainText(pattern: PatternDef): boolean;
+```
+
+Whether a slide made from the pattern is running text and nothing else: the patterns a text-only deck may use.
+
 ### `PlanError`
 
 ```ts
@@ -199,6 +207,7 @@ interface Brief {
   instructions?: string;
   fields?: Record<string, string>;
   textSize?: TextSize;
+  textOnly?: boolean; // every slide plain text: only the template's plain text patterns are offered
 }
 type ImageDensity = 'none' | 'low' | 'medium' | 'high';
 
@@ -366,6 +375,8 @@ interface JsonRequest {
   system: string;
   prompt: string;
   schema: JsonSchema;
+  maxOutputTokens?: number; // a ceiling on the answer's size, reasoning not counted; pass it on as an output limit
+  effort?: 'low'; // a short structural request: use light reasoning if the model has a setting for it
   images?: Array<{ mimeType: string; data: Uint8Array }>;
   signal?: AbortSignal;
 }
@@ -492,7 +503,7 @@ interface ManifestIssue { severity: 'error' | 'warning'; pattern?: string; slot?
 interface SampleOptions { fill?: number; items?: 'drawn' | 'max' | 'min' }
 
 type ManifestChange =
-  | { op: 'setManifest'; name?: string; language?: string; direction?: Direction; alignOnDirectionChange?: AlignPolicy }
+  | { op: 'setManifest'; name?: string; language?: string; direction?: Direction; alignOnDirectionChange?: AlignPolicy; textScale?: number | null }
   | { op: 'addPattern'; slide: number; id: string; description?: string }
   | { op: 'copyPattern'; pattern: string; id: string; description?: string }
   | { op: 'removePattern'; pattern: string }
@@ -589,6 +600,7 @@ interface TemplateManifest {
   language?: string;
   direction: Direction;
   alignOnDirectionChange?: AlignPolicy;
+  textScale?: number; // enlarges body text in every deck made from the template
   patterns: PatternDef[];
 }
 interface PatternDef {

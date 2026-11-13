@@ -28,8 +28,17 @@ interface GeminiConnection {
 
 export interface GeminiOptions extends GeminiConnection {
   thinkingLevel?: 'minimal' | 'low' | 'medium' | 'high';
+  /**
+   * Output limit of a request in tokens, reasoning included. By default it is the caller's own
+   * estimate of the answer plus 8192 for reasoning, or 24576 when the caller gives no estimate.
+   */
   maxOutputTokens?: number;
 }
+
+/** Room for an answer when the caller does not say how large it may be. */
+const DEFAULT_ANSWER_TOKENS = 16_384;
+/** Room for reasoning, which Gemini counts against the same limit as the answer. */
+const REASONING_TOKENS = 8_192;
 
 export interface GeminiImageOptions extends GeminiConnection {
   /** Output size class. Defaults to `1K`. */
@@ -61,7 +70,12 @@ interface Interaction {
   errors?: Array<{ message?: string }>;
 }
 
-async function createInteraction(connection: GeminiConnection, body: Record<string, unknown>, signal: AbortSignal | undefined): Promise<Interaction> {
+async function createInteraction(
+  connection: GeminiConnection,
+  body: Record<string, unknown>,
+  signal: AbortSignal | undefined,
+  acceptCutOff = false,
+): Promise<Interaction> {
   const extra = typeof connection.headers === 'function' ? await connection.headers() : connection.headers;
   const headers: Headers = { 'Content-Type': 'application/json', ...extra };
   if (connection.apiKey) headers['x-goog-api-key'] = connection.apiKey;
@@ -93,11 +107,22 @@ async function createInteraction(connection: GeminiConnection, body: Record<stri
     throw new GeminiError(`Gemini request failed (${response.status}): ${message}`, response.status);
   }
   const interaction = (parsed ?? {}) as Interaction;
+  // An answer cut off at the output limit is for the caller to deal with, when it says it can.
+  if (interaction.status === 'incomplete' && acceptCutOff) return interaction;
   if (interaction.status !== 'completed') {
     const reason = interaction.errors?.map((error) => error.message).filter(Boolean).join('; ');
     throw new GeminiError(`Gemini interaction ended with status "${interaction.status ?? 'unknown'}"${reason ? `: ${reason}` : ''}`);
   }
   return interaction;
+}
+
+/**
+ * Failures that the same request usually does not repeat: a server error, or the service's
+ * recitation filter tripping on an ordinary answer. Bad keys, quotas and bad requests are not among them.
+ */
+function passesByItself(error: unknown): boolean {
+  if (!(error instanceof GeminiError)) return false;
+  return (error.status !== undefined && error.status >= 500 && error.status <= 504) || /recitation/i.test(error.message);
 }
 
 function outputBlocks(interaction: Interaction): ContentBlock[] {
@@ -108,9 +133,13 @@ function outputBlocks(interaction: Interaction): ContentBlock[] {
 export function gemini(options: GeminiOptions): LlmProvider {
   return {
     async generateJson(request: JsonRequest): Promise<unknown> {
-      const generationConfig: Record<string, unknown> = {};
+      // Every request has an output limit. Now and then a model runs away inside one text field and
+      // writes until it is stopped; without a limit that takes minutes and tens of thousands of tokens.
+      const limit = options.maxOutputTokens ?? Math.ceil(request.maxOutputTokens ?? DEFAULT_ANSWER_TOKENS) + REASONING_TOKENS;
+      const generationConfig: Record<string, unknown> = { max_output_tokens: limit };
+      // A level set on the adapter is the caller's decision; otherwise a request that needs little reasoning gets little.
       if (options.thinkingLevel) generationConfig.thinking_level = options.thinkingLevel;
-      if (options.maxOutputTokens) generationConfig.max_output_tokens = options.maxOutputTokens;
+      else if (request.effort === 'low') generationConfig.thinking_level = 'low';
 
       // With pictures, the input becomes one user step holding the text and each picture.
       const input = request.images?.length
@@ -132,9 +161,26 @@ export function gemini(options: GeminiOptions): LlmProvider {
         // One-shot calls: nothing to chain to, so nothing needs to be kept server-side.
         store: false,
       };
-      if (Object.keys(generationConfig).length > 0) body.generation_config = generationConfig;
+      body.generation_config = generationConfig;
 
-      const interaction = await createInteraction(options, body, request.signal);
+      const send = () => createInteraction(options, body, request.signal, true);
+      let interaction: Interaction;
+      try {
+        interaction = await send();
+      } catch (error) {
+        // A failure that comes and goes by chance is worth one more try; any other is the caller's to see.
+        if (!passesByItself(error)) throw error;
+        interaction = await send();
+      }
+      if (interaction.status === 'incomplete') {
+        // Running away is a matter of chance too, so the same request is sent once more.
+        interaction = await send();
+        if (interaction.status === 'incomplete') {
+          throw new GeminiError(
+            `Gemini's answer was cut off at the limit of ${limit} tokens, twice. The model is probably running away inside a text field; try again, or set thinkingLevel to "low"`,
+          );
+        }
+      }
       const text = outputBlocks(interaction)
         .filter((block) => block.type === 'text')
         .map((block) => block.text ?? '')

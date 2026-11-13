@@ -55,6 +55,7 @@ const PROPERTIES = [
   'language',
   'direction',
   'alignOnDirectionChange',
+  'textScale',
 ] as const;
 
 const SYSTEM = [
@@ -75,7 +76,7 @@ const GUIDE = [
   '- copyPattern (pattern): a second pattern from the same slide, to turn into a variant with further operations. Values: id of the new pattern, and optionally description.',
   '- removePattern (pattern).',
   '- addPattern: make a slide without a pattern into one. Values: slide, id, and optionally description.',
-  '- setManifest: settings of the whole template. Values: name, language, direction ("rtl" or "ltr"), alignOnDirectionChange ("flip" or "keep").',
+  '- setManifest: settings of the whole template. Values: name, language, direction ("rtl" or "ltr"), alignOnDirectionChange ("flip" or "keep"), textScale (a factor on the body text of every deck, such as "1.3" when the template\'s body text is too small; "1" for the designed size).',
   'A change to one item of a row (card1Icon) is made to that slot of every item, so give it once.',
   "When a size, a table's columns or a row count changes, do not also set a character budget: the software measures the new one.",
   'Operations run in order, so a pattern made by copyPattern can be named by the operations after it.',
@@ -152,7 +153,7 @@ export function describeManifest(template: Template): string {
   });
 
   return [
-    `Template "${manifest.name}"${manifest.language ? `, written in ${manifest.language}` : ''}, reads ${manifest.direction === 'rtl' ? 'right to left' : 'left to right'}; ${(manifest.alignOnDirectionChange ?? 'flip') === 'flip' ? 'mirrors' : 'keeps'} alignment in decks that read the other way. Positions and sizes are percentages of the slide.`,
+    `Template "${manifest.name}"${manifest.language ? `, written in ${manifest.language}` : ''}, reads ${manifest.direction === 'rtl' ? 'right to left' : 'left to right'}; ${(manifest.alignOnDirectionChange ?? 'flip') === 'flip' ? 'mirrors' : 'keeps'} alignment in decks that read the other way${manifest.textScale && manifest.textScale !== 1 ? `; body text is shown at ${manifest.textScale} times its designed size` : ''}. Positions and sizes are percentages of the slide.`,
     ...blocks,
     unused.length > 0 ? `Slides without a pattern: ${unused.join(', ')}.` : '',
   ]
@@ -249,6 +250,7 @@ function toChange(raw: Record<string, unknown>): ManifestChange | undefined {
         language: str('language'),
         direction: choice('direction', ['rtl', 'ltr'] as const),
         alignOnDirectionChange: choice('alignOnDirectionChange', ['flip', 'keep'] as const),
+        textScale: num('textScale'),
       });
     default:
       return undefined;

@@ -2,7 +2,7 @@ import type { DeckSpec, SlideSpec, SlotValue } from '../deck/spec.ts';
 import type { Template } from '../render/render.ts';
 import { solidPng } from '../util/png.ts';
 import { inspectTemplate } from './inspect.ts';
-import { COPY_ID_STEP, effectiveSlots, itemRange, textBudget } from './manifest.ts';
+import { COPY_ID_STEP, effectiveSlots, itemRange, tableAtScale, textBudget } from './manifest.ts';
 
 export interface SampleOptions {
   /** How full to make each text slot, as a share of its budget. Defaults to 0.95. */
@@ -45,7 +45,8 @@ export function sampleDeck(template: Template, options: SampleOptions = {}): { d
           fields[slot.deckField] ??= words.join(' ') || slot.deckField;
           continue;
         }
-        const budget = textBudget(slot);
+        // The sample is filled to the budgets real decks get, which the template's own text scale shrinks.
+        const budget = textBudget(slot, manifest.textScale ?? 1);
         const several = (slot.maxParagraphs ?? 1) > 1;
         const paragraphs = several ? (budget.maxParagraphs ?? 2) : 1;
         const total = budget.maxChars !== undefined ? Math.max(1, Math.floor(budget.maxChars * fill)) : words.join(' ').length || 12;
@@ -56,7 +57,7 @@ export function sampleDeck(template: Template, options: SampleOptions = {}): { d
         slots[slot.name] = { asset: slot.imageKind === 'photo' ? 'sample-photo' : slot.imageKind === 'icon' ? 'sample-icon' : 'sample-graphic' };
       } else if (slot.kind === 'table') {
         const columns = slot.maxColumns ?? 3;
-        const cell = 'x'.repeat(Math.max(1, Math.floor((slot.maxCellChars ?? 10) * fill)));
+        const cell = 'x'.repeat(Math.max(1, Math.floor((tableAtScale(slot, manifest.textScale ?? 1).maxCellChars ?? 10) * fill)));
         slots[slot.name] = {
           header: Array.from({ length: columns }, () => cell),
           rows: Array.from({ length: slot.maxRows ?? 3 }, () => Array.from({ length: columns }, () => cell)),

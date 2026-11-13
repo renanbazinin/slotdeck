@@ -37,7 +37,8 @@ the chat tools, connecting your own model, the template studio, and every error 
 
 It is plain Markdown with no links to the internet, and it ships inside the npm package
 (`node_modules/slotdeck/docs/`), so a coding assistant without network access can read it where the package is
-installed. This page is the overview.
+installed. This page is the overview. What changed in each version is in
+[`docs/changelog.md`](docs/changelog.md).
 
 ## How it works
 
@@ -136,6 +137,10 @@ Patterns built around numbers (`"figures": true` in the manifest) are offered on
 contains figures. In a live run without this guard the model filled such a slide with an invented statistic. Set
 `numberPatterns: 'always'` to offer them regardless, or `'never'` to rule them out. Chart values the brief does
 not state come back as warnings (`chart values not stated in the brief: 89`).
+
+A wish about the kind of slides, such as "text only" or "no tables", decides which patterns may be used and
+comes before variety. For a deck of text and nothing else, set `textOnly: true` on the brief (`text_only` in the
+chat tool): only the template's plain text patterns are then offered.
 
 ### Editing a deck
 
@@ -284,7 +289,8 @@ manifest allows and the code moves the shapes; the model never positions anythin
   figures in a three-column grid make two rows of two, five make three and two, three make one row.
 - **Larger text.** `textScale` on a deck (or `textSize: 'large' | 'x-large'` on a brief) enlarges body text:
   slots of 12 pt and under by default, not titles. Because the boxes stay the same size, character budgets fall
-  with the square of the scale, so the model writes less.
+  with the square of the scale, so the model writes less. A template whose own body text is small can be
+  enlarged once for every deck with `textScale` on the manifest.
 - **Derived patterns.** Several patterns can come from one slide. A text slot can be moved and resized (`box`),
   given a font size (`fontSize`) and paragraph spacing, and any shape can be dropped. In the demo template
   `text-only` is the photo slide with its photo dropped and its text widened, and `chart-native` is the chart

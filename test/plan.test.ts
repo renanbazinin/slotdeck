@@ -12,13 +12,14 @@ import {
   generateDeck,
   loadTemplate,
   planDeck,
+  planOutline,
   resolveAssets,
   vertexEndpoint,
 } from '../src/index.ts';
 import type { GenerateProgress, IconDef, ImageRef, ImageRequest, JsonRequest, LlmProvider, TemplateManifest } from '../src/index.ts';
 import { nearestAspectRatio } from '../src/llm/gemini.ts';
 import { readPresentation } from '../src/pptx/presentation.ts';
-import { buildFixturePptx, fixtureManifest } from './fixture.ts';
+import { buildFixturePptx, cardsManifest, fixtureManifest } from './fixture.ts';
 
 const pptx = buildFixturePptx();
 const template = loadTemplate(pptx, fixtureManifest);
@@ -279,7 +280,8 @@ test('gemini() asks the Interactions API for JSON and reads the model output', a
     system_instruction: 'SYSTEM',
     response_format: { type: 'text', mime_type: 'application/json', schema: { type: 'object' } },
     store: false,
-    generation_config: { thinking_level: 'low' },
+    // No estimate came with the request, so the limit is the default room for an answer plus room for reasoning.
+    generation_config: { max_output_tokens: 24576, thinking_level: 'low' },
   });
 });
 
@@ -308,8 +310,8 @@ test('gemini() turns API failures into errors that carry the status', async () =
     return true;
   });
 
-  const incomplete = fakeFetch(200, { status: 'incomplete', steps: [] });
-  await assert.rejects(gemini({ model: 'm', fetch: incomplete.fetch }).generateJson({ system: '', prompt: '', schema: {} }), /status "incomplete"/);
+  const failed = fakeFetch(200, { status: 'failed', steps: [], errors: [{ message: 'blocked' }] });
+  await assert.rejects(gemini({ model: 'm', fetch: failed.fetch }).generateJson({ system: '', prompt: '', schema: {} }), /status "failed": blocked/);
 
   const notJson = fakeFetch(200, { status: 'completed', steps: [{ type: 'model_output', content: [{ type: 'text', text: 'sorry' }] }] });
   await assert.rejects(gemini({ model: 'm', fetch: notJson.fetch }).generateJson({ system: '', prompt: '', schema: {} }), /did not return valid JSON/);
@@ -342,4 +344,108 @@ test('nearest supported aspect ratio', () => {
   assert.equal(nearestAspectRatio(0.5), '9:16');
   assert.equal(nearestAspectRatio(1.3), '4:3');
   assert.equal(nearestAspectRatio(7), '8:1');
+});
+
+test('gemini() limits every answer, and asks once more when one is cut off', async () => {
+  const good = { status: 'completed', steps: [{ type: 'model_output', content: [{ type: 'text', text: '{"ok":true}' }] }] };
+  const cutOff = { status: 'incomplete', steps: [{ type: 'model_output', content: [{ type: 'text', text: '{"purpose":"and so on. and so on. and' }] }] };
+  const sequence = (answers: unknown[]) => {
+    const limits: unknown[] = [];
+    const fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      limits.push((JSON.parse(String(init?.body)) as { generation_config?: { max_output_tokens?: number } }).generation_config?.max_output_tokens);
+      return new Response(JSON.stringify(answers[Math.min(limits.length, answers.length) - 1]));
+    }) as typeof globalThis.fetch;
+    return { fetch, limits };
+  };
+  const request = { system: 's', prompt: 'p', schema: {} };
+
+  // The caller's estimate of the answer, plus room for reasoning.
+  const estimated = sequence([good]);
+  await gemini({ model: 'm', fetch: estimated.fetch }).generateJson({ ...request, maxOutputTokens: 1360 });
+  assert.deepEqual(estimated.limits, [1360 + 8192]);
+
+  // A limit set on the adapter wins.
+  const fixed = sequence([good]);
+  await gemini({ model: 'm', fetch: fixed.fetch, maxOutputTokens: 5000 }).generateJson({ ...request, maxOutputTokens: 1360 });
+  assert.deepEqual(fixed.limits, [5000]);
+
+  // A model that ran away is stopped at the limit; the same request usually works the second time.
+  const once = sequence([cutOff, good]);
+  assert.deepEqual(await gemini({ model: 'm', fetch: once.fetch }).generateJson(request), { ok: true });
+  assert.equal(once.limits.length, 2);
+
+  // Twice in a row is reported, with what to do about it.
+  const twice = sequence([cutOff, cutOff, good]);
+  await assert.rejects(gemini({ model: 'm', fetch: twice.fetch }).generateJson(request), /cut off at the limit of 24576 tokens, twice/);
+  assert.equal(twice.limits.length, 2, 'it is not asked a third time');
+});
+
+test('a text-only deck is offered the plain text patterns and nothing else', async () => {
+  const template = loadTemplate(pptx, cardsManifest);
+  const requests: JsonRequest[] = [];
+  const llm: LlmProvider = {
+    async generateJson(request) {
+      requests.push(request);
+      return { title: 'T', slides: [{ pattern: 'closing', purpose: 'x' }] };
+    },
+  };
+  const patternsOffered = (request: JsonRequest | undefined) =>
+    (request?.schema as { properties: { slides: { items: { properties: { pattern: { enum: string[] } } } } } }).properties.slides.items.properties.pattern.enum;
+  const icons = [{ id: 'star', description: 'a star', data: new Uint8Array([1]) }];
+  const fields = { closing: 'Thanks' };
+
+  // Without the wish every usable pattern is on offer, and the plain ones are named as such.
+  await planOutline(template, { prompt: 'Dogs', slideCount: 1, fields, imageDensity: 'none' }, { llm, icons, layout: 'adaptive' });
+  assert.deepEqual(patternsOffered(requests[0]), ['closing', 'cards']);
+  assert.match(requests[0]?.prompt ?? '', /- closing: Closing words\. Plain text\.\n/);
+  assert.match(requests[0]?.prompt ?? '', /- cards: A row of cards\.\n/);
+  assert.match(requests[0]?.prompt ?? '', /A wish about the kind of slides \(text only, no tables, only cards\) decides which patterns may be used, and comes before variety/);
+  assert.match(requests[0]?.prompt ?? '', /- Otherwise vary the patterns across the deck\./);
+
+  // With it, cards are not offered at all, so the wish cannot be missed; and repeating a pattern is said to be fine.
+  const plan = await planOutline(template, { prompt: 'Dogs', slideCount: 1, fields, textOnly: true }, { llm: { generateJson: async (request: JsonRequest) => (requests.push(request), { title: 'T', slides: [{ pattern: 'closing', purpose: 'x' }] }) }, icons, layout: 'adaptive' });
+  assert.deepEqual(patternsOffered(requests[1]), ['closing']);
+  assert.match(requests[1]?.prompt ?? '', /The deck is text only, and every pattern in the list is plain text\. Using the same pattern for several slides in a row is expected\./);
+  assert.doesNotMatch(requests[1]?.prompt ?? '', /vary the patterns/i);
+  assert.equal(plan.brief.textOnly, true, 'the wish stays with the plan');
+  // The answer is given room for a plan of this size and no more.
+  assert.equal(requests[1]?.maxOutputTokens, 400 + 160);
+
+  // A template without a plain text pattern says so.
+  const cardsOnly = loadTemplate(pptx, { ...cardsManifest, patterns: cardsManifest.patterns.filter((pattern) => pattern.id === 'cards') });
+  await assert.rejects(planOutline(cardsOnly, { prompt: 'Dogs', textOnly: true }, { llm, icons }), /has no plain text pattern, so a text-only deck cannot be planned/);
+});
+
+test('gemini() asks once more after a failure that passes by itself, and not after one that will not', async () => {
+  const good = { status: 'completed', steps: [{ type: 'model_output', content: [{ type: 'text', text: '{"ok":true}' }] }] };
+  const sequence = (answers: Array<[status: number, body: unknown]>) => {
+    let calls = 0;
+    const fetch = (async () => {
+      const [status, body] = answers[Math.min(calls, answers.length - 1)] as [number, unknown];
+      calls++;
+      return new Response(JSON.stringify(body), { status });
+    }) as typeof globalThis.fetch;
+    return { fetch, calls: () => calls };
+  };
+  const request = { system: 's', prompt: 'p', schema: {} };
+
+  // The service's recitation filter trips at random on ordinary answers.
+  const recitation = sequence([[400, { error: { message: 'Request blocked due to copyright/recitation content. Please modify your input and retry.' } }], [200, good]]);
+  assert.deepEqual(await gemini({ model: 'm', fetch: recitation.fetch }).generateJson(request), { ok: true });
+  assert.equal(recitation.calls(), 2);
+
+  const overloaded = sequence([[503, { error: { message: 'The model is overloaded' } }], [200, good]]);
+  assert.deepEqual(await gemini({ model: 'm', fetch: overloaded.fetch }).generateJson(request), { ok: true });
+
+  // A second failure in a row is reported.
+  const down = sequence([[503, { error: { message: 'The model is overloaded' } }]]);
+  await assert.rejects(gemini({ model: 'm', fetch: down.fetch }).generateJson(request), /overloaded/);
+  assert.equal(down.calls(), 2);
+
+  // A bad key, a spending cap or a bad request will fail the same way again, so it is not repeated.
+  for (const [status, message] of [[401, 'API key not valid'], [429, 'Your project has exceeded its monthly spending cap'], [400, 'Schema is too complex']] as const) {
+    const failing = sequence([[status, { error: { message } }], [200, good]]);
+    await assert.rejects(gemini({ model: 'm', fetch: failing.fetch }).generateJson(request), new RegExp(message));
+    assert.equal(failing.calls(), 1, message);
+  }
 });

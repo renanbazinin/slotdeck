@@ -36,6 +36,7 @@ It runs `planDeck`, then `resolveAssets`, then `renderDeck`.
 | `instructions` | string | none | Anything else to respect: audience, tone, points that must be covered. |
 | `fields` | object of strings | none | Deck-level values the template needs (see "Deck fields" in [deck-format.md](deck-format.md)). A pattern that needs a field that is not given is not offered. |
 | `textSize` | `"normal"`, `"large"`, `"x-large"` | `normal` | Size of body text. Larger text gets smaller budgets, so less is written. |
+| `textOnly` | boolean | `false` | Plan every slide as plain text. Only the template's plain text patterns are offered. See "Asking for a kind of slide" below. |
 
 ### Options (`GenerateOptions`)
 
@@ -104,6 +105,37 @@ because nothing may be removed from a slide. Slots with `empty` of `keep` or `dr
 model.
 
 If nothing can be offered, `PlanError` is thrown with the reasons.
+
+### Asking for a kind of slide
+
+By default the planner varies the patterns across a deck. A wish about the kind of slides overrides that, and
+there are two ways to state one.
+
+**In words.** A wish in `prompt` or `instructions`, such as "text only", "no tables" or "only cards", decides
+which patterns may be used and comes before variety. The planner is told so, and the pattern list it reads marks
+each plain text pattern with the words "Plain text.".
+
+**As a flag.** `textOnly: true` is the reliable way to get a deck of text and nothing else. The planner is then
+offered only the plain text patterns, so no other kind can be chosen, and it is told that using the same pattern
+for several slides in a row is expected.
+
+```ts
+await generateDeck(template, { prompt: 'Our move to hybrid work: why, the rules, what changed', textOnly: true }, { llm });
+// for example: cover, text-only, text-only, text-only, text-only, closing
+```
+
+A pattern counts as **plain text** when a slide made from it holds running text and nothing else: all its
+slots are text (a picture that the pattern always drops does not count), it has no row or grid of items, and it
+is not marked `figures`. A cover, a closing slide, a quotation and a title-with-paragraphs slide are plain text;
+cards, tables, charts and anything with a picture or icon are not.
+
+Two things to know:
+
+- "No pictures" is a different wish. `imageDensity: 'none'` removes photos but still allows cards, tables and
+  charts.
+- A text-only deck is only as varied as the template's plain text patterns. A template without one cannot make
+  such a deck: `PlanError: Template "x" has no plain text pattern, so a text-only deck cannot be planned from it`.
+  Add one as a derived pattern (see [layout-freedom.md](layout-freedom.md)).
 
 ### Why numbers are guarded
 
@@ -210,9 +242,13 @@ Warnings (text a little over a budget, for instance) do not throw. They are retu
 
 ## Cost and time
 
-For one deck: two text calls, more if repairs are needed, and one image call per generated photo. On the demo
-template with `gemini-3.8-flash`, a nine-slide deck took about 50 seconds including four pictures. An edit that
-rewrites one slide took about 15 seconds.
+For one deck: two text calls, more if repairs are needed, and one image call per generated photo. Measured on
+the demo template with `gemini-3.8-flash`: a plan takes about 5 seconds, an eight-slide deck about 30 seconds
+from brief to file (with drawn stand-in pictures), and an edit that rewrites one slide about 8 seconds.
+
+Planning calls (the outline, a change to a plan, the first step of an edit) ask the model for light reasoning,
+because they choose and arrange rather than write. This made them several times faster and removed the runaway
+answers described in [providers.md](providers.md). Writing the slides keeps the model's default.
 
 To keep cost down: reuse `cache` across calls, set `imageDensity: 'low'` or `'none'`, and use `planOutline`
 first so a person can correct the plan before content and pictures are produced.

@@ -19,7 +19,39 @@ export interface TemplateManifest {
    * whose text boxes share one edge but not the other. Slots can override this.
    */
   alignOnDirectionChange?: AlignPolicy;
+  /**
+   * Enlarges the body text of every deck made from this template, as a factor on the designed
+   * size: 1.3 turns 9 pt into about 12 pt. For a template whose body text is too small to read
+   * comfortably. Budgets shrink with it, and a deck's own text size is applied on top.
+   */
+  textScale?: number;
   patterns: PatternDef[];
+}
+
+const halfPoints = (size: number, scale: number): number => Math.round(size * scale * 2) / 2;
+
+/**
+ * A table slot as it is at a body text scale: the text sizes the manifest states are enlarged,
+ * and a cell holds less. A table whose sizes come from the sample table alone is left as it is,
+ * since there is nothing stated to enlarge.
+ */
+export function tableAtScale(slot: TableSlotDef, scale: number): TableSlotDef {
+  if (scale === 1 || slot.bodyText?.size === undefined) return slot;
+  const scaled: TableSlotDef = { ...slot, bodyText: { ...slot.bodyText, size: halfPoints(slot.bodyText.size, scale) } };
+  if (slot.headerText?.size !== undefined) scaled.headerText = { ...slot.headerText, size: halfPoints(slot.headerText.size, scale) };
+  if (slot.maxCellChars !== undefined) scaled.maxCellChars = Math.max(1, Math.floor(slot.maxCellChars / (scale * scale)));
+  return scaled;
+}
+
+/** A chart slot as it is at a body text scale: the label size the manifest states is enlarged. */
+export function chartAtScale(slot: ChartSlotDef, scale: number): ChartSlotDef {
+  if (scale === 1 || slot.text?.size === undefined) return slot;
+  return { ...slot, text: { ...slot.text, size: halfPoints(slot.text.size, scale) } };
+}
+
+/** The factor on body text for a deck: the template's own setting times the deck's. */
+export function bodyTextScale(manifest: Pick<TemplateManifest, 'textScale'>, deckScale = 1): number {
+  return (manifest.textScale ?? 1) * deckScale;
 }
 
 export interface PatternDef {

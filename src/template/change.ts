@@ -58,7 +58,7 @@ export interface SlotPatch {
 }
 
 export type ManifestChange =
-  | { op: 'setManifest'; name?: string; language?: string; direction?: Direction; alignOnDirectionChange?: AlignPolicy }
+  | { op: 'setManifest'; name?: string; language?: string; direction?: Direction; alignOnDirectionChange?: AlignPolicy; textScale?: number | null }
   /** Makes a slide a pattern, with no content slots yet. Header texts known from other patterns are filled in. */
   | { op: 'addPattern'; slide: number; id: string; description?: string }
   /** A second pattern from the same slide, to be changed into a variant. */
@@ -161,6 +161,16 @@ function apply(manifest: TemplateManifest, change: ManifestChange, info: Templat
         if (change.alignOnDirectionChange !== 'flip' && change.alignOnDirectionChange !== 'keep') reject('alignment on a direction change is "flip" or "keep"');
         manifest.alignOnDirectionChange = change.alignOnDirectionChange;
         done.push(`${change.alignOnDirectionChange === 'flip' ? 'mirrors' : 'keeps'} its alignment in decks that read the other way`);
+      }
+      if (change.textScale !== undefined) {
+        if (change.textScale === null || change.textScale === 1) {
+          delete manifest.textScale;
+          done.push('shows body text at its designed size');
+        } else {
+          if (!(typeof change.textScale === 'number' && change.textScale >= 0.5 && change.textScale <= 3)) reject('a text scale is a factor between 0.5 and 3, such as 1.3');
+          manifest.textScale = change.textScale;
+          done.push(`shows body text at ${change.textScale} times its designed size in every deck, with budgets to match`);
+        }
       }
       if (done.length === 0) reject('nothing to set');
       return `The template ${done.join(', ')}.`;

@@ -16,7 +16,7 @@ import type { Relationship } from '../pptx/package.ts';
 import { readPresentation } from '../pptx/presentation.ts';
 import { NS, childElement, childElements, descendants, parseXml, removeNode, rootElement, serializeXml } from '../pptx/xml.ts';
 import type { Element } from '../pptx/xml.ts';
-import { defaultFit, effectiveSlots, itemCount, scalesWithText, slotSources } from '../template/manifest.ts';
+import { bodyTextScale, chartAtScale, defaultFit, effectiveSlots, itemCount, scalesWithText, slotSources, tableAtScale } from '../template/manifest.ts';
 import type { ChartSlotDef, PatternDef, TemplateManifest } from '../template/manifest.ts';
 import { readImageInfo } from '../util/image.ts';
 import type { ImageInfo } from '../util/image.ts';
@@ -144,7 +144,7 @@ export function renderDeck(template: Template, deck: DeckSpec, options: RenderOp
     if (pattern.repeat) applyRepeat(indexShapes(root), pattern.repeat, itemCount(pattern, slide.items), pres.slideWidth);
     const shapes = indexShapes(root);
     const sources = slotSources(pattern, directionChanged, slide.items);
-    const textScale = deck.textScale ?? 1;
+    const textScale = bodyTextScale(template.manifest, deck.textScale);
 
     for (const slot of effectiveSlots(pattern, slide.items)) {
       const shape = shapes.get(slot.shapeId);
@@ -183,7 +183,7 @@ export function renderDeck(template: Template, deck: DeckSpec, options: RenderOp
         }
         setPicture(shape, fill);
       } else if (action.type === 'table' && slot.kind === 'table') {
-        setTable(shape, action.table, slot, deck.direction ?? manifest.direction);
+        setTable(shape, action.table, tableAtScale(slot, textScale), deck.direction ?? manifest.direction);
       } else if (action.type === 'chart' && slot.kind === 'chart') {
         // The chart takes the place of the sample picture, in the same stacking position.
         const parent = shape.parentNode as Element | null;
@@ -196,7 +196,7 @@ export function renderDeck(template: Template, deck: DeckSpec, options: RenderOp
           : { x: Number(off?.getAttribute('x') ?? 0), y: Number(off?.getAttribute('y') ?? 0), cx: Number(ext?.getAttribute('cx') ?? 0), cy: Number(ext?.getAttribute('cy') ?? 0) };
         if (!(area.cx > 0 && area.cy > 0)) throw new Error(`slide ${number} / ${slot.name}: the chart slot has no area`);
 
-        const chartPart = addChart(action.chart, slot);
+        const chartPart = addChart(action.chart, chartAtScale(slot, textScale));
         const relId = nextRelId(rels);
         rels.push({ id: relId, type: CHART_REL_TYPE, target: relativeTarget(part, chartPart), external: false });
         const alt = `${action.chart.type} chart: ${action.chart.series.map((series) => series.name).filter(Boolean).join(', ')}`;

@@ -66,6 +66,7 @@ operations (`changeManifest`) or by instruction (`editManifest`), and verify it 
 | `patterns` | `PatternDef[]` | yes | The reusable layouts. |
 | `language` | string | no | BCP 47 tag of the template's sample text. Decks default to it. |
 | `alignOnDirectionChange` | `"flip"` or `"keep"` | no | What happens to left and right paragraph alignment in a deck that reads the other way. `flip` (default) mirrors it. `keep` leaves it as designed. A text slot can override this. |
+| `textScale` | number | no | Enlarges the body text of every deck made from this template, as a factor on the designed size: `1.3` turns 9 pt into about 12 pt. For a template whose body text is too small to read comfortably. Budgets shrink to match. See "Larger text" in [layout-freedom.md](layout-freedom.md). |
 
 ## `PatternDef`
 

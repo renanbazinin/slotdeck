@@ -2,11 +2,11 @@ import { unstatedChartValues } from '../deck/numbers.ts';
 import { DeckValidationError } from '../deck/validate.ts';
 import type { Issue, LayoutMode } from '../deck/validate.ts';
 import type { DeckSpec } from '../deck/spec.ts';
-import type { JsonSchema, LlmProvider } from '../llm/provider.ts';
+import type { JsonRequest, JsonSchema, LlmProvider } from '../llm/provider.ts';
 import type { Template } from '../render/render.ts';
 import { TEXT_SIZES } from '../template/manifest.ts';
 import type { Direction, TextSize } from '../template/manifest.ts';
-import { buildCatalog, describeCatalog, itemsProperty, outlineSchema, planPattern, readItems } from './catalog.ts';
+import { budgetScale, buildCatalog, describeCatalog, isPlainText, itemsProperty, outlineSchema, planPattern, readItems } from './catalog.ts';
 import type { AssetDef, Catalog, CatalogContext, IconDef, ImageDensity, UsablePattern, WriteItem } from './catalog.ts';
 import { cleanText, suppliesText, systemPrompt, writeSlides } from './write.ts';
 
@@ -28,6 +28,11 @@ export interface Brief {
   fields?: Record<string, string>;
   /** Size of body text. Larger text means less of it fits on a slide. Defaults to `normal`. */
   textSize?: TextSize;
+  /**
+   * Plan every slide as plain text: a title with paragraphs or a list, and no pictures, icons,
+   * cards, figures, tables or charts. Only the template's plain text patterns are offered.
+   */
+  textOnly?: boolean;
 }
 
 export type PlanProgress =
@@ -88,11 +93,24 @@ export function hasFigures(text: string): boolean {
   return /\p{Nd}/u.test(text);
 }
 
-/** Binds a provider to a system prompt and an optional abort signal. */
-export function asker(llm: LlmProvider, system: string, signal: AbortSignal | undefined) {
-  return (prompt: string, schema: JsonSchema): Promise<unknown> =>
-    llm.generateJson(signal ? { system, prompt, schema, signal } : { system, prompt, schema });
+/**
+ * Binds a provider to a system prompt and an optional abort signal. `room` is how many tokens
+ * the answer may reasonably take: a model sometimes runs away inside a text field, and a limit
+ * is what ends that after seconds instead of minutes. `effort` is `low` for calls that choose
+ * and arrange rather than write.
+ */
+export function asker(llm: LlmProvider, system: string, signal: AbortSignal | undefined, effort?: 'low') {
+  return (prompt: string, schema: JsonSchema, room?: number): Promise<unknown> => {
+    const request: JsonRequest = { system, prompt, schema };
+    if (room !== undefined) request.maxOutputTokens = Math.ceil(room);
+    if (effort) request.effort = effort;
+    if (signal) request.signal = signal;
+    return llm.generateJson(request);
+  };
 }
+
+/** Room for a plan: a title, and for each slide a pattern id and a sentence. Generous, since it is a ceiling. */
+export const planRoom = (slides: number): number => 400 + 160 * slides;
 
 const DENSITY_GUIDANCE: Record<ImageDensity, string> = {
   none: 'Do not plan any photos.',
@@ -107,6 +125,12 @@ function briefText(brief: Brief): string {
     .join('\n\n');
 }
 
+/** What a wish about the kind of slides means, in the planner's own terms. Shared by every prompt that chooses patterns. */
+export const SLIDE_KIND_RULE =
+  'A wish about the kind of slides (text only, no tables, only cards) decides which patterns may be used, and comes before variety. ' +
+  '"Text only" means the patterns marked "Plain text.": a title with paragraphs or a list, and no cards, figures, tables, charts, icons or pictures. ' +
+  'Using one pattern for many slides is right when the wish leaves no other.';
+
 function outlinePrompt(brief: Brief, catalog: Catalog, count: { min: number; max: number }, density: ImageDensity, textScale = 1): string {
   const size = count.min === count.max ? `exactly ${count.min}` : `${count.min} to ${count.max}`;
   return [
@@ -117,8 +141,9 @@ function outlinePrompt(brief: Brief, catalog: Catalog, count: { min: number; max
       '- Open with an opening pattern and end with a closing pattern when the list has them.',
       '- For a pattern with a row of items, set "items" to the number the content really has. Do not pad a list to fill a row.',
       '- Choose a pattern only when the content can fill every required slot within its limits.',
-      '- Vary the patterns across the deck.',
-      `- ${DENSITY_GUIDANCE[density]}`,
+      ...(brief.textOnly
+        ? ['- The deck is text only, and every pattern in the list is plain text. Using the same pattern for several slides in a row is expected.']
+        : [`- ${SLIDE_KIND_RULE}`, '- Otherwise vary the patterns across the deck.', `- ${DENSITY_GUIDANCE[density]}`]),
     ].join('\n'),
   ].join('\n\n');
 }
@@ -165,7 +190,7 @@ function planning(template: Template, brief: Brief, options: PlanOptions): Plann
   const numbers = options.numberPatterns ?? 'from-brief';
   const figures = numbers === 'always' || (numbers === 'from-brief' && hasFigures(`${brief.prompt} ${brief.instructions ?? ''}`));
   const textScale = TEXT_SIZES[brief.textSize ?? 'normal'] ?? 1;
-  const context: CatalogContext = { layout, fields, icons: options.icons ?? [], assets: options.assets ?? [], imageDensity: density, figures, textScale };
+  const context: CatalogContext = { layout, fields, icons: options.icons ?? [], assets: options.assets ?? [], imageDensity: density, figures, textScale, templateScale: manifest.textScale ?? 1 };
   if (options.patterns) context.allow = options.patterns;
   const catalog = buildCatalog(manifest, context);
   if (catalog.patterns.length === 0) {
@@ -203,19 +228,27 @@ function readOutline(answer: unknown, byId: Map<string, UsablePattern>): { title
  * The result is small and quick to produce, so it is the thing to show a person and let them change.
  */
 export async function planOutline(template: Template, brief: Brief, options: PlanOptions): Promise<DeckPlan> {
-  const { language, density, catalog, byId, context } = planning(template, brief, options);
+  const planned = planning(template, brief, options);
+  const { language, density, context } = planned;
+  // A text-only deck is offered the plain text patterns and nothing else, so the wish cannot be missed.
+  const catalog = brief.textOnly ? { ...planned.catalog, patterns: planned.catalog.patterns.filter((pattern) => isPlainText(pattern.def)) } : planned.catalog;
+  if (catalog.patterns.length === 0) {
+    throw new PlanError(`Template "${template.manifest.name}" has no plain text pattern, so a text-only deck cannot be planned from it`);
+  }
+  const byId = new Map(catalog.patterns.map((pattern) => [pattern.def.id, pattern]));
   const count =
     typeof brief.slideCount === 'number'
       ? { min: brief.slideCount, max: brief.slideCount }
       : (brief.slideCount ?? { min: 6, max: 10 });
-  const ask = asker(options.llm, systemPrompt(language, 'brief'), options.signal);
+  // Choosing a pattern for each slide needs little reasoning, and is much quicker with little.
+  const ask = asker(options.llm, systemPrompt(language, 'brief'), options.signal, 'low');
 
   options.onProgress?.({ stage: 'outline' });
-  const request = outlinePrompt(brief, catalog, count, density, context.textScale);
-  let outline = readOutline(await ask(request, outlineSchema(catalog, count)), byId);
+  const request = outlinePrompt(brief, catalog, count, density, budgetScale(context));
+  let outline = readOutline(await ask(request, outlineSchema(catalog, count), planRoom(count.max)), byId);
   if (outline.problem) {
     const retry = `${request}\n\nYour previous answer could not be used: ${outline.problem}. Answer again using only the listed patterns.`;
-    outline = readOutline(await ask(retry, outlineSchema(catalog, count)), byId);
+    outline = readOutline(await ask(retry, outlineSchema(catalog, count), planRoom(count.max)), byId);
     if (outline.problem) throw new PlanError(`The model did not produce a usable outline: ${outline.problem}`);
   }
   return { version: 1, title: outline.title, brief, slides: outline.entries };
@@ -243,10 +276,12 @@ export async function editPlan(
       .join('\n')}`,
     `Requested change:\n${request}`,
     `Return the whole plan after the change. Choose patterns from this list ("?" marks an optional slot):`,
-    describeCatalog(catalog, context.textScale),
+    describeCatalog(catalog, budgetScale(context)),
     [
       '- Change only what the request asks for. Keep every other slide, its pattern, its purpose and its place.',
       '- Choose a pattern only when the content can fill every required slot within its limits.',
+      `- ${SLIDE_KIND_RULE}`,
+      ...(plan.brief.textOnly ? ['- This deck was asked to be text only: keep to the patterns marked "Plain text." unless the requested change asks for something else.'] : []),
       `- ${DENSITY_GUIDANCE[density]}`,
     ].join('\n'),
   ].join('\n\n');
@@ -263,7 +298,7 @@ export async function editPlan(
           type: 'object',
           properties: {
             pattern: { type: 'string', enum: catalog.patterns.map((pattern) => pattern.def.id) },
-            purpose: { type: 'string', description: 'The one point this slide makes, in a sentence' },
+            purpose: { type: 'string', description: 'The one point this slide makes: a single sentence of at most 25 words' },
             ...itemsProperty(catalog),
           },
           required: ['pattern', 'purpose'],
@@ -273,11 +308,13 @@ export async function editPlan(
     required: ['summary', 'language', 'title', 'slides'],
   };
 
-  const ask = asker(options.llm, systemPrompt(language, 'brief'), options.signal);
-  let answer = (await ask(prompt, schema)) as { summary?: unknown; language?: unknown } | null;
+  const ask = asker(options.llm, systemPrompt(language, 'brief'), options.signal, 'low');
+  // An edit may add slides, so the room is for a plan somewhat longer than the one it starts from.
+  const room = planRoom(plan.slides.length + 10);
+  let answer = (await ask(prompt, schema, room)) as { summary?: unknown; language?: unknown } | null;
   let outline = readOutline(answer, byId);
   if (outline.problem) {
-    answer = (await ask(`${prompt}\n\nYour previous answer could not be used: ${outline.problem}. Answer again using only the listed patterns.`, schema)) as typeof answer;
+    answer = (await ask(`${prompt}\n\nYour previous answer could not be used: ${outline.problem}. Answer again using only the listed patterns.`, schema, room)) as typeof answer;
     outline = readOutline(answer, byId);
     if (outline.problem) throw new PlanError(`The model did not produce a usable plan: ${outline.problem}`);
   }

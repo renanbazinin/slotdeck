@@ -20,6 +20,8 @@ interface JsonRequest {
   system: string;       // the system prompt: the role and the rules
   prompt: string;       // the user message: the brief, the manifest's patterns, what to answer
   schema: JsonSchema;   // the JSON Schema the answer must follow
+  maxOutputTokens?: number; // a ceiling on the answer's size in tokens, reasoning not counted; see "Runaway answers"
+  effort?: 'low';       // set on short structural requests: use light reasoning if your model has a setting for it
   images?: Array<{ mimeType: string; data: Uint8Array }>; // pictures to look at; only draftManifest sends them
   signal?: AbortSignal; // pass it to your HTTP call so work can be cancelled
 }
@@ -30,8 +32,8 @@ The contract:
 - Resolve with the **parsed** value (an object), not a string of JSON.
 - The value should follow `schema`. slotdeck checks what it gets back against the template's manifest and asks
   again when content breaks a limit, but it expects the overall shape the schema describes.
-- Reject (throw) when the call fails. slotdeck does not retry failed calls; add retries in your provider if you
-  want them.
+- Reject (throw) when the call fails. The planner does not retry failed calls; retries belong in the provider,
+  which knows which failures pass by themselves (see "Runaway answers" and the Gemini adapter below).
 - One call is one request and one answer. There is no conversation state: every request carries everything it
   needs.
 
@@ -116,6 +118,47 @@ Every top-level answer slotdeck asks for is a JSON object, so looking for the ou
   characters for a template with 24 patterns.
 - `draftManifest` can send a picture of each slide (`images`). A provider for a model that cannot see may ignore
   them; the draft then relies on measurements alone.
+
+### Runaway answers: always set an output limit
+
+Now and then a model runs away inside one text field of its answer: it keeps adding sentence fragments to a
+single string until something stops it. This was seen with a planning request whose proper answer is about 200
+tokens: the model wrote more than 27,000 tokens into one field. Without a limit such a call takes minutes, costs
+tens of thousands of output tokens, and ends in a timeout. It is a matter of chance: the same request usually
+works the next time.
+
+It was tied to reasoning. With the model's default reasoning, a request for a text-only plan ran away in 6 of
+24 calls. With light reasoning it did not run away in 18 calls, and each took 4 seconds instead of about 35.
+That is why planning requests carry `effort: 'low'`.
+
+So a provider should do three things:
+
+1. **Use light reasoning when a request says `effort: 'low'`**, if your model has such a setting.
+2. **Limit the output of every call.** The planner passes `maxOutputTokens` with its requests: a generous
+   ceiling for that answer (for an outline of six slides, 1,360 tokens). Pass it to your model as its output
+   limit. If your model counts reasoning tokens against the same limit, add room for them. When a request
+   carries no estimate, use a default of your own rather than no limit.
+3. **Ask once more when an answer is cut off at the limit.** A cut-off answer is not valid JSON. Retry the same
+   request once, and throw if it is cut off again.
+
+```ts
+async generateJson({ system, prompt, schema, maxOutputTokens, effort, signal }) {
+  const limit = (maxOutputTokens ?? 16_000) + 8_000; // room for reasoning, if your model counts it here
+  const reasoning = effort === 'low' ? 'low' : undefined; // whatever your model calls its light setting
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const answer = await callModel({ system, prompt, schema, limit, reasoning, signal });
+    if (!answer.cutOffAtLimit) return JSON.parse(answer.text);
+  }
+  throw new Error(`The model's answer was cut off at ${limit} tokens twice`);
+}
+```
+
+The included Gemini adapter does all three. Its limit is the request's estimate plus 8,192 tokens for reasoning
+(24,576 when there is no estimate, or its own `maxOutputTokens` option when set). It sends a cut-off request
+once more. It uses thinking level `low` for requests with `effort: 'low'`, unless `thinkingLevel` is set on the
+adapter, which then applies to every request. It also sends a request once more after a server error (500 to
+504) or when the service's recitation filter blocks an ordinary answer, which happens at random; a bad key, a
+quota or a bad request is not repeated.
 
 ### Timeouts and cancellation
 
@@ -203,7 +246,9 @@ Options of both:
 | `fetch` | A custom `fetch`, for proxies and tests. |
 | `timeoutMs` | Gives up on a request after this long. Default 180000 (3 minutes). `0` waits for ever. |
 
-Only for `gemini`: `thinkingLevel` (`minimal`, `low`, `medium`, `high`) and `maxOutputTokens`.
+Only for `gemini`: `thinkingLevel` (`minimal`, `low`, `medium`, `high`) and `maxOutputTokens`, the output limit
+of a request with reasoning included. By default the limit is the request's own estimate plus 8,192 tokens, or
+24,576 when the request has none.
 
 Only for `geminiImages`: `imageSize` (`512`, `1K`, `2K`, `4K`; default `1K`) and `style`, a sentence appended to
 every prompt, such as a house photo style.

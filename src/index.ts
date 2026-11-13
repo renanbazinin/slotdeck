@@ -17,6 +17,7 @@ export { resolveAssets } from './plan/assets.ts';
 export type { ResolveOptions } from './plan/assets.ts';
 export { extractAssets } from './render/extract.ts';
 export type { AssetDef, IconDef, ImageDensity } from './plan/catalog.ts';
+export { isPlainText } from './plan/catalog.ts';
 export { loadTemplate, renderDeck } from './render/render.ts';
 export type { RenderOptions, RenderResult, Template } from './render/render.ts';
 

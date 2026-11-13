@@ -91,6 +91,11 @@ const definitions: ToolDefinition[] = [
         language: { type: 'string', description: 'BCP 47 tag of the language to write in, e.g. "he" or "en". Defaults to the template language.' },
         image_density: { type: 'string', enum: ['none', 'low', 'medium', 'high'], description: 'How many slides carry a photo. Defaults to medium.' },
         text_size: { type: 'string', enum: ['normal', 'large', 'x-large'], description: 'Size of body text. Larger text means less of it per slide. Defaults to normal.' },
+        text_only: {
+          type: 'boolean',
+          description:
+            'True when the user asks for a presentation of text only. Every slide is then plain text: a title with paragraphs or a list, with no pictures, icons, cards, figures, tables or charts.',
+        },
         instructions: { type: 'string', description: 'Audience, tone, and anything else to respect' },
       },
       required: ['topic'],
@@ -251,6 +256,7 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
       if (!canMakePhotos) brief.imageDensity = 'none';
       const size = args.text_size;
       if (size === 'normal' || size === 'large' || size === 'x-large') brief.textSize = size;
+      if (args.text_only === true) brief.textOnly = true;
 
       const plan = await planOutline(template, brief, planOptions(TOOL_NAMES.plan, signal));
       const id = newId('plan');

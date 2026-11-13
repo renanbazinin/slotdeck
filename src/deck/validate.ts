@@ -1,4 +1,4 @@
-import { effectiveSlots, itemRange, slotSources, textBudget } from '../template/manifest.ts';
+import { bodyTextScale, effectiveSlots, itemRange, slotSources, tableAtScale, textBudget } from '../template/manifest.ts';
 import type { PatternDef, SlotDef, TemplateManifest } from '../template/manifest.ts';
 import { isChartValue, isImageRef, isTableValue, toParagraphs } from './spec.ts';
 import type { ChartValue, DeckSpec, ImageRef, SlideSpec, TableValue } from './spec.ts';
@@ -171,8 +171,8 @@ export function validateDeck(manifest: TemplateManifest, deck: DeckSpec, options
       }
       const action = resolved.action;
       if (action.type === 'text' && slot.kind === 'text') {
-        // Larger deck text leaves less room in the same box.
-        const budget = textBudget(slot, deck.textScale);
+        // Larger text, asked for by the template or the deck, leaves less room in the same box.
+        const budget = textBudget(slot, bodyTextScale(manifest, deck.textScale));
         const chars = action.paragraphs.reduce((sum, paragraph) => sum + paragraph.length, 0);
         if (budget.maxChars !== undefined && chars > budget.maxChars) {
           issues.push({
@@ -197,7 +197,9 @@ export function validateDeck(manifest: TemplateManifest, deck: DeckSpec, options
         if (slot.maxColumns !== undefined && header.length > slot.maxColumns) warn(`the table has ${header.length} columns; the slot fits ${slot.maxColumns}`);
         if (slot.maxRows !== undefined && rows.length > slot.maxRows) warn(`the table has ${rows.length} rows; the slot fits ${slot.maxRows}`);
         const longest = Math.max(0, ...[header, ...rows].flat().map((cell) => cell.length));
-        if (slot.maxCellChars !== undefined && longest > slot.maxCellChars) warn(`a cell is ${longest} characters; cells fit about ${slot.maxCellChars}`);
+        // Enlarged table text leaves less room in a cell.
+        const cellChars = tableAtScale(slot, bodyTextScale(manifest, deck.textScale)).maxCellChars;
+        if (cellChars !== undefined && longest > cellChars) warn(`a cell is ${longest} characters; cells fit about ${cellChars}`);
       }
       if (action.type === 'chart' && slot.kind === 'chart') {
         const { categories, series } = action.chart;

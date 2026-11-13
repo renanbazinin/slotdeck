@@ -86,6 +86,7 @@ Arguments:
 | `language` | string | no | BCP 47 tag, such as `he` or `en`. Defaults to the template's language. |
 | `image_density` | `none`, `low`, `medium`, `high` | no | How many slides carry a photo. Default `medium`. Forced to `none` when no photos can be made. |
 | `text_size` | `normal`, `large`, `x-large` | no | Size of body text. Default `normal`. |
+| `text_only` | boolean | no | `true` when the person asks for a presentation of text only. Every slide is then plain text: a title with paragraphs or a list, with no pictures, icons, cards, figures, tables or charts. Only the template's plain text layouts are used. |
 | `instructions` | string | no | Audience, tone and anything else to respect. |
 
 Output:
@@ -247,6 +248,9 @@ async function runTurn(messages) {
 The tool descriptions already tell the model the order to work in. It helps to add, in your own system prompt:
 
 - Put every fact, figure and name the person gave into `topic`. Numbers that are not in `topic` will not be used.
+- Pass wishes about the kind of slides on, in the person's words ("no tables", "only cards"), in `topic` or
+  `instructions`. For a presentation of text only, set `text_only: true`: "no pictures" alone
+  (`image_density: "none"`) still allows cards, tables and charts.
 - Show the plan and wait for approval before calling `create_presentation`.
 - For a change to a finished presentation, call `edit_presentation` with the person's words; do not plan again
   from scratch.
