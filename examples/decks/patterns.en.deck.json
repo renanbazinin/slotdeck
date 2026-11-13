@@ -133,8 +133,7 @@
           "series": [
             { "name": "2024", "values": [5, 9, 11, 4] },
             { "name": "2025", "values": [7, 15, 19, 7] }
-          ],
-          "format": "0\"k\""
+          ]
         },
         "chartDescription": "Rides in thousands for each part of the season. This is a native chart: open the deck and choose Edit Data to change it.",
         "takeawayText": "Late summer almost doubled, once the tram-stop docks opened."

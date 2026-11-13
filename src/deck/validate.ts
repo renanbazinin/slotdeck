@@ -206,6 +206,11 @@ export function validateDeck(manifest: TemplateManifest, deck: DeckSpec, options
           warn(`the chart has ${categories.length} categories; the slot fits ${slot.maxCategories}`);
         }
         if (slot.maxSeries !== undefined && series.length > slot.maxSeries) warn(`the chart has ${series.length} series; the slot fits ${slot.maxSeries}`);
+        // A format the renderer does not know is shown as plain numbers, which is worth saying.
+        const format = (slide.slots[source] as { format?: unknown } | null | undefined)?.format;
+        if (format !== undefined && format !== 'number' && format !== 'percent') {
+          warn(`chart format ${JSON.stringify(format)} is not known and is ignored; use "number" or "percent"`);
+        }
       }
       if (action.type === 'image' && assets && !assets.has(action.image.asset)) {
         issues.push({ severity: 'error', slide: number, slot: source, message: `asset "${action.image.asset}" was not provided` });

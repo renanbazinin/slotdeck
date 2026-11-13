@@ -30,6 +30,15 @@ npm install slotdeck
 
 Node 22.18 or later. The package is ESM.
 
+## Documentation
+
+The full documentation is in [`docs/`](docs/README.md): concepts, both JSON formats, every function and option,
+the chat tools, connecting your own model, the template studio, and every error message with its fix.
+
+It is plain Markdown with no links to the internet, and it ships inside the npm package
+(`node_modules/slotdeck/docs/`), so a coding assistant without network access can read it where the package is
+installed. This page is the overview.
+
 ## How it works
 
 A template is an ordinary deck of sample slides, the kind a designer hands over:

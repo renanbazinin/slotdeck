@@ -64,3 +64,24 @@ test('a right-to-left deck on the left-to-right template mirrors its text and ke
   // The line beside the logo is a deck field that keeps its alignment.
   assert.match(paragraphOf('אופני הנהר'), /<a:pPr algn="l" rtl="1"/);
 });
+
+test('a chart format the renderer does not know is reported, not silently dropped', () => {
+  const deck: DeckSpec = {
+    version: 1,
+    fields: { organizationDepartment: 'x' },
+    slides: [
+      {
+        pattern: 'chart-native',
+        slots: {
+          title: 'T',
+          chartDescription: 'D',
+          chart: { type: 'column', categories: ['a'], series: [{ name: 's', values: [1] }], format: '0.0' as 'number' },
+        },
+      },
+    ],
+  };
+  assert.deepEqual(
+    validateDeck(manifest, deck, { layout: 'adaptive' }).map((issue) => `${issue.severity} ${issue.slot}: ${issue.message}`),
+    ['warning chart: chart format "0.0" is not known and is ignored; use "number" or "percent"'],
+  );
+});
