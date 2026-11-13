@@ -1,0 +1,65 @@
+{
+  "name": "slotdeck",
+  "version": "0.1.0",
+  "description": "Turn a PowerPoint template into new decks: a model plans the slides, the code clones the template's own slides and fills them.",
+  "keywords": [
+    "pptx",
+    "powerpoint",
+    "presentation",
+    "slides",
+    "template",
+    "deck",
+    "ooxml",
+    "llm",
+    "gemini",
+    "generator",
+    "rtl"
+  ],
+  "license": "MIT",
+  "author": "renanbazinin",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/renanbazinin/slotdeck.git"
+  },
+  "homepage": "https://github.com/renanbazinin/slotdeck#readme",
+  "bugs": {
+    "url": "https://github.com/renanbazinin/slotdeck/issues"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22.18"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "default": "./dist/node.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "inspect": "node scripts/inspect.ts",
+    "demo": "node examples/render-demo.ts",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run typecheck && npm test"
+  },
+  "dependencies": {
+    "@xmldom/xmldom": "^0.9.12",
+    "fflate": "^0.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
+  }
+}

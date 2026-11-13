@@ -1,0 +1,149 @@
+{
+  "version": 1,
+  "language": "en",
+  "direction": "ltr",
+  "brief": "A deck for new adopters from Harbor Street Shelter (a made-up animal shelter): why adopt a rescue dog, what the first month at home looks like, what it costs, and the mistakes to avoid. Our numbers: we rehomed 286 dogs in 2023, 351 in 2024 and 412 in 2025; 9 in 10 adoptions are still together after a year; a typical first year costs about 1,400 dollars.",
+  "slides": [
+    {
+      "pattern": "cover",
+      "slots": {
+        "title": "Welcome Home Guide",
+        "subtitle": "Essential advice for your journey with Harbor Street Shelter"
+      }
+    },
+    {
+      "pattern": "text-and-photo",
+      "slots": {
+        "photo": {
+          "asset": "gen-68db256a51fa6c83",
+          "prompt": "A smiling mixed-breed dog resting peacefully on a living room rug next to a family in warm morning light.",
+          "alt": "Rescue dog resting happily on a rug in a sunlit living room"
+        },
+        "title": "A Second Chance Changes Everything",
+        "subtitle": "The joy of rescue companion life",
+        "body": "Adopting a rescue dog transforms two lives at once. By opening your door, you give a deserving companion a safe haven and make room for another animal in need. Shelter dogs bring boundless gratitude, deep loyalty, and a remarkable capacity to love into their new families."
+      }
+    },
+    {
+      "pattern": "chart-native",
+      "slots": {
+        "title": "Growing Adoptions Year Over Year",
+        "chart": {
+          "type": "column",
+          "categories": [
+            "2023",
+            "2024",
+            "2025"
+          ],
+          "series": [
+            {
+              "name": "Dogs Rehomed",
+              "values": [
+                286,
+                351,
+                412
+              ]
+            }
+          ]
+        },
+        "chartDescription": "Harbor Street Shelter has steadily expanded rehoming efforts, placing 286 dogs in 2023, 351 in 2024, and 412 in 2025 into loving homes across the community.",
+        "takeawayText": "Over 1,000 rescue dogs have found permanent families in just three years."
+      }
+    },
+    {
+      "pattern": "photo-stat",
+      "slots": {
+        "photo": {
+          "asset": "gen-3f77828cd7e5e5e7",
+          "prompt": "A happy dog on a leash walking beside an owner along a scenic coastal trail during golden hour.",
+          "alt": "Adopter and dog walking happily together on an outdoor trail"
+        },
+        "title": "Lasting Bonds That Endure",
+        "statValue": "9/10",
+        "statDescription": "Nine out of ten adoptions from Harbor Street Shelter remain together after their first year, proving that thoughtful placement and patience build lifelong bonds."
+      }
+    },
+    {
+      "pattern": "icon-cards",
+      "slots": {
+        "title": "The First Month: Three Key Phases",
+        "card1Icon": {
+          "asset": "shield"
+        },
+        "card1Heading": "Days 1 to 3",
+        "card1Text": "Allow your dog quiet space to decompress, sleep, and take in the new environment without overwhelming visitors.",
+        "card2Icon": {
+          "asset": "clock"
+        },
+        "card2Heading": "Days 4 to 14",
+        "card2Text": "Establish consistent meal, walk, and sleep routines so your dog learns what to expect and starts feeling secure.",
+        "card3Icon": {
+          "asset": "heart"
+        },
+        "card3Heading": "Days 15 to 30",
+        "card3Text": "True personality emerges as trust solidifies. Reinforce positive habits and deepen your lifelong connection."
+      },
+      "items": 3
+    },
+    {
+      "pattern": "list-with-photo",
+      "slots": {
+        "title": "Early Transition Pitfalls to Avoid",
+        "bulletList": [
+          "Introducing too many guests or busy public places right away",
+          "Changing feeding schedules or switching diets abruptly",
+          "Expecting immediate obedience without giving time to decompress",
+          "Skipping crate or quiet zone setup for peaceful downtime"
+        ],
+        "photo": {
+          "asset": "gen-9dba369ed2b27ebc",
+          "prompt": "A calm dog resting in a cozy indoor bed next to a chew toy in a quiet room corner.",
+          "alt": "Dog resting peacefully in a quiet indoor rest area"
+        }
+      }
+    },
+    {
+      "pattern": "two-columns",
+      "slots": {
+        "title": "First-Year Costs Breakdown",
+        "col1Heading": "Daily Essentials",
+        "col1Text": [
+          "Quality dog food and daily nutrition",
+          "Leashes, collars, crates, and durable bedding",
+          "Enrichment toys, treats, and grooming supplies"
+        ],
+        "col2Heading": "Medical & Care",
+        "col2Text": [
+          "Annual wellness exams and core vaccinations",
+          "Flea, tick, and heartworm preventative care",
+          "Emergency reserves within the typical 1,400 dollar total"
+        ]
+      },
+      "items": 2
+    },
+    {
+      "pattern": "text-and-photo",
+      "slots": {
+        "photo": {
+          "asset": "gen-26be106ee19c21a1",
+          "prompt": "A shelter behavior specialist gently showing an adopter positive reinforcement training techniques with a mixed-breed dog in an outdoor yard.",
+          "alt": "Trainer demonstrating gentle leash guidance with an adopter and dog"
+        },
+        "title": "Ongoing Guidance Every Step",
+        "subtitle": "We stay with you after adoption day",
+        "body": "You never have to navigate pet parenthood alone. Harbor Street Shelter offers complimentary post-adoption consultations, certified trainer check-ins, and behavior resource packets. Whether you encounter leash reactivity or house-training questions, our dedicated team is here to help your team succeed."
+      }
+    },
+    {
+      "pattern": "closing",
+      "slots": {
+        "title": "Thank You",
+        "subtitle": "Thank you for opening your heart. Questions after adoption day: adopt@example.org"
+      }
+    }
+  ],
+  "title": "Welcome Home: Harbor Street Shelter Dog Adoption Guide",
+  "fields": {
+    "organizationDepartment": "Harbor Street Shelter  |  Adoption team"
+  }
+}

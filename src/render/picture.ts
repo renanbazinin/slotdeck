@@ -1,0 +1,124 @@
+import { NS, childElement, childElements, descendants, isElement, path, removeNode } from '../pptx/xml.ts';
+import type { Element, Node } from '../pptx/xml.ts';
+
+export interface PictureFill {
+  /** Relationship id of the new image on the slide. */
+  relId: string;
+  /** Pixel size of the new image. */
+  width: number;
+  height: number;
+  /** `cover` crops the image to the frame; `contain` shrinks the frame to the image. */
+  fit: 'cover' | 'contain';
+  alt?: string;
+  /** Area the picture may use, in slide units (EMU), replacing the sample picture's own frame. */
+  area?: { x: number; y: number; cx: number; cy: number };
+}
+
+/** Swaps the image of a `p:pic`, keeping its frame, geometry (e.g. rounded corners) and effects. */
+export function setPicture(pic: Element, fill: PictureFill): void {
+  if (pic.namespaceURI !== NS.p || pic.localName !== 'pic') {
+    throw new Error('image slots must point at a picture shape');
+  }
+  const blipFill = childElement(pic, NS.p, 'blipFill');
+  const blip = blipFill && childElement(blipFill, NS.a, 'blip');
+  const xfrm = path(pic, [NS.p, 'spPr'], [NS.a, 'xfrm']);
+  const off = xfrm && childElement(xfrm, NS.a, 'off');
+  const ext = xfrm && childElement(xfrm, NS.a, 'ext');
+  if (!blipFill || !blip || !off || !ext) throw new Error('picture shape is missing its image or its frame');
+  const doc = pic.ownerDocument;
+  if (!doc) throw new Error('picture is detached from its document');
+
+  const relPrefix = pic.lookupPrefix(NS.r) ?? 'r';
+  blip.setAttributeNS(NS.r, `${relPrefix}:embed`, fill.relId);
+  blip.removeAttributeNS(NS.r, 'link');
+
+  // An SVG variant stored next to the old image would win over the new bitmap.
+  for (const extension of descendants(blip, NS.a, 'ext')) {
+    if (childElements(extension).some((child) => child.localName === 'svgBlip')) removeNode(extension);
+  }
+  const extensionList = childElement(blip, NS.a, 'extLst');
+  if (extensionList && childElements(extensionList).length === 0) removeNode(extensionList);
+
+  if (fill.area) {
+    const parent = pic.parentNode as Element | null;
+    if (!parent || parent.localName !== 'spTree') throw new Error('a picture area can only be set for a picture that is not inside a group');
+    off.setAttribute('x', String(Math.round(fill.area.x)));
+    off.setAttribute('y', String(Math.round(fill.area.y)));
+    ext.setAttribute('cx', String(Math.round(fill.area.cx)));
+    ext.setAttribute('cy', String(Math.round(fill.area.cy)));
+  }
+
+  const frame = {
+    x: Number(off.getAttribute('x') ?? 0),
+    y: Number(off.getAttribute('y') ?? 0),
+    cx: Number(ext.getAttribute('cx') ?? 0),
+    cy: Number(ext.getAttribute('cy') ?? 0),
+  };
+  const scale = ancestorScale(pic);
+  const frameAspect = (frame.cx * scale.sx) / (frame.cy * scale.sy);
+  const imageAspect = fill.width / fill.height;
+  const usable = Number.isFinite(frameAspect) && frameAspect > 0 && Number.isFinite(imageAspect) && imageAspect > 0;
+
+  const oldCrop = childElement(blipFill, NS.a, 'srcRect');
+  if (oldCrop) removeNode(oldCrop);
+
+  if (usable && fill.fit === 'cover') {
+    // Crop the image symmetrically until its aspect ratio matches the frame.
+    const crop = doc.createElementNS(NS.a, `${blip.prefix ? `${blip.prefix}:` : ''}srcRect`);
+    if (imageAspect > frameAspect) {
+      const side = Math.round(((1 - frameAspect / imageAspect) / 2) * 100000);
+      if (side > 0) {
+        crop.setAttribute('l', String(side));
+        crop.setAttribute('r', String(side));
+      }
+    } else {
+      const side = Math.round(((1 - imageAspect / frameAspect) / 2) * 100000);
+      if (side > 0) {
+        crop.setAttribute('t', String(side));
+        crop.setAttribute('b', String(side));
+      }
+    }
+    if (crop.attributes.length > 0) blipFill.insertBefore(crop, blip.nextSibling);
+  } else if (usable) {
+    // Shrink the frame around its centre so the whole image shows undistorted.
+    if (imageAspect > frameAspect) {
+      const cy = Math.round((frame.cx * scale.sx) / imageAspect / scale.sy);
+      off.setAttribute('y', String(Math.round(frame.y + (frame.cy - cy) / 2)));
+      ext.setAttribute('cy', String(cy));
+    } else {
+      const cx = Math.round((frame.cy * scale.sy * imageAspect) / scale.sx);
+      off.setAttribute('x', String(Math.round(frame.x + (frame.cx - cx) / 2)));
+      ext.setAttribute('cx', String(cx));
+    }
+  }
+
+  if (!childElement(blipFill, NS.a, 'stretch') && !childElement(blipFill, NS.a, 'tile')) {
+    const prefix = blip.prefix ? `${blip.prefix}:` : '';
+    const stretch = doc.createElementNS(NS.a, `${prefix}stretch`);
+    stretch.appendChild(doc.createElementNS(NS.a, `${prefix}fillRect`));
+    blipFill.appendChild(stretch);
+  }
+
+  const props = path(pic, [NS.p, 'nvPicPr'], [NS.p, 'cNvPr']);
+  if (props) {
+    props.removeAttribute('title');
+    props.setAttribute('descr', fill.alt ?? '');
+  }
+}
+
+/** Combined scale of every group the element sits in (child units to slide units). */
+function ancestorScale(element: Element): { sx: number; sy: number } {
+  let sx = 1;
+  let sy = 1;
+  for (let node: Node | null = element.parentNode; node && isElement(node); node = node.parentNode) {
+    if (node.namespaceURI !== NS.p || node.localName !== 'grpSp') continue;
+    const xfrm = path(node, [NS.p, 'grpSpPr'], [NS.a, 'xfrm']);
+    const ext = xfrm && childElement(xfrm, NS.a, 'ext');
+    const childExt = xfrm && childElement(xfrm, NS.a, 'chExt');
+    const cx = Number(childExt?.getAttribute('cx') ?? 0);
+    const cy = Number(childExt?.getAttribute('cy') ?? 0);
+    if (cx > 0) sx *= Number(ext?.getAttribute('cx') ?? cx) / cx;
+    if (cy > 0) sy *= Number(ext?.getAttribute('cy') ?? cy) / cy;
+  }
+  return { sx, sy };
+}

@@ -1,0 +1,306 @@
+// Changes a manifest as a person asks in words. The model reads the manifest next to the
+// measured shapes of each slide and answers with operations for `changeManifest`; it writes no
+// manifest itself, so whatever it answers goes through the same checks as a change made by hand.
+import type { JsonSchema, LlmProvider } from '../llm/provider.ts';
+import type { Template } from '../render/render.ts';
+import { changeManifest, describeSlot } from './change.ts';
+import type { ChangeResult, ManifestChange } from './change.ts';
+import { inspectTemplate } from './inspect.ts';
+import type { TableTextStyle } from './manifest.ts';
+import { ROLES, describeShape, frameFacts } from './measure.ts';
+import type { Role } from './measure.ts';
+
+export interface ManifestEditOptions {
+  llm: LlmProvider;
+  signal?: AbortSignal;
+}
+
+export interface ManifestEditResult extends ChangeResult {
+  /** What the model has to say to the person: what it could not do, or what it needs to know. Often empty. */
+  note: string;
+}
+
+const OPS = ['setSlot', 'addSlot', 'removeSlot', 'setRepeat', 'removeRepeat', 'setPattern', 'copyPattern', 'removePattern', 'addPattern', 'setManifest'] as const;
+
+/** What an operation's values may set. A table's text styles are spelled out so that every value is one word or number. */
+const PROPERTIES = [
+  'name',
+  'id',
+  'description',
+  'figures',
+  'role',
+  'optional',
+  'empty',
+  'maxChars',
+  'maxParagraphs',
+  'deckField',
+  'fontSize',
+  'imageKind',
+  'maxColumns',
+  'maxRows',
+  'maxCellChars',
+  'headerSize',
+  'headerBold',
+  'headerColor',
+  'headerFont',
+  'bodySize',
+  'bodyBold',
+  'bodyColor',
+  'bodyFont',
+  'maxCategories',
+  'maxSeries',
+  'min',
+  'max',
+  'slide',
+  'language',
+  'direction',
+  'alignOnDirectionChange',
+] as const;
+
+const SYSTEM = [
+  'You maintain the manifest of a presentation template. The manifest says which slides of a pptx are reusable layouts ("patterns") and which shapes on them are slots that new content replaces.',
+  'A person asks for a change in their own words. You answer with the smallest list of operations that does what they asked, and nothing they did not ask for.',
+  'You never write positions, sizes or budgets the person did not state: the software measures the shapes and works those out.',
+].join(' ');
+
+const GUIDE = [
+  'Every operation has "op", "pattern", "shape", "slot" and "values". Give "" for a pattern, shape or slot the operation does not use. List in "values" only the properties that change, each as { property, value } with the value written as text ("6", "true", "drop").',
+  'Operations:',
+  '- setSlot (pattern, slot): change a slot. Values: empty ("error" makes it required, "remove" optional, "keep" always leaves the template\'s own content, "drop" always removes the shape); maxChars, maxParagraphs (limits of a text); fontSize (a text size in points); deckField (ties a text to one value for the whole deck); name (renames the slot); imageKind ("photo", "icon" or "graphic"). For a table: maxColumns, maxRows, maxCellChars, headerSize, headerBold, headerColor (hex), headerFont, bodySize, bodyBold, bodyColor, bodyFont. For a chart: maxCategories, maxSeries.',
+  '- addSlot (pattern, shape): make a shape of the slide a slot, or give the shape of an existing slot another role. Values: role, and optionally name and optional ("true"). Roles: title, subtitle, text, list (one paragraph per item), number (a large figure), caption, photo, icon, graphic (a supplied chart or diagram picture), chart (a native editable chart in place of a picture), table, decoration (removed from every slide made with the pattern), fixed (stays exactly as designed).',
+  '- removeSlot (pattern, slot): the shape stays as the template shows it.',
+  '- setRepeat (pattern): how many items the row or grid of a pattern takes. Values: min, max.',
+  '- removeRepeat (pattern): the items stop being a row whose number can change.',
+  '- setPattern (pattern): Values: id (renames the pattern), description, figures ("true" offers it only when a brief has numbers).',
+  '- copyPattern (pattern): a second pattern from the same slide, to turn into a variant with further operations. Values: id of the new pattern, and optionally description.',
+  '- removePattern (pattern).',
+  '- addPattern: make a slide without a pattern into one. Values: slide, id, and optionally description.',
+  '- setManifest: settings of the whole template. Values: name, language, direction ("rtl" or "ltr"), alignOnDirectionChange ("flip" or "keep").',
+  'A change to one item of a row (card1Icon) is made to that slot of every item, so give it once.',
+  "When a size, a table's columns or a row count changes, do not also set a character budget: the software measures the new one.",
+  'Operations run in order, so a pattern made by copyPattern can be named by the operations after it.',
+  'A person may speak of a slide by its number. The list shows which pattern each slide is.',
+  'If something asked for cannot be done with these operations, leave it out and say so in "note", in the language the person wrote in. Otherwise "note" is "".',
+].join('\n');
+
+// Models that fill a schema write its properties in alphabetical order. The names are chosen so
+// that this order is also the order of thought: the operation, what it is about, then its values.
+// Every property is required, so the model never has to decide whether to skip one.
+// The arrays carry no length limits: Gemini refuses a schema whose nested limits multiply into too many states.
+const SCHEMA: JsonSchema = {
+  type: 'object',
+  properties: {
+    changes: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          op: { type: 'string', enum: [...OPS] },
+          pattern: { type: 'string', description: 'id of the pattern, or ""' },
+          shape: { type: 'string', description: 'shape id without the #, or ""' },
+          slot: { type: 'string', description: 'name of the slot, or ""' },
+          values: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: { property: { type: 'string', enum: [...PROPERTIES] }, value: { type: 'string' } },
+              required: ['property', 'value'],
+            },
+          },
+        },
+        required: ['op', 'pattern', 'shape', 'slot', 'values'],
+      },
+    },
+    note: { type: 'string' },
+  },
+  required: ['changes', 'note'],
+};
+
+/**
+ * The manifest as text: every pattern with its slots and their limits, next to the measured
+ * shapes of its slide that are not slots. This is what the model reads; an app can show it to
+ * its own chat model too.
+ */
+export function describeManifest(template: Template): string {
+  const { manifest } = template;
+  const info = inspectTemplate(template.pkg);
+  const frame = frameFacts(info);
+  const used = new Set(manifest.patterns.map((pattern) => pattern.sourceSlide));
+  const unused = info.slides.map((slide) => slide.number).filter((number) => !used.has(number));
+
+  const blocks = manifest.patterns.map((pattern) => {
+    const slide = info.slides[pattern.sourceSlide - 1];
+    const shapes = new Map((slide?.shapes ?? []).map((shape) => [shape.id, shape]));
+    const slotted = new Set(pattern.slots.map((slot) => slot.shapeId));
+    const lines = [`Pattern "${pattern.id}", slide ${pattern.sourceSlide}${pattern.figures ? ', offered only for briefs with figures' : ''}. ${pattern.description}`];
+    const repeat = pattern.repeat;
+    if (repeat) {
+      const drawn = repeat.shapes.length;
+      lines.push(`  ${repeat.columns ? `grid of ${drawn} ${repeat.item}s, ${repeat.columns} to a line` : `row of ${drawn} ${repeat.item}s`} (${repeat.slots.join(', ')}); takes ${repeat.min ?? drawn} to ${repeat.max ?? drawn}`);
+    }
+    lines.push('  slots:');
+    for (const slot of pattern.slots) {
+      const shape = shapes.get(slot.shapeId);
+      lines.push(`    ${slot.name}: ${describeSlot(slot)} | ${shape ? describeShape(shape, info) : `#${slot.shapeId}, not on the slide`}`);
+    }
+    const others = (slide?.shapes ?? []).filter((shape) => !slotted.has(shape.id) && shape.kind !== 'group');
+    if (others.length > 0) {
+      lines.push('  other shapes on the slide, which stay as designed:');
+      for (const shape of others) lines.push(`    ${describeShape(shape, info)}${frame.isFrame(shape) ? ' (repeats across slides)' : ''}`);
+    }
+    return lines.join('\n');
+  });
+
+  return [
+    `Template "${manifest.name}"${manifest.language ? `, written in ${manifest.language}` : ''}, reads ${manifest.direction === 'rtl' ? 'right to left' : 'left to right'}; ${(manifest.alignOnDirectionChange ?? 'flip') === 'flip' ? 'mirrors' : 'keeps'} alignment in decks that read the other way. Positions and sizes are percentages of the slide.`,
+    ...blocks,
+    unused.length > 0 ? `Slides without a pattern: ${unused.join(', ')}.` : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+const text = (value: unknown): string | undefined => (typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined);
+const oneOf = <T extends string>(value: unknown, options: readonly T[]): T | undefined => options.find((option) => option === value);
+
+/** Turns one answered operation into a change, reading only the values that operation uses. */
+function toChange(raw: Record<string, unknown>): ManifestChange | undefined {
+  const op = oneOf(raw.op, OPS);
+  const pattern = text(raw.pattern) ?? '';
+  const slot = text(raw.slot) ?? '';
+  const shape = (text(raw.shape) ?? '').replace(/^#/, '');
+  const values = new Map<string, string>();
+  for (const entry of Array.isArray(raw.values) ? raw.values : []) {
+    const property = text((entry as { property?: unknown } | null)?.property);
+    const value = (entry as { value?: unknown } | null)?.value;
+    if (property && (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean')) values.set(property, String(value).trim());
+  }
+  const str = (property: string) => text(values.get(property));
+  const num = (property: string) => {
+    const value = Number(values.get(property));
+    return values.has(property) && Number.isFinite(value) && value > 0 ? value : undefined;
+  };
+  const count = (property: string) => {
+    const value = num(property);
+    return value === undefined ? undefined : Math.round(value);
+  };
+  const bool = (property: string) => {
+    const value = values.get(property)?.toLowerCase();
+    return value === 'true' ? true : value === 'false' ? false : undefined;
+  };
+  const choice = <T extends string>(property: string, options: readonly T[]) => oneOf(values.get(property), options);
+  const style = (prefix: 'header' | 'body'): TableTextStyle | undefined => {
+    const result: TableTextStyle = {};
+    const size = num(`${prefix}Size`);
+    if (size !== undefined) result.size = size;
+    const bold = bool(`${prefix}Bold`);
+    if (bold !== undefined) result.bold = bold;
+    const color = str(`${prefix}Color`)?.replace(/^#/, '').toUpperCase();
+    if (color && /^[0-9A-F]{6}$/.test(color)) result.color = color;
+    const font = str(`${prefix}Font`);
+    if (font) result.font = font;
+    return Object.keys(result).length > 0 ? result : undefined;
+  };
+  const put = <T extends object>(target: T, entries: Record<string, unknown>): T => {
+    for (const [key, value] of Object.entries(entries)) if (value !== undefined) (target as Record<string, unknown>)[key] = value;
+    return target;
+  };
+
+  switch (op) {
+    case 'setSlot':
+      return put({ op, pattern, slot } as ManifestChange, {
+        name: str('name'),
+        description: str('description'),
+        empty: choice('empty', ['error', 'remove', 'keep', 'drop'] as const),
+        maxChars: count('maxChars'),
+        maxParagraphs: count('maxParagraphs'),
+        deckField: str('deckField'),
+        fontSize: num('fontSize'),
+        imageKind: choice('imageKind', ['photo', 'icon', 'graphic'] as const),
+        maxColumns: count('maxColumns'),
+        maxRows: count('maxRows'),
+        maxCellChars: count('maxCellChars'),
+        headerText: style('header'),
+        bodyText: style('body'),
+        maxCategories: count('maxCategories'),
+        maxSeries: count('maxSeries'),
+      });
+    case 'addSlot':
+      return put({ op, pattern, shape, role: (choice('role', ROLES) ?? values.get('role') ?? '') as Role } as ManifestChange, {
+        name: str('name'),
+        optional: bool('optional') === true ? true : undefined,
+      });
+    case 'removeSlot':
+      return { op, pattern, slot };
+    case 'setRepeat':
+      return put({ op, pattern } as ManifestChange, { min: count('min'), max: count('max') });
+    case 'removeRepeat':
+    case 'removePattern':
+      return { op, pattern };
+    case 'setPattern':
+      return put({ op, pattern } as ManifestChange, { id: str('id'), description: str('description'), figures: bool('figures') });
+    case 'copyPattern':
+      return put({ op, pattern, id: str('id') ?? '' } as ManifestChange, { description: str('description') });
+    case 'addPattern':
+      return put({ op, slide: count('slide') ?? 0, id: str('id') ?? '' } as ManifestChange, { description: str('description') });
+    case 'setManifest':
+      return put({ op } as ManifestChange, {
+        name: str('name'),
+        language: str('language'),
+        direction: choice('direction', ['rtl', 'ltr'] as const),
+        alignOnDirectionChange: choice('alignOnDirectionChange', ['flip', 'keep'] as const),
+      });
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Changes a template's manifest as an instruction asks: "drop the second page number on slide
+ * 13", "let the cards take up to six", "set the table text to 9 pt". Returns the new manifest
+ * with what was changed and what was refused; the template itself is not touched.
+ *
+ * One model call, and a second when the software refused some of the first answer, so the model
+ * can correct it (six cards do not fit; the most is five).
+ */
+export async function editManifest(template: Template, instruction: string, options: ManifestEditOptions): Promise<ManifestEditResult> {
+  const ask = async (prompt: string): Promise<{ note: string; changes: ManifestChange[] }> => {
+    const answer = (await options.llm.generateJson({ system: SYSTEM, prompt, schema: SCHEMA, ...(options.signal ? { signal: options.signal } : {}) })) as {
+      note?: unknown;
+      changes?: unknown;
+    } | null;
+    const changes = (Array.isArray(answer?.changes) ? answer.changes : [])
+      .map((raw) => (raw && typeof raw === 'object' ? toChange(raw as Record<string, unknown>) : undefined))
+      .filter((change): change is ManifestChange => change !== undefined);
+    return { note: typeof answer?.note === 'string' ? answer.note.trim() : '', changes };
+  };
+
+  const prompt = [describeManifest(template), GUIDE, `The person asks:\n${instruction.trim()}`].join('\n\n');
+  const first = await ask(prompt);
+  let result = changeManifest(template, first.changes);
+  let note = first.note;
+
+  if (result.rejected.length > 0) {
+    const second = await ask(
+      [
+        prompt,
+        `You answered with these operations:\n${first.changes.map((change, index) => `${index + 1}. ${JSON.stringify(change)}`).join('\n')}`,
+        `The software made these:\n${result.applied.map((entry) => `${entry.index + 1}. ${entry.message}`).join('\n') || '(none)'}`,
+        `It refused these, and nothing of them was done:\n${result.rejected.map((entry) => `${entry.index + 1}. ${entry.reason}`).join('\n')}`,
+        'Answer with operations that replace the refused ones only, so that what the person asked is done as far as it can be. Do not repeat operations that were made. Where the reason shows it cannot be done, give no operation and tell the person in "note" what the limit is.',
+      ].join('\n\n'),
+    );
+    if (second.changes.length > 0) {
+      const again = changeManifest({ pkg: template.pkg, manifest: result.manifest }, second.changes);
+      const offset = first.changes.length;
+      result = {
+        manifest: again.manifest,
+        applied: [...result.applied, ...again.applied.map((entry) => ({ ...entry, index: entry.index + offset }))],
+        rejected: again.rejected.map((entry) => ({ ...entry, index: entry.index + offset })),
+        issues: again.issues,
+      };
+    }
+    note = second.note || note;
+  }
+  return { ...result, note };
+}

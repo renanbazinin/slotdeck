@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "title": "שנה של אופני הנהר",
+  "brief": "Hand-written example in Hebrew on the left-to-right demo template: text direction flips, the layout stays. The organization and all its numbers are invented.",
+  "language": "he",
+  "direction": "rtl",
+  "fields": {
+    "organizationDepartment": "אופני הנהר  |  סיכום עונה"
+  },
+  "slides": [
+    {
+      "pattern": "cover",
+      "slots": {
+        "title": "שנה של אופני הנהר",
+        "subtitle": "מה למדנו בעונת 2025, במספרים ובסיפורים"
+      }
+    },
+    {
+      "pattern": "text-and-photo",
+      "slots": {
+        "title": "האופניים הפכו לחלק מהדרך לעבודה",
+        "subtitle": "בוקר של יום חול הוא שעת השיא",
+        "body": [
+          "בעונות הראשונות רוב הרכיבות היו טיולי סוף שבוע לאורך הנהר. השנה שעת השיא עברה לשמונה בבוקר באמצע השבוע.",
+          "הרוכבים הסבירו לנו למה: העמדות החדשות צמודות לתחנות הרכבת הקלה, והאופניים סוגרים את הקטע האחרון בדרך."
+        ],
+        "photo": { "asset": "photo-tall", "alt": "רוכב בדרך לעבודה על שביל לאורך הנהר" }
+      }
+    },
+    {
+      "pattern": "icon-cards",
+      "items": 4,
+      "slots": {
+        "title": "ארבעה שינויים לעונה הבאה",
+        "card1Icon": { "asset": "clock" },
+        "card1Heading": "שעות ארוכות",
+        "card1Text": "האופניים נפתחים מחמש בבוקר, למשמרות המוקדמות ולרכבות הראשונות.",
+        "card2Icon": { "asset": "shield" },
+        "card2Heading": "עמדות בטוחות",
+        "card2Text": "בכל תחנה יותקנו תאורה ומצלמה לפני פתיחת העונה.",
+        "card3Icon": { "asset": "people" },
+        "card3Heading": "כרטיס קבוצתי",
+        "card3Text": "כרטיס אחד לעד חמישה רוכבים, שנקנה פעם אחת ומשותף בקישור.",
+        "card4Icon": { "asset": "leaf" },
+        "card4Heading": "מסלול ירוק",
+        "card4Text": "שביל חדש בפארק מחבר בין שתי השכונות שאין בהן תחנה."
+      }
+    },
+    {
+      "pattern": "stat-cards",
+      "items": 4,
+      "slots": {
+        "title": "העונה במספרים",
+        "stat1Number": "48k",
+        "stat1Caption": "רכיבות בין אפריל לאוקטובר",
+        "stat2Number": "310",
+        "stat2Caption": "אופניים ברחוב בשיא העונה",
+        "stat3Number": "26",
+        "stat3Caption": "תחנות, שש מהן חדשות",
+        "stat4Number": "4.6",
+        "stat4Caption": "דירוג ממוצע מתוך חמש"
+      }
+    },
+    {
+      "pattern": "table",
+      "slots": {
+        "title": "ארבע התחנות העמוסות",
+        "table": {
+          "header": ["תחנה", "עמדות", "רכיבות ביום", "שעת שיא"],
+          "rows": [
+            ["כיכר הרכבת", "24", "410", "08:00"],
+            ["שער הנהר", "18", "365", "17:00"],
+            ["השוק", "16", "290", "12:00"],
+            ["הגשר הצפוני", "12", "240", "08:00"]
+          ]
+        },
+        "footnote": "ממוצעים לחודשים יוני עד אוגוסט. כל הנתונים במצגת הומצאו לצורך ההדגמה."
+      }
+    },
+    {
+      "pattern": "chart-native",
+      "slots": {
+        "title": "הרכיבות גדלו לאורך הקיץ",
+        "chart": {
+          "type": "column",
+          "categories": ["אפריל-מאי", "יוני-יולי", "אוגוסט-ספטמבר", "אוקטובר"],
+          "series": [
+            { "name": "2024", "values": [5, 9, 11, 4] },
+            { "name": "2025", "values": [7, 15, 19, 7] }
+          ],
+          "format": "0\"k\""
+        },
+        "chartDescription": "רכיבות באלפים בכל חלק של העונה. זה תרשים אמיתי של PowerPoint: אפשר לפתוח את המצגת ולערוך את הנתונים.",
+        "takeawayText": "סוף הקיץ כמעט הוכפל, מאז שנפתחו העמדות ליד הרכבת הקלה."
+      }
+    },
+    {
+      "pattern": "closing",
+      "slots": {
+        "title": "תודה",
+        "subtitle": "שאלות ורעיונות: hello@example.org"
+      }
+    }
+  ]
+}

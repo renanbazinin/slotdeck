@@ -1,0 +1,345 @@
+import { unstatedChartValues } from '../deck/numbers.ts';
+import { DeckValidationError } from '../deck/validate.ts';
+import type { Issue, LayoutMode } from '../deck/validate.ts';
+import type { DeckSpec } from '../deck/spec.ts';
+import type { JsonSchema, LlmProvider } from '../llm/provider.ts';
+import type { Template } from '../render/render.ts';
+import { TEXT_SIZES } from '../template/manifest.ts';
+import type { Direction, TextSize } from '../template/manifest.ts';
+import { buildCatalog, describeCatalog, itemsProperty, outlineSchema, planPattern, readItems } from './catalog.ts';
+import type { AssetDef, Catalog, CatalogContext, IconDef, ImageDensity, UsablePattern, WriteItem } from './catalog.ts';
+import { cleanText, suppliesText, systemPrompt, writeSlides } from './write.ts';
+
+/** What the person asked for. */
+export interface Brief {
+  /** What the deck is about, in the person's own words. */
+  prompt: string;
+  /** A fixed number of slides, or a range. Defaults to 6 to 10. */
+  slideCount?: number | { min: number; max: number };
+  /** BCP 47 tag of the language to write in. Defaults to the template's language. */
+  language?: string;
+  /** Reading direction. Defaults to the language's. */
+  direction?: Direction;
+  /** How many slides should carry a photo. Defaults to `medium`. */
+  imageDensity?: ImageDensity;
+  /** Anything else to respect: audience, tone, points that must be covered. */
+  instructions?: string;
+  /** Deck-level values the template needs, e.g. the unit shown in the header. */
+  fields?: Record<string, string>;
+  /** Size of body text. Larger text means less of it fits on a slide. Defaults to `normal`. */
+  textSize?: TextSize;
+}
+
+export type PlanProgress =
+  | { stage: 'outline' }
+  | { stage: 'write'; slides: number }
+  | { stage: 'repair'; attempt: number; issues: number };
+
+export interface PlanOptions {
+  llm: LlmProvider;
+  /** Defaults to `strict`. */
+  layout?: LayoutMode;
+  /** The app's icon set. Patterns with icon slots are only offered when this is given. */
+  icons?: IconDef[];
+  /** Ready-made pictures the deck may use, e.g. rendered diagrams. */
+  assets?: AssetDef[];
+  /** Restrict the deck to these pattern ids. */
+  patterns?: string[];
+  /**
+   * When patterns built around numbers may be used. `from-brief` (default) offers them only if
+   * the brief contains figures; a model given such a pattern and no data tends to invent some.
+   */
+  numberPatterns?: 'from-brief' | 'always' | 'never';
+  /** How many times the model may be asked to fix a draft that breaks the template's limits. Defaults to 2. */
+  maxRepairs?: number;
+  onProgress?: (event: PlanProgress) => void;
+  signal?: AbortSignal;
+}
+
+export interface OutlineEntry {
+  pattern: string;
+  purpose: string;
+  /** For a pattern with a row of items: how many items the slide has. */
+  items?: number;
+}
+
+export interface PlanResult {
+  deck: DeckSpec;
+  /** Limits the final draft still exceeds, e.g. text a little over a slot's budget. */
+  warnings: Issue[];
+  outline: OutlineEntry[];
+}
+
+export class PlanError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PlanError';
+  }
+}
+
+const RTL_LANGUAGES = new Set(['ar', 'dv', 'fa', 'he', 'ps', 'sd', 'ug', 'ur', 'yi']);
+
+export function directionOf(language: string): Direction {
+  return RTL_LANGUAGES.has(language.toLowerCase().split('-')[0] ?? '') ? 'rtl' : 'ltr';
+}
+
+/** Whether a text contains any digit, in any script. */
+export function hasFigures(text: string): boolean {
+  return /\p{Nd}/u.test(text);
+}
+
+/** Binds a provider to a system prompt and an optional abort signal. */
+export function asker(llm: LlmProvider, system: string, signal: AbortSignal | undefined) {
+  return (prompt: string, schema: JsonSchema): Promise<unknown> =>
+    llm.generateJson(signal ? { system, prompt, schema, signal } : { system, prompt, schema });
+}
+
+const DENSITY_GUIDANCE: Record<ImageDensity, string> = {
+  none: 'Do not plan any photos.',
+  low: 'Use a pattern with a photo on at most a quarter of the slides.',
+  medium: 'Use a pattern with a photo on about half of the slides.',
+  high: 'Prefer patterns with a photo wherever they suit the content.',
+};
+
+function briefText(brief: Brief): string {
+  return [`Brief:\n${brief.prompt.trim()}`, brief.instructions?.trim() ? `Also respect:\n${brief.instructions.trim()}` : '']
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+function outlinePrompt(brief: Brief, catalog: Catalog, count: { min: number; max: number }, density: ImageDensity, textScale = 1): string {
+  const size = count.min === count.max ? `exactly ${count.min}` : `${count.min} to ${count.max}`;
+  return [
+    briefText(brief),
+    `Plan a deck of ${size} slides. Choose one pattern for each slide from this list ("?" marks an optional slot):`,
+    describeCatalog(catalog, textScale),
+    [
+      '- Open with an opening pattern and end with a closing pattern when the list has them.',
+      '- For a pattern with a row of items, set "items" to the number the content really has. Do not pad a list to fill a row.',
+      '- Choose a pattern only when the content can fill every required slot within its limits.',
+      '- Vary the patterns across the deck.',
+      `- ${DENSITY_GUIDANCE[density]}`,
+    ].join('\n'),
+  ].join('\n\n');
+}
+
+function writePrompt(brief: Brief, items: WriteItem[], context: CatalogContext): string {
+  const slides = items.map(({ number, pattern, purpose }) => `s${number}: ${pattern.def.id}. ${purpose}`).join('\n');
+  return [
+    briefText(brief),
+    `Write the content of each slide of this deck:\n${slides}`,
+    ...suppliesText(items, context),
+    'Fill every required property. Leave an optional property out when the slide is better without it.',
+  ].join('\n\n');
+}
+
+/** A deck before its content is written: the slides in order, each with a pattern and the point it makes. */
+export interface DeckPlan {
+  version: 1;
+  title: string;
+  /** The request, with everything needed to write the deck later. */
+  brief: Brief;
+  slides: OutlineEntry[];
+}
+
+interface Planning {
+  layout: LayoutMode;
+  language: string;
+  direction: Direction;
+  density: ImageDensity;
+  fields: Record<string, string>;
+  context: CatalogContext;
+  catalog: Catalog;
+  byId: Map<string, UsablePattern>;
+}
+
+/** Everything the planning stages derive from a brief and the caller's options, so they cannot disagree. */
+function planning(template: Template, brief: Brief, options: PlanOptions): Planning {
+  const { manifest } = template;
+  const layout = options.layout ?? 'strict';
+  const language = brief.language ?? manifest.language ?? 'en';
+  const direction = brief.direction ?? directionOf(language);
+  const density = brief.imageDensity ?? 'medium';
+  const fields = brief.fields ?? {};
+
+  const numbers = options.numberPatterns ?? 'from-brief';
+  const figures = numbers === 'always' || (numbers === 'from-brief' && hasFigures(`${brief.prompt} ${brief.instructions ?? ''}`));
+  const textScale = TEXT_SIZES[brief.textSize ?? 'normal'] ?? 1;
+  const context: CatalogContext = { layout, fields, icons: options.icons ?? [], assets: options.assets ?? [], imageDensity: density, figures, textScale };
+  if (options.patterns) context.allow = options.patterns;
+  const catalog = buildCatalog(manifest, context);
+  if (catalog.patterns.length === 0) {
+    const reasons = catalog.excluded.map((entry) => `${entry.id} ${entry.reason}`).join('; ');
+    throw new PlanError(`No pattern of template "${manifest.name}" can be used${reasons ? `: ${reasons}` : ''}`);
+  }
+  return { layout, language, direction, density, fields, context, catalog, byId: new Map(catalog.patterns.map((pattern) => [pattern.def.id, pattern])) };
+}
+
+function readOutline(answer: unknown, byId: Map<string, UsablePattern>): { title: string; entries: OutlineEntry[]; problem?: string } {
+  const raw = answer as { title?: unknown; slides?: unknown } | null;
+  const list = Array.isArray(raw?.slides) ? raw.slides : [];
+  const problems: string[] = [];
+  const entries = list.map((item, index) => {
+    const raw = item as { pattern?: unknown; purpose?: unknown; items?: unknown };
+    const entry: OutlineEntry = { pattern: cleanText(raw?.pattern), purpose: cleanText(raw?.purpose) };
+    const pattern = byId.get(entry.pattern);
+    if (pattern) {
+      const count = readItems(pattern.def, raw?.items);
+      if (count.problem) problems.push(`slide ${index + 1}: ${count.problem}`);
+      if (count.items !== undefined) entry.items = count.items;
+    }
+    return entry;
+  });
+  const unknown = entries.filter((entry) => !byId.has(entry.pattern)).map((entry) => entry.pattern || '(empty)');
+  const outline = { title: cleanText(raw?.title), entries };
+  if (entries.length === 0) return { ...outline, problem: 'the answer contained no slides' };
+  if (unknown.length > 0) return { ...outline, problem: `these patterns are not in the list: ${[...new Set(unknown)].join(', ')}` };
+  if (problems.length > 0) return { ...outline, problem: problems.join('; ') };
+  return outline;
+}
+
+/**
+ * First stage: decides which pattern each slide uses and the point it makes. One model call.
+ * The result is small and quick to produce, so it is the thing to show a person and let them change.
+ */
+export async function planOutline(template: Template, brief: Brief, options: PlanOptions): Promise<DeckPlan> {
+  const { language, density, catalog, byId, context } = planning(template, brief, options);
+  const count =
+    typeof brief.slideCount === 'number'
+      ? { min: brief.slideCount, max: brief.slideCount }
+      : (brief.slideCount ?? { min: 6, max: 10 });
+  const ask = asker(options.llm, systemPrompt(language, 'brief'), options.signal);
+
+  options.onProgress?.({ stage: 'outline' });
+  const request = outlinePrompt(brief, catalog, count, density, context.textScale);
+  let outline = readOutline(await ask(request, outlineSchema(catalog, count)), byId);
+  if (outline.problem) {
+    const retry = `${request}\n\nYour previous answer could not be used: ${outline.problem}. Answer again using only the listed patterns.`;
+    outline = readOutline(await ask(retry, outlineSchema(catalog, count)), byId);
+    if (outline.problem) throw new PlanError(`The model did not produce a usable outline: ${outline.problem}`);
+  }
+  return { version: 1, title: outline.title, brief, slides: outline.entries };
+}
+
+/**
+ * Changes a plan by instruction ("add a slide about pricing", "make it shorter", "in English").
+ * One model call. The instruction is kept with the brief, so facts it adds reach the writing stage.
+ */
+export async function editPlan(
+  template: Template,
+  plan: DeckPlan,
+  instruction: string,
+  options: PlanOptions,
+): Promise<{ plan: DeckPlan; summary: string }> {
+  const request = instruction.trim();
+  const brief: Brief = { ...plan.brief, instructions: [plan.brief.instructions?.trim(), request].filter(Boolean).join('\n') };
+  const { language, density, catalog, byId, context } = planning(template, brief, options);
+
+  options.onProgress?.({ stage: 'outline' });
+  const prompt = [
+    briefText(plan.brief),
+    `The plan as it is now${plan.title ? ` ("${plan.title}")` : ''}, in the language with BCP 47 tag "${language}":\n${plan.slides
+      .map((slide, index) => `${index + 1}. ${slide.pattern}${slide.items !== undefined ? ` (${slide.items} items)` : ''}: ${slide.purpose}`)
+      .join('\n')}`,
+    `Requested change:\n${request}`,
+    `Return the whole plan after the change. Choose patterns from this list ("?" marks an optional slot):`,
+    describeCatalog(catalog, context.textScale),
+    [
+      '- Change only what the request asks for. Keep every other slide, its pattern, its purpose and its place.',
+      '- Choose a pattern only when the content can fill every required slot within its limits.',
+      `- ${DENSITY_GUIDANCE[density]}`,
+    ].join('\n'),
+  ].join('\n\n');
+  const schema: JsonSchema = {
+    type: 'object',
+    properties: {
+      summary: { type: 'string', description: 'One sentence saying what you changed, written for the person who asked, in their language' },
+      language: { type: 'string', description: 'BCP 47 tag of the deck language after the change' },
+      title: { type: 'string', description: 'Title of the deck after the change' },
+      slides: {
+        type: 'array',
+        minItems: 1,
+        items: {
+          type: 'object',
+          properties: {
+            pattern: { type: 'string', enum: catalog.patterns.map((pattern) => pattern.def.id) },
+            purpose: { type: 'string', description: 'The one point this slide makes, in a sentence' },
+            ...itemsProperty(catalog),
+          },
+          required: ['pattern', 'purpose'],
+        },
+      },
+    },
+    required: ['summary', 'language', 'title', 'slides'],
+  };
+
+  const ask = asker(options.llm, systemPrompt(language, 'brief'), options.signal);
+  let answer = (await ask(prompt, schema)) as { summary?: unknown; language?: unknown } | null;
+  let outline = readOutline(answer, byId);
+  if (outline.problem) {
+    answer = (await ask(`${prompt}\n\nYour previous answer could not be used: ${outline.problem}. Answer again using only the listed patterns.`, schema)) as typeof answer;
+    outline = readOutline(answer, byId);
+    if (outline.problem) throw new PlanError(`The model did not produce a usable plan: ${outline.problem}`);
+  }
+
+  const nextLanguage = cleanText(answer?.language) || language;
+  if (nextLanguage !== language) {
+    brief.language = nextLanguage;
+    delete brief.direction; // follows the new language
+  }
+  delete brief.slideCount; // the plan itself now says how many slides there are
+  return { plan: { version: 1, title: outline.title || plan.title, brief, slides: outline.entries }, summary: cleanText(answer?.summary) };
+}
+
+/**
+ * Second stage: writes the content of every slot of a plan's slides, against a schema built for
+ * exactly that sequence. Drafts that break the template's limits go back to the model.
+ */
+export async function writeDeck(template: Template, plan: DeckPlan, options: PlanOptions): Promise<PlanResult> {
+  const { brief } = plan;
+  const { layout, language, direction, fields, context, byId } = planning(template, brief, options);
+  const missing = plan.slides.filter((slide) => !byId.has(slide.pattern)).map((slide) => slide.pattern);
+  if (missing.length > 0) {
+    throw new PlanError(`The plan uses patterns that cannot be filled with what was supplied: ${[...new Set(missing)].join(', ')}`);
+  }
+  const items: WriteItem[] = plan.slides.map((entry, index) => {
+    const usable = byId.get(entry.pattern) as UsablePattern;
+    // A row of items gets the slots of exactly the number the plan settled on.
+    const sized = entry.items !== undefined ? planPattern(usable.def, context, undefined, entry.items) : undefined;
+    return { number: index + 1, pattern: sized && 'pattern' in sized ? sized.pattern : usable, purpose: entry.purpose };
+  });
+
+  options.onProgress?.({ stage: 'write', slides: items.length });
+  const draft = await writeSlides({
+    ask: asker(options.llm, systemPrompt(language, 'brief'), options.signal),
+    request: writePrompt(brief, items, context),
+    jobs: items,
+    context,
+    assemble: (written) => {
+      const deck: DeckSpec = {
+        version: 1,
+        language,
+        direction,
+        brief: [brief.prompt.trim(), brief.instructions?.trim()].filter(Boolean).join('\n'),
+        slides: items.map((item) => written.get(item.number) ?? { pattern: item.pattern.def.id, slots: {} }),
+      };
+      if (context.textScale !== 1) deck.textScale = context.textScale;
+      if (plan.title) deck.title = plan.title;
+      if (Object.keys(fields).length > 0) deck.fields = fields;
+      return deck;
+    },
+    manifest: template.manifest,
+    layout,
+    maxRepairs: options.maxRepairs ?? 2,
+    onRepair: (attempt, issues) => options.onProgress?.({ stage: 'repair', attempt, issues }),
+  });
+
+  const errors = draft.issues.filter((issue) => issue.severity === 'error');
+  if (errors.length > 0) throw new DeckValidationError(errors);
+  return { deck: draft.deck, warnings: [...draft.issues, ...unstatedChartValues(template.manifest, draft.deck)], outline: plan.slides };
+}
+
+/** Brief to deck spec in one go: {@link planOutline}, then {@link writeDeck}. */
+export async function planDeck(template: Template, brief: Brief, options: PlanOptions): Promise<PlanResult> {
+  return writeDeck(template, await planOutline(template, brief, options), options);
+}

@@ -1,0 +1,187 @@
+{
+  "version": 1,
+  "title": "A year of Riverbend Bike Share",
+  "brief": "Hand-written example that uses every pattern of the demo template once. The organization and all its numbers are invented.",
+  "language": "en",
+  "direction": "ltr",
+  "fields": {
+    "organizationDepartment": "Riverbend Bike Share  |  Season review"
+  },
+  "slides": [
+    {
+      "pattern": "cover",
+      "slots": {
+        "title": "A year of Riverbend Bike Share",
+        "subtitle": "What the 2025 season taught us, in numbers and in stories"
+      }
+    },
+    {
+      "pattern": "section",
+      "slots": {
+        "title": "The season in brief",
+        "subtitle": "Who rode, when, and what it replaced"
+      }
+    },
+    {
+      "pattern": "text-and-photo",
+      "slots": {
+        "title": "Bikes became part of the daily commute",
+        "subtitle": "Weekday mornings now lead the week",
+        "body": [
+          "In our first seasons most rides were weekend outings along the river. This year the busiest hour moved to eight on a weekday morning.",
+          "Riders told us why: the new docks sit next to the tram stops, so a bike covers the last stretch to work."
+        ],
+        "photo": { "asset": "photo-tall", "alt": "A commuter riding along a river path in morning light" }
+      }
+    },
+    {
+      "pattern": "photo-stat",
+      "slots": {
+        "title": "Most rides replace a short car trip",
+        "statValue": "62%",
+        "statDescription": "of riders in the end-of-season survey said their last ride replaced a trip they would otherwise have made by car or taxi.",
+        "photo": { "asset": "photo-square", "alt": "A row of bikes at a docking station" }
+      }
+    },
+    {
+      "pattern": "list-with-photo",
+      "slots": {
+        "title": "What riders asked for",
+        "bulletList": [
+          "Docks that are still free at nine in the morning",
+          "A pass that covers a whole family",
+          "Lights that stay on after a short stop",
+          "Clearer signs where the river path splits"
+        ],
+        "photo": { "asset": "photo-wide", "alt": "Cyclists on a tree-lined path" }
+      }
+    },
+    {
+      "pattern": "icon-cards",
+      "items": 3,
+      "slots": {
+        "title": "Three changes for next season",
+        "card1Icon": { "asset": "clock" },
+        "card1Heading": "Longer hours",
+        "card1Text": "Bikes unlock from five in the morning, for early shifts and the first trams.",
+        "card2Icon": { "asset": "shield" },
+        "card2Heading": "Safer docks",
+        "card2Text": "Every station gets lighting and a camera before the season opens.",
+        "card3Icon": { "asset": "people" },
+        "card3Heading": "Group passes",
+        "card3Text": "One pass for up to five riders, bought once and shared by link."
+      }
+    },
+    {
+      "pattern": "stat-cards",
+      "items": 5,
+      "slots": {
+        "title": "The season in numbers",
+        "stat1Number": "48k",
+        "stat1Caption": "rides between April and October",
+        "stat2Number": "310",
+        "stat2Caption": "bikes on the street at the peak",
+        "stat3Number": "26",
+        "stat3Caption": "stations, six of them new",
+        "stat4Number": "9 min",
+        "stat4Caption": "length of a typical ride",
+        "stat5Number": "4.6",
+        "stat5Caption": "average rating out of five"
+      }
+    },
+    {
+      "pattern": "two-columns",
+      "slots": {
+        "title": "Two ways to grow next year",
+        "col1Heading": "More stations",
+        "col1Text": [
+          "Reaches the two districts with no dock today",
+          "Needs permits, which take a season",
+          "Spreads the same bikes thinner"
+        ],
+        "col2Heading": "More bikes per station",
+        "col2Text": [
+          "Ends the empty docks at rush hour",
+          "Can be done before April",
+          "Does nothing for districts we do not serve"
+        ]
+      }
+    },
+    {
+      "pattern": "table",
+      "slots": {
+        "title": "The four busiest stations",
+        "table": {
+          "header": ["Station", "Docks", "Rides a day", "Busiest hour"],
+          "rows": [
+            ["Tram Square", "24", "410", "08:00"],
+            ["River Gate", "18", "365", "17:00"],
+            ["Market Hall", "16", "290", "12:00"],
+            ["North Bridge", "12", "240", "08:00"]
+          ]
+        },
+        "footnote": "Averages for June to August. All figures in this deck are invented for the demo."
+      }
+    },
+    {
+      "pattern": "chart-native",
+      "slots": {
+        "title": "Rides grew through the summer",
+        "chart": {
+          "type": "column",
+          "categories": ["Apr-May", "Jun-Jul", "Aug-Sep", "October"],
+          "series": [
+            { "name": "2024", "values": [5, 9, 11, 4] },
+            { "name": "2025", "values": [7, 15, 19, 7] }
+          ],
+          "format": "0\"k\""
+        },
+        "chartDescription": "Rides in thousands for each part of the season. This is a native chart: open the deck and choose Edit Data to change it.",
+        "takeawayText": "Late summer almost doubled, once the tram-stop docks opened."
+      }
+    },
+    {
+      "pattern": "chart-with-takeaway",
+      "slots": {
+        "title": "The same story, as a supplied picture",
+        "chartGraphic": { "asset": "chart-months", "alt": "Bar chart of rides per month" },
+        "chartDescription": "An app can hand slotdeck a picture it has already made, such as a rendered Mermaid diagram or a chart exported from a dashboard.",
+        "takeawayText": "The picture keeps its proportions and is centred in the frame."
+      }
+    },
+    {
+      "pattern": "wide-diagram",
+      "slots": {
+        "title": "Rides per month across the season",
+        "diagramGraphic": { "asset": "chart-wide", "alt": "Wide bar chart of rides per month" },
+        "diagramCaption": "A wide picture fills the width of the slide; the caption is optional."
+      }
+    },
+    {
+      "pattern": "quote",
+      "slots": {
+        "quoteText": "I sold my second car in June. The bike gets me to the tram in six minutes, and I have not missed it once.",
+        "quoteAuthor": "A rider, in the end-of-season survey"
+      }
+    },
+    {
+      "pattern": "text-only",
+      "slots": {
+        "title": "What we will decide in January",
+        "subtitle": "Three questions for the board",
+        "body": [
+          "Whether next year's budget goes to new stations or to more bikes at the ones we have.",
+          "Whether the family pass replaces the day pass or sits beside it.",
+          "Whether the season opens in March, a month earlier than this year."
+        ]
+      }
+    },
+    {
+      "pattern": "closing",
+      "slots": {
+        "title": "Thank you",
+        "subtitle": "Questions and ideas: hello@example.org"
+      }
+    }
+  ]
+}
