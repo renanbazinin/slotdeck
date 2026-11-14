@@ -141,7 +141,7 @@ export function renderDeck(template: Template, deck: DeckSpec, options: RenderOp
     let rels = readRels(source, sourceSlide.part).filter((rel) => !isRelType(rel, 'notesSlide'));
     const part = `${slideDir}/slide${number}.xml`;
     // A row of items is first brought to the number the slide asks for; the shapes it copies get new ids.
-    if (pattern.repeat) applyRepeat(indexShapes(root), pattern.repeat, itemCount(pattern, slide.items), pres.slideWidth);
+    if (pattern.repeat) applyRepeat(indexShapes(root), pattern.repeat, itemCount(pattern, slide.items), pres.slideWidth, rowTexts(pattern));
     const shapes = indexShapes(root);
     const sources = slotSources(pattern, directionChanged, slide.items);
     const textScale = bodyTextScale(template.manifest, deck.textScale);
@@ -256,6 +256,14 @@ export function renderDeck(template: Template, deck: DeckSpec, options: RenderOp
   types.save(out);
 
   return { pptx: out.save(), warnings: issues.filter((issue) => issue.severity === 'warning') };
+}
+
+/** For a row that may widen its items: the shapes of the row's text slots, which widen with them. */
+function rowTexts(pattern: PatternDef): Set<string> | undefined {
+  const repeat = pattern.repeat;
+  if (!repeat?.widen) return undefined;
+  const names = new Set(repeat.shapes.flatMap((_, index) => repeat.slots.map((name) => name.replace('{n}', String(index + 1)))));
+  return new Set(pattern.slots.filter((slot) => slot.kind === 'text' && names.has(slot.name)).map((slot) => slot.shapeId));
 }
 
 /** Maps `p:cNvPr/@id` to the shape element that owns it. */

@@ -58,6 +58,7 @@ const PROPERTIES = [
   'alignOnDirectionChange',
   'textScale',
   'variant',
+  'widen',
 ] as const;
 
 const SYSTEM = [
@@ -72,7 +73,7 @@ const GUIDE = [
   '- setSlot (pattern, slot): change a slot. Values: empty ("error" makes it required, "remove" optional, "keep" always leaves the template\'s own content, "drop" always removes the shape); maxChars, maxParagraphs (limits of a text); fontSize (a text size in points); deckField (ties a text to one value for the whole deck); name (renames the slot); imageKind ("photo", "icon" or "graphic"). For a table: maxColumns, maxRows, maxCellChars, headerSize, headerBold, headerColor (hex), headerFont, bodySize, bodyBold, bodyColor, bodyFont. For a chart: maxCategories, maxSeries.',
   '- addSlot (pattern, shape): make a shape of the slide a slot, or give the shape of an existing slot another role. Values: role, and optionally name and optional ("true"). Roles: title, subtitle, text, list (one paragraph per item), number (a large figure), caption, photo, icon, graphic (a supplied chart or diagram picture), chart (a native editable chart in place of a picture), table, decoration (removed from every slide made with the pattern), fixed (stays exactly as designed).',
   '- removeSlot (pattern, slot): the shape stays as the template shows it.',
-  '- setRepeat (pattern): how many items the row or grid of a pattern takes. Values: min, max.',
+  '- setRepeat (pattern): how many items the row or grid of a pattern takes. Values: min, max, and widen (a factor such as "1.5": with fewer items than the slide draws, each item may grow up to that many times as wide, so the row is filled and does not float in the middle; "1" keeps the drawn width).',
   '- removeRepeat (pattern): the items stop being a row whose number can change.',
   '- setPattern (pattern): Values: id (renames the pattern), description, figures ("true" offers it only when a brief has numbers).',
   '- copyPattern (pattern): a second pattern from the same slide, to turn into a variant by hand with further operations. Values: id of the new pattern, and optionally description.',
@@ -140,7 +141,7 @@ export function describeManifest(template: Template): string {
     const repeat = pattern.repeat;
     if (repeat) {
       const drawn = repeat.shapes.length;
-      lines.push(`  ${repeat.columns ? `grid of ${drawn} ${repeat.item}s, ${repeat.columns} to a line` : `row of ${drawn} ${repeat.item}s`} (${repeat.slots.join(', ')}); takes ${repeat.min ?? drawn} to ${repeat.max ?? drawn}`);
+      lines.push(`  ${repeat.columns ? `grid of ${drawn} ${repeat.item}s, ${repeat.columns} to a line` : `row of ${drawn} ${repeat.item}s`} (${repeat.slots.join(', ')}); takes ${repeat.min ?? drawn} to ${repeat.max ?? drawn}${repeat.widen && repeat.widen > 1 ? `; fewer on a line grow up to ${repeat.widen} times as wide` : ''}`);
     }
     lines.push('  slots:');
     for (const slot of pattern.slots) {
@@ -237,7 +238,7 @@ function toChange(raw: Record<string, unknown>): ManifestChange | undefined {
     case 'removeSlot':
       return { op, pattern, slot };
     case 'setRepeat':
-      return put({ op, pattern } as ManifestChange, { min: count('min'), max: count('max') });
+      return put({ op, pattern } as ManifestChange, { min: count('min'), max: count('max'), widen: num('widen') });
     case 'removeRepeat':
     case 'removePattern':
       return { op, pattern };

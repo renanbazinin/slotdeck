@@ -27,6 +27,16 @@ in `node_modules/slotdeck/package.json`.
   variant that are not slots. See [manifest-format.md](manifest-format.md).
 - **The demo template has mirrored photo patterns**: `text-and-photo-mirrored`, `photo-stat-mirrored` and
   `list-with-photo-mirrored`, made with the new operation.
+- **Rows that fill their line.** `widen` on a `repeat` lets the items of a row or grid grow wider when a line
+  holds fewer of them than the template draws, up to the factor given (`"widen": 1.5`), so that two or three
+  cards fill a row drawn for four. Backgrounds and text boxes widen; icons, pictures and circles keep their
+  size and their side of the item, also inside a group. The character budgets of the row's texts grow with
+  the items, in validation, in what the planner shows the model, and in `sampleDeck`. Set it by hand or with
+  `changeManifest(template, [{ op: 'setRepeat', pattern: '<id>', widen: 1.5 }])`; `editManifest` understands
+  requests such as "let two cards fill the row". See "Fewer items that fill the row" in
+  [layout-freedom.md](layout-freedom.md).
+- **The demo template's `icon-cards` and `stat-cards` use `widen`**, so the example decks with three cards
+  or four figures fill their rows.
 
 ### Changed
 
@@ -45,6 +55,10 @@ in `node_modules/slotdeck/package.json`.
   `patternVariants(template, '<id>')` says which patterns allow it.
 - A planner that is offered a pattern and its mirror image chooses between them by their descriptions. Give
   each a description that says where the picture is.
+- Rows and grids keep the size of their items unless the manifest opts in with `widen`, and decks made from
+  a manifest without it render byte for byte as before. After opting in, a slide with fewer items than drawn
+  looks different (its items are wider) and its text budgets are larger; text that fitted before still fits.
+  Render `sampleDeck(template, { items: 'min' })` to look at it before using the manifest.
 
 ## 0.1.2
 

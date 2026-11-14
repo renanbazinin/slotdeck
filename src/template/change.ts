@@ -78,8 +78,11 @@ export type ManifestChange =
   /** The shape goes back to being part of the design. */
   | { op: 'removeSlot'; pattern: string; slot: string }
   | ({ op: 'setSlot'; pattern: string; slot: string } & SlotPatch)
-  /** Sets how many items a row or grid takes. Finds the row from numbered slot names when the pattern has none. */
-  | { op: 'setRepeat'; pattern: string; min?: number; max?: number; item?: string; span?: { left: number; right: number } | null }
+  /**
+   * Sets how many items a row or grid takes. Finds the row from numbered slot names when the pattern has none.
+   * `widen` lets items grow wider, up to that factor, when a line holds fewer than the template draws.
+   */
+  | { op: 'setRepeat'; pattern: string; min?: number; max?: number; item?: string; span?: { left: number; right: number } | null; widen?: number | null }
   | { op: 'removeRepeat'; pattern: string };
 
 export interface ChangeResult {
@@ -383,6 +386,15 @@ function apply(manifest: TemplateManifest, change: ManifestChange, info: Templat
       }
       repeat.min = min;
       repeat.max = max;
+      if (change.widen === null || change.widen === 1) {
+        if (repeat.widen !== undefined) widened += ` The ${repeat.item}s keep their drawn width whatever their number.`;
+        delete repeat.widen;
+      } else if (change.widen !== undefined) {
+        if (!(typeof change.widen === 'number' && change.widen > 1 && change.widen <= 4)) reject('widen is a factor between 1 and 4, such as 1.5 to let an item become half as wide again');
+        if ((repeat.columns ?? drawn) < 2) reject(`a line of the ${repeat.item}s holds one, so there is no shorter line to widen`);
+        repeat.widen = change.widen;
+        widened += ` With fewer ${repeat.item}s on a line than drawn, each grows up to ${change.widen} times as wide to fill the row, and holds more text.`;
+      }
       return `"${pattern.id}": ${found ? `found a ${repeat.columns ? 'grid' : 'row'} of ${drawn} ${repeat.item}s; it` : `the ${repeat.columns ? 'grid' : 'row'} of ${repeat.item}s`} takes ${min === max ? `exactly ${min}` : `${min} to ${max}`}.${widened}`;
     }
 

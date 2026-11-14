@@ -1,4 +1,4 @@
-import { NS, childElement, descendants, path, removeNode } from '../pptx/xml.ts';
+import { NS, childElement, childElements, descendants, path, removeNode } from '../pptx/xml.ts';
 import type { Element } from '../pptx/xml.ts';
 import { COPY_ID_STEP, rowLayout } from '../template/manifest.ts';
 import type { RepeatDef, SlideBox } from '../template/manifest.ts';
@@ -73,15 +73,111 @@ export function moveShape(shape: Element, box: SlideBox, slideWidth: number, sli
   placeShape(shape, box, slideWidth, slideHeight);
 }
 
+/** Outlines that stay what they are when only their width changes: rectangles, with or without rounded or cut corners. */
+const RECTANGLE = /^(rect|\w*Rect)$/;
+const LINE = /^(line|straightConnector1)$/;
+
+/** Whether a shape can be made wider without spoiling it. A picture would be stretched, a circle would become an oval. */
+function canWiden(shape: Element): boolean {
+  const xfrm = shapeTransform(shape);
+  if (!xfrm || Number(xfrm.getAttribute('rot') ?? 0) !== 0) return false;
+  if (shape.localName === 'grpSp') return Number(childElement(xfrm, NS.a, 'chExt')?.getAttribute('cx') ?? 0) > 0;
+  if (shape.localName !== 'sp' && shape.localName !== 'cxnSp') return false;
+  const props = childElement(shape, NS.p, 'spPr');
+  if (!props || childElement(props, NS.a, 'custGeom')) return false;
+  const preset = childElement(props, NS.a, 'prstGeom')?.getAttribute('prst') ?? (shape.localName === 'cxnSp' ? 'line' : 'rect');
+  // A level line stays level; a slanted one would change its slope.
+  if (LINE.test(preset)) return Number(childElement(xfrm, NS.a, 'ext')?.getAttribute('cy') ?? 0) === 0;
+  return RECTANGLE.test(preset);
+}
+
+/**
+ * The corners of a rounded or cut rectangle are sized by its shorter side. When widening changes
+ * which side that is, or how long it is, the corner setting is scaled back so the corners stay as drawn.
+ */
+function keepCorners(shape: Element, width: number, wider: number, height: number): void {
+  const geometry = path(shape, [NS.p, 'spPr'], [NS.a, 'prstGeom']);
+  const preset = geometry?.getAttribute('prst') ?? '';
+  const ratio = Math.min(width, height) / Math.min(wider, height);
+  if (!geometry || !/^(round|snip)\w*Rect$/.test(preset) || !(ratio > 0) || Math.abs(ratio - 1) < 1e-6) return;
+  const doc = shape.ownerDocument;
+  const prefix = geometry.prefix ? `${geometry.prefix}:` : '';
+  let list = childElement(geometry, NS.a, 'avLst');
+  const guides = list ? childElements(list, NS.a, 'gd') : [];
+  if (guides.length === 0) {
+    // Only the plain rounded rectangle has a default worth restating here: a sixth of the shorter side.
+    if (preset !== 'roundRect' || !doc) return;
+    if (!list) {
+      list = doc.createElementNS(NS.a, `${prefix}avLst`);
+      geometry.appendChild(list);
+    }
+    const guide = doc.createElementNS(NS.a, `${prefix}gd`);
+    guide.setAttribute('name', 'adj');
+    guide.setAttribute('fmla', `val ${Math.round(16667 * ratio)}`);
+    list.appendChild(guide);
+    return;
+  }
+  for (const guide of guides) {
+    const value = /^val (-?\d+)$/.exec(guide.getAttribute('fmla') ?? '');
+    if (value) guide.setAttribute('fmla', `val ${Math.round(Number(value[1]) * ratio)}`);
+  }
+}
+
+/**
+ * Makes the shapes of one item wider by `delta`, each in its own way. `left` and `width` are the
+ * item's own extent, in the units of the shapes.
+ *
+ * A background, a rule or a text box that spans the item grows with it and keeps its distance to
+ * both sides. Everything else keeps its size and its distance to the nearer side, or stays in the
+ * middle: an icon at the start of a card stays at the start. A group grows as its children do,
+ * one by one, so that a picture inside it is never stretched. `texts` names the text boxes the
+ * deck writes; they grow even when they are narrow.
+ */
+function widenShapes(shapes: Element[], left: number, width: number, delta: number, texts: ReadonlySet<string>): void {
+  for (const shape of shapes) {
+    const xfrm = shapeTransform(shape);
+    const off = xfrm && childElement(xfrm, NS.a, 'off');
+    const ext = xfrm && childElement(xfrm, NS.a, 'ext');
+    if (!xfrm || !off || !ext) continue;
+    const x = Number(off.getAttribute('x') ?? 0);
+    const own = Number(ext.getAttribute('cx') ?? 0);
+    const before = x - left;
+    const after = left + width - (x + own);
+    const id = descendants(shape, NS.p, 'cNvPr')[0]?.getAttribute('id') ?? '';
+    if (canWiden(shape) && (texts.has(id) || own >= Math.max(before, after) - 1)) {
+      if (shape.localName === 'grpSp') {
+        const inner = childElement(xfrm, NS.a, 'chExt') as Element;
+        const innerWidth = Number(inner.getAttribute('cx') ?? 0);
+        // The group's children are measured in its own units, which may be scaled.
+        const innerDelta = own > 0 ? (delta * innerWidth) / own : delta;
+        const children = childElements(shape, NS.p).filter((child) => ['sp', 'pic', 'grpSp', 'cxnSp', 'graphicFrame'].includes(child.localName ?? ''));
+        widenShapes(children, Number(childElement(xfrm, NS.a, 'chOff')?.getAttribute('x') ?? 0), innerWidth, innerDelta, texts);
+        inner.setAttribute('cx', String(Math.round(innerWidth + innerDelta)));
+      } else {
+        keepCorners(shape, own, own + delta, Number(ext.getAttribute('cy') ?? 0));
+      }
+      ext.setAttribute('cx', String(Math.round(own + delta)));
+      continue;
+    }
+    const centred = Math.abs(before - after) <= Math.max(width * 0.02, 1);
+    const shift = centred ? delta / 2 : before <= after ? 0 : delta;
+    if (shift !== 0) off.setAttribute('x', String(Math.round(x + shift)));
+  }
+}
+
 /**
  * Gives a row or grid of items the requested number: removes the surplus or copies the last
  * item, then lays the items out again around the centre of the area they occupied. Rows keep
  * the template's spacing when there is room and tighten when there is not; a grid uses as few
  * rows as the count needs, each row centred.
  *
+ * With `widen` on the repeat, a line that holds fewer items than the template draws has its items
+ * made wider, up to that factor, so that they fill the row's span at the template's own gaps.
+ * `texts` are the ids of the row's text boxes that the deck writes.
+ *
  * Copied shapes get the id of their original plus a multiple of {@link COPY_ID_STEP}.
  */
-export function applyRepeat(shapes: Map<string, Element>, repeat: RepeatDef, count: number, slideWidth: number): void {
+export function applyRepeat(shapes: Map<string, Element>, repeat: RepeatDef, count: number, slideWidth: number, texts: ReadonlySet<string> = new Set()): void {
   const items = repeat.shapes.map((ids) =>
     ids.map((id) => {
       const shape = shapes.get(id);
@@ -94,7 +190,7 @@ export function applyRepeat(shapes: Map<string, Element>, repeat: RepeatDef, cou
   if (!first) throw new Error('a repeat needs at least one item with a shape');
 
   const boxes = items.map((item) => union(item.map(extent)));
-  const width = Math.max(...boxes.map((box) => box.right - box.x));
+  let width = Math.max(...boxes.map((box) => box.right - box.x));
   const height = Math.max(...boxes.map((box) => box.bottom - box.y));
   const area = union(boxes);
 
@@ -102,7 +198,7 @@ export function applyRepeat(shapes: Map<string, Element>, repeat: RepeatDef, cou
   // row give the column pitch and the reading direction; the first items of two rows the row pitch.
   const drawnRows = rowLayout(repeat, drawn);
   const second = (drawnRows[0] ?? 0) > 1 ? boxes[1] : undefined;
-  const pitch = second ? Math.abs(second.x - (boxes[0] as Extent).x) : width * 1.5;
+  let pitch = second ? Math.abs(second.x - (boxes[0] as Extent).x) : width * 1.5;
   const rightToLeft = second ? second.x < (boxes[0] as Extent).x : true;
   const nextRow = drawnRows.length > 1 ? boxes[drawnRows[0] as number] : undefined;
   const rowPitch = nextRow ? Math.abs(nextRow.y - (boxes[0] as Extent).y) : height * 1.2;
@@ -130,6 +226,21 @@ export function applyRepeat(shapes: Map<string, Element>, repeat: RepeatDef, cou
   }
 
   const rows = rowLayout(repeat, count);
+  // Fewer items on a line than drawn: with the setting, they grow to fill the line. The count
+  // alone decides this, never the length of the text, so the same deck always looks the same.
+  const held = Math.max(0, ...rows);
+  if (repeat.widen && repeat.widen > 1 && second && held > 0 && held < (drawnRows[0] as number)) {
+    const gap = pitch - width;
+    const wider = Math.min(width * repeat.widen, (span.right - span.left - (held - 1) * gap) / held);
+    if (wider > width + 1) {
+      items.forEach((item, index) => {
+        const box = boxes[index] as Extent;
+        widenShapes(item, box.x, box.right - box.x, wider - width, texts);
+      });
+      width = wider;
+      pitch = wider + gap;
+    }
+  }
   const totalHeight = (rows.length - 1) * rowPitch + height;
   const top = (area.y + area.bottom) / 2 - totalHeight / 2;
   const centre = (area.x + area.right) / 2;

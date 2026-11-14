@@ -162,7 +162,8 @@ The shape must not be inside a group.
   "min": 2,
   "max": 4,
   "span": { "left": 0.04, "right": 0.96 },
-  "columns": 3
+  "columns": 3,
+  "widen": 1.5
 }
 ```
 
@@ -174,6 +175,7 @@ The shape must not be inside a group.
 | `min`, `max` | integer | no | Fewest and most items a deck may ask for. Both default to the number drawn. |
 | `span` | `{ left, right }` | no | Left and right limits of the row, as fractions of the slide width. Defaults to the row as drawn. Needed when `max` is more than the drawn items can fit in the drawn width. Only applies to shapes placed directly on the slide. |
 | `columns` | integer | no | For a grid: how many items one line holds on the template slide. Leave it out for a single row. A grid cannot hold more items than it draws. |
+| `widen` | number | no | Lets items grow wider when a line holds fewer of them than the template draws, so that they fill the row and do not stand in the middle of it. The value is the most an item may grow, as a factor on its drawn width: `1.5` lets a card become half as wide again. Backgrounds and text boxes widen; pictures keep their size. The budgets of the row's texts grow to match. Left out, items keep their drawn size. |
 
 How the items are laid out for a given count is described in [layout-freedom.md](layout-freedom.md).
 
@@ -192,7 +194,8 @@ of item 4's slots, named with the next number.
 - Pattern ids are unique. Slot names are unique within a pattern.
 - A `box` is not set on a shape inside a group. A chart slot's shape is not inside a group.
 - For a `repeat`: a slot exists for every name template and every drawn item; every shape id exists; all items
-  sit directly on the slide or all in the same group; `min` is at least 1 and not more than `max`.
+  sit directly on the slide or all in the same group; `min` is at least 1 and not more than `max`; `widen`,
+  when set, is a number of 1 or more.
 
 It also warns about text slots without `maxChars` and about two slots that point at the same shape.
 

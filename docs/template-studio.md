@@ -278,12 +278,17 @@ A property that does not apply to the slot's kind is refused (`"title" is a text
 #### `setRepeat`
 
 ```ts
-{ op: 'setRepeat', pattern: string, min?: number, max?: number, item?: string, span?: { left: number, right: number } | null }
+{ op: 'setRepeat', pattern: string, min?: number, max?: number, item?: string, span?: { left: number, right: number } | null, widen?: number | null }
 ```
 
 Sets how many items a row or grid takes. When the pattern has no row yet, it is found from numbered slot names:
 name the slots of each item alike with a number (`card1Heading`, `card1Text`, `card2Heading`, `card2Text`) and
 they become a row.
+
+`widen` lets the items grow wider when a line holds fewer of them than the template draws, so that two or
+three cards fill a row drawn for four. It is the most an item may grow, as a factor on its drawn width,
+between 1 and 4; `null` or `1` turns it off. See "Fewer items that fill the row" in
+[layout-freedom.md](layout-freedom.md). Render `sampleDeck(template, { items: 'min' })` to look at the result.
 
 #### `removeRepeat`
 
@@ -349,6 +354,12 @@ The same slide for decks that have no subtitle, with the body moved up into its 
 
 ```ts
 { op: 'derivePattern', pattern: 'text-and-photo', variant: 'without', slot: 'subtitle' }
+```
+
+Two or three cards that fill a row drawn for four, each holding more text:
+
+```ts
+{ op: 'setRepeat', pattern: 'icon-cards', widen: 2.2 }
 ```
 
 Smaller table text and fewer columns (the cell budget is measured for you):

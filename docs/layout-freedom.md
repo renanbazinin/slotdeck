@@ -34,6 +34,8 @@ What the renderer does:
 - **Spacing:** the items are laid out again around the centre of the area the row occupied. They keep the
   template's spacing when there is room and move closer together when there is not. With a `span`, the row may
   spread out to those limits.
+- **Size:** every item keeps its drawn size, unless the row has `widen` (see "Fewer items that fill the row"
+  below).
 - Without `items`, the slide has the number of items drawn on the template slide.
 
 An `items` value outside `min` to `max` is an error:
@@ -41,6 +43,54 @@ An `items` value outside `min` to `max` is an error:
 
 How many items fit is a property of the template: `changeManifest` refuses a `max` that does not fit side by
 side and says the most that do (see [template-studio.md](template-studio.md)).
+
+### Fewer items that fill the row
+
+By default an item keeps its drawn size, so three cards in a row drawn for four stand in the middle with room
+left at both ends. With `widen` on the `repeat`, a line that holds fewer items than the template draws has its
+items made wider, so that they fill the row:
+
+```json
+"repeat": {
+  "item": "card",
+  "slots": ["card{n}Icon", "card{n}Heading", "card{n}Text"],
+  "shapes": [["6"], ["12"], ["18"], ["24"]],
+  "min": 2,
+  "max": 4,
+  "widen": 2.2
+}
+```
+
+`widen` is the most an item may grow, as a factor on its drawn width: `1.5` lets a card become half as wide
+again, `2.2` lets two cards fill a row drawn for four. With `changeManifest`:
+`{ op: 'setRepeat', pattern: 'icon-cards', widen: 2.2 }`; `null` or `1` turns it off.
+
+- **How wide.** The items share the row's span (`span`, or the row as drawn) and keep the template's own gap
+  between them. Where that is more than the limit allows, they stop at the limit and the row is centred. In
+  the demo template a card is 21% of the slide wide; three become 29% each and two become 45%.
+- **What decides.** Only the number of items. Long text does not widen a card and short text does not narrow
+  one, so the same deck always looks the same.
+- **Inside an item** each shape is treated on its own, whether the item is a group or not:
+  - A background, a rule or a text box that spans the item grows with it and keeps its distance to both
+    sides. The text boxes of the row's own slots always grow.
+  - A picture or an icon keeps its size. So does a circle or any other outline that is not a rectangle, and
+    a slanted line. It keeps its distance to the nearer side of the item: an icon at the start of a card
+    stays at the start, and one in the middle stays in the middle.
+  - Rounded and cut corners keep the size they were drawn with.
+  - Heights do not change.
+- **Budgets.** A wider text box holds more. The character budget of the row's text slots grows by the factor
+  the items are at least wider by: the number drawn on a line divided by the number held, up to `widen`. In a
+  row drawn for four with `widen: 2.2`, a 117-character text holds 156 with three cards and 234 with two.
+  `validateDeck` uses these budgets, the planner gives them to the model for the number of items it chose,
+  and `sampleDeck` with `items: 'min'` fills them. Paragraph budgets do not change. A deck's text size is
+  applied on top.
+- **Grids.** A grid has one item width, decided by its fullest line. In a three-column grid, four figures make
+  two lines of two, which widen; five make three and two, and keep their width.
+- **Both reading directions.** Positions come from the template: a right-to-left template with its icons at
+  the right edge of each card keeps them there. A deck that reads the other way gets the same shapes, with
+  its first item at the other end.
+- **Nothing else changes.** At the drawn number of items and above, and for every row without `widen`, the
+  output is byte for byte what it was.
 
 ## 2. Grids
 
@@ -234,6 +284,9 @@ variants included, filled to its budgets.
 - Mirroring a slide because of a deck's reading direction. A mirrored layout is a separate pattern
   (`derivePattern` with `mirror`) that a deck names or the planner chooses.
 - Deriving a variant that would move a row or grid of items, or a table.
+- Widening a picture inside an item, or making an item taller. A widened item keeps its height, and its
+  pictures keep their size.
+- Letting the length of the text decide the size of an item. Only the number of items does.
 - A mirror or text-only variant of a slide with several pictures, or with a picture between two texts.
 - A `box` for a shape inside a group. A variant moves a group as a whole and never resizes what is in it.
 - A grid with more items than the template slide draws.

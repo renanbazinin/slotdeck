@@ -287,6 +287,10 @@ manifest allows and the code moves the shapes; the model never positions anythin
   accepts (in the demo template `icon-cards` takes 2 to 4 and `stat-cards` 2 to 6). A slide says how many with
   `items`. Surplus cards are removed, extra ones are copies of the last, and the row is spaced out again around
   its centre. A copied card has its own slots (`card5Icon`, `card5Heading`, ...).
+- **Rows that fill their line.** With `widen` on the `repeat`, fewer cards than drawn grow wider instead of
+  standing in the middle of the row: backgrounds and text boxes widen, icons and pictures keep their size
+  and their side, and the text budgets grow with the cards. The number of cards decides, never the length of
+  the text.
 - **Grids.** With `columns`, the items form a grid. They take as few rows as they need and spread evenly: four
   figures in a three-column grid make two rows of two, five make three and two, three make one row.
 - **Larger text.** `textScale` on a deck (or `textSize: 'large' | 'x-large'` on a brief) enlarges body text:
@@ -379,7 +383,7 @@ const view = studioView(template);
 | `setSlot` | A slot's budget, whether it is required, optional, kept or always removed (`empty`), font size, area (`box`), name, deck field, picture kind, and the settings of a table or chart. |
 | `addSlot` | Makes a shape a slot in a role (`title`, `text`, `list`, `number`, `caption`, `photo`, `icon`, `graphic`, `chart`, `table`, `decoration`), with limits measured from the shape. On a shape that is already a slot it changes the role. |
 | `removeSlot` | The shape goes back to being part of the design. |
-| `setRepeat`, `removeRepeat` | How many items a row or grid takes. Finds the row from numbered slot names when the pattern has none. |
+| `setRepeat`, `removeRepeat` | How many items a row or grid takes, and whether fewer items grow wider to fill the row (`widen`). Finds the row from numbered slot names when the pattern has none. |
 | `addPattern`, `copyPattern`, `setPattern`, `removePattern` | Which slides are patterns, their ids and descriptions, and variants of a pattern from the same slide. |
 | `derivePattern` | A variant of a pattern that the code lays out by itself: `mirror`, `text-only`, or `without` an optional text. Refused with the reason when the slide does not allow it. |
 | `setManifest` | The template's name, language, direction and alignment policy. |

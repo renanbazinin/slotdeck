@@ -75,7 +75,7 @@ test('the complete deck example is a valid deck for the demo template', () => {
 test('the studio recipes work on the demo template as written', () => {
   const recipes = read('template-studio.md').split('### Recipes')[1]?.split('\n## ')[0] ?? '';
   const blocks = [...recipes.matchAll(/```ts\n([\s\S]*?)\n```/g)].map((match) => match[1] as string);
-  assert.equal(blocks.length, 8);
+  assert.equal(blocks.length, 9);
   const pptx = readFileSync(join(root, 'templates', 'demo.pptx'));
   const shipped = JSON.parse(readFileSync(join(root, 'templates', 'demo.manifest.json'), 'utf8')) as TemplateManifest;
   // The recipes make derived patterns the demo manifest already has, so start without them.

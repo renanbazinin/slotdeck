@@ -52,7 +52,7 @@ test('the example decks fit the demo template without a warning', () => {
 
 test('a right-to-left deck on the left-to-right template mirrors its text and keeps the frame', () => {
   const deck = JSON.parse(readFileSync(join(root, 'examples', 'decks', 'patterns.he.deck.json'), 'utf8')) as DeckSpec;
-  const assets = Object.fromEntries(['photo-tall', 'photo-square', ...icons].map((id) => [id, picture]));
+  const assets = Object.fromEntries(['photo-tall', ...icons].map((id) => [id, picture]));
   const xml = strFromU8(unzipSync(renderDeck(template, deck, { assets, layout: 'adaptive' }).pptx)['ppt/slides/slide2.xml'] as Uint8Array);
   const paragraphOf = (text: string): string => {
     const end = xml.indexOf(text);

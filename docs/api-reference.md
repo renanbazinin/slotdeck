@@ -524,7 +524,7 @@ type ManifestChange =
   | { op: 'addSlot'; pattern: string; shape: string; role: Role; name?: string; optional?: boolean }
   | { op: 'removeSlot'; pattern: string; slot: string }
   | ({ op: 'setSlot'; pattern: string; slot: string } & SlotPatch)
-  | { op: 'setRepeat'; pattern: string; min?: number; max?: number; item?: string; span?: { left: number; right: number } | null }
+  | { op: 'setRepeat'; pattern: string; min?: number; max?: number; item?: string; span?: { left: number; right: number } | null; widen?: number | null }
   | { op: 'removeRepeat'; pattern: string };
 
 interface SlotPatch {
@@ -634,6 +634,7 @@ interface RepeatDef {
   max?: number;
   span?: { left: number; right: number };
   columns?: number;
+  widen?: number; // fewer items on a line than drawn grow up to this factor to fill the row
 }
 type SlotDef = TextSlotDef | ImageSlotDef | TableSlotDef | ChartSlotDef;
 
