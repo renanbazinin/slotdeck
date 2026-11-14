@@ -31,11 +31,11 @@ room for, and `suggestChanges` proposes it for a manifest that does not have it;
 [template-studio.md](template-studio.md).
 
 The planner reads how a pattern sets its items, on the line that gives their number: `side by side in one
-row` for a row, and for a grid that never takes more than one line holds; `in lines of 2` for a grid that can
-break. A row that takes one number of items reads `items: always 3 cards side by side in one row`. A brief, or
-a request to change a plan or a deck, that asks for a number of columns or for items side by side is answered
-with a pattern that sets that number on one line. When no pattern does, the planner is told to use the one
-that comes closest.
+row` for a row, and for a grid that never takes more than one line holds; `in lines of up to 3` for a grid
+that can break. A row that takes one number of items reads `items: always 3 cards side by side in one row`. A
+brief, or a request to change a plan or a deck, that asks for a number of columns or for items side by side is
+answered with a pattern that takes that number and sets it on one line. When no pattern does, the planner is
+told to use the one that comes closest.
 
 What the renderer does:
 

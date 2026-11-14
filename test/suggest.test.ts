@@ -126,7 +126,10 @@ test('a draft can keep rows as drawn, or let their items widen', async () => {
 
   for (const widen of [1, 5, Number.NaN, '2' as unknown as number]) {
     await assert.rejects(draftManifest(pptx, { llm: labelling().llm, slides: [4], widen }), /widen is a factor above 1 and at most 4/);
+    assert.throws(() => suggestChanges(loadTemplate(pptx, cardsManifest), { widen }), /widen is a factor above 1 and at most 4/);
   }
+  // A value of `rows` that is neither of the two is a mistake to say, not a draft of the other kind.
+  await assert.rejects(draftManifest(pptx, { llm: labelling().llm, slides: [4], rows: 'Fit' as unknown as 'fit' }), /rows is "fit" or "drawn", not "Fit"/);
 });
 
 test('suggestChanges lists what the slides allow that a manifest does not use, and each applies as it stands', () => {
@@ -262,6 +265,28 @@ test('an icon suggestion is one change for a row, true of every item, and gone o
   assert.match(lone[0]?.message ?? '', /^"icon" is a photo slot, but its picture is no more than \d+% of the slide wide: a pictogram\. As an icon slot it is filled/);
 });
 
+test('icon and row taken together leave a row whose items are filled alike', () => {
+  // The manifest names three cards alike but has no row, and their pictures are photo slots.
+  const cards = patternOf(cardsManifest, 'cards');
+  const { repeat: _repeat, ...loose } = cards;
+  const noRow: TemplateManifest = {
+    ...cardsManifest,
+    patterns: [{ ...loose, slots: loose.slots.map((slot) => (slot.kind === 'image' ? { name: slot.name, kind: 'image', imageKind: 'photo', shapeId: slot.shapeId } : slot)) }],
+  };
+  const facts = suggestChanges(loadTemplate(pptx, noRow), { kinds: ['icon', 'row', 'row-max'] });
+  assert.deepEqual(kindsOf(facts), ['icon cards', 'row cards']);
+  // The row is not made yet, so one change does not reach every item: each slot has its own.
+  assert.deepEqual(facts[0]?.changes.map((change) => (change as { slot: string }).slot), ['card1Icon', 'card2Icon', 'card3Icon']);
+  const both = changeManifest(loadTemplate(pptx, noRow), facts.flatMap((suggestion) => suggestion.changes));
+  assert.deepEqual(both.rejected, []);
+  assert.deepEqual(patternOf(both.manifest, 'cards').slots.filter((slot) => slot.kind === 'image').map((slot) => slot.imageKind), ['icon', 'icon', 'icon']);
+  assert.equal(patternOf(both.manifest, 'cards').repeat?.shapes.length, 3);
+
+  // With one picture that is not a pictogram, the row that is about to be made decides: no icon at all.
+  const cropped = fixtureWithSlide(4, (xml) => xml.replace(/(<p:cNvPr id="32" name="Card icon"\/><p:cNvPicPr\/><p:nvPr\/><\/p:nvPicPr><p:blipFill><a:blip r:embed="rId2"\/>)/, '$1<a:srcRect l="10000" r="10000"/>'));
+  assert.deepEqual(kindsOf(suggestChanges(loadTemplate(cropped, noRow), { kinds: ['icon', 'row'] })), ['row cards']);
+});
+
 test('a draft settles photo or icon for a row as a whole, and keeps the row', async () => {
   const pictures = (manifest: TemplateManifest) => patternOf(manifest, 'card-row').slots.filter((slot) => slot.kind === 'image').map((slot) => slot.imageKind);
   // One of three pictures is cropped into a frame. Labelled photo: all stay photo, and the row stands.
@@ -274,7 +299,7 @@ test('a draft settles photo or icon for a row as a whole, and keeps the row', as
   // The model follows the marker shape by shape: icon, icon, photo. Items of a row are filled alike.
   const evened = await draftManifest(cropped, { llm: labelling(['icon', 'icon', 'photo']).llm, slides: [4] });
   assert.deepEqual(pictures(evened.manifest), ['photo', 'photo', 'photo']);
-  assert.match(evened.notes[0] ?? '', /^Slide 4: "card1Photo", "card2Photo" were labelled icon, but another picture of the same row is too large for a pictogram: all of them are photo slots/);
+  assert.match(evened.notes[0] ?? '', /^Slide 4: "card1Photo", "card2Photo" were labelled icon, but another picture of the same row does not measure as a pictogram: all of them are photo slots/);
   assert.equal(patternOf(evened.manifest, 'card-row').repeat?.slots.length, 2);
 
   // On the plain fixture, where all three are pictograms, a mixed answer becomes icons.

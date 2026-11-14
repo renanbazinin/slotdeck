@@ -44,7 +44,8 @@
   },
   "files": [
     "dist",
-    "docs/*.md"
+    "docs/*.md",
+    "docs/prompts/*.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

@@ -2,14 +2,14 @@
 // then what it promises against what the renderer draws.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { PptxPackage, changeManifest, checkManifest, loadTemplate, renderDeck, suggestChanges } from '../src/index.ts';
+import { PptxPackage, changeManifest, checkManifest, loadTemplate, renderDeck, sampleDeck, suggestChanges } from '../src/index.ts';
 import type { DeckSpec, TemplateManifest } from '../src/index.ts';
 import { NS, childElement, descendants, parseXml, path, rootElement } from '../src/pptx/xml.ts';
 import type { Element } from '../src/pptx/xml.ts';
 import type { ShapeInfo, SlideInfo } from '../src/template/inspect.ts';
 import type { RepeatDef } from '../src/template/manifest.ts';
 import { rowCapacity, rowComfort } from '../src/template/rows.ts';
-import { buildFixturePptx, cardsManifest, fixtureManifest, fixtureWithSlide } from './fixture.ts';
+import { buildFixturePptx, card, cardsManifest, fixtureManifest, fixtureWithSlide } from './fixture.ts';
 
 /** A slide with a title and one text box per item, given as left edge and width in fractions of the slide. */
 function slideOf(items: Array<[x: number, w: number]>, more: Array<Partial<ShapeInfo> & { id: string }> = [], titleX = 0.05): SlideInfo {
@@ -57,8 +57,18 @@ test('a row whose items differ in width, or sit closer than one is wide, takes w
   // Equal widths with a first gap far smaller than the others: the step is the small one.
   const bunched = slideOf([[0.2, 0.1], [0.305, 0.1], [0.6, 0.1]]);
   assert.deepEqual(rowComfort(bunched, rowOf(3)), { most: 3 });
-  // Items that touch get nothing more either.
-  assert.deepEqual(rowComfort(slideOf([[0.3, 0.1], [0.4, 0.1], [0.5, 0.1]]), rowOf(3)), { most: 3 });
+  // Items that touch get nothing more by themselves. A person may still ask: a fourth is drawn
+  // touching the third, as the template draws them.
+  const touching = slideOf([[0.3, 0.1], [0.4, 0.1], [0.5, 0.1]]);
+  assert.deepEqual(rowComfort(touching, rowOf(3)), { most: 3 });
+  assert.ok(rowCapacity(touching, rowOf(3)) > 3);
+  // A last item a little wider than the others: the step from the first to the second leaves
+  // only a quarter of the drawn space after a copy of it, so the promise of a third cannot be kept.
+  const slightly = slideOf([[0.2187, 0.1094], [0.35, 0.1094], [0.4812, 0.1258]]);
+  assert.deepEqual(rowComfort(slightly, rowOf(3)), { most: 3 });
+  // With widths that differ by less than the spacing can absorb, the row still takes more.
+  const barely = slideOf([[0.2, 0.1], [0.34, 0.1], [0.48, 0.102]]);
+  assert.ok(rowComfort(barely, rowOf(3)).most > 3);
 });
 
 test('a row does not spread past what it is drawn on, nor past a line through it', () => {
@@ -67,9 +77,21 @@ test('a row does not spread past what it is drawn on, nor past a line through it
   // A tinted panel behind the row, from 25% to 75%: the row stays 2% inside its edges.
   const onPanel = slideOf(cards, [{ id: '90', kind: 'shape', box: { x: 0.25, y: 0.35, w: 0.5, h: 0.4 } }]);
   assert.deepEqual(rowComfort(onPanel, rowOf(3)), { most: 4, span: { left: 0.27, right: 0.73 } });
-  // A line that runs through the row within its extent pins the row to where it is drawn.
-  const onLine = slideOf(cards, [{ id: '91', kind: 'line', box: { x: 0.32, y: 0.55, w: 0.36, h: 0 } }]);
-  assert.deepEqual(rowComfort(onLine, rowOf(3)), { most: 3 });
+  // Arrows between the items stay where they are. Without them four of these cards would fit in
+  // the same extent; with them a fourth would be drawn across an arrow, so the row takes three.
+  const spaced: Array<[number, number]> = [[0.2, 0.1], [0.4, 0.1], [0.6, 0.1]];
+  assert.equal(rowComfort(slideOf(spaced), rowOf(3)).most > 3, true);
+  const arrows = slideOf(spaced, [{ id: '91', kind: 'line', box: { x: 0.31, y: 0.55, w: 0.08, h: 0 } }, { id: '95', kind: 'line', box: { x: 0.51, y: 0.55, w: 0.08, h: 0 } }]);
+  assert.deepEqual(rowComfort(arrows, rowOf(3)), { most: 3 });
+  assert.equal(rowCapacity(arrows, rowOf(3)), 3);
+  // So does a highlight behind some of the items.
+  assert.deepEqual(rowComfort(slideOf(spaced, [{ id: '96', kind: 'shape', box: { x: 0.18, y: 0.38, w: 0.34, h: 0.34 } }]), rowOf(3)), { most: 3 });
+  // A rule along the row's top edge is not among the items, and pins nothing.
+  assert.equal(rowComfort(slideOf(spaced, [{ id: '97', kind: 'line', box: { x: 0.2, y: 0.4, w: 0.5, h: 0 } }]), rowOf(3)).most > 3, true);
+  // A neighbour whose box reaches a little into the last card is beside the row: the row stops
+  // there and is free on the other side.
+  const neighbour = slideOf(spaced, [{ id: '98', kind: 'picture', box: { x: 0.69, y: 0.3, w: 0.25, h: 0.5 } }]);
+  assert.deepEqual(rowComfort(neighbour, rowOf(3)).span, { left: 0.05, right: 0.7 });
   // A background from edge to edge limits nothing, and neither does a heading that only brushes the row's height.
   const onBackground = slideOf(cards, [{ id: '92', kind: 'picture', box: { x: 0, y: 0, w: 1, h: 1 } }, { id: '93', kind: 'text', box: { x: 0.1, y: 0.2, w: 0.8, h: 0.21 } }]);
   assert.deepEqual(rowComfort(onBackground, rowOf(3)).span, { left: 0.05, right: 0.95 });
@@ -160,6 +182,66 @@ test('setRepeat refuses a span the drawn row does not fit in, and a span for a r
   const grouped = changeManifest(loadTemplate(pptx, inner), [{ op: 'setRepeat', pattern: 'cards', span: { left: 0.05, right: 0.95 } }]);
   assert.match(grouped.rejected[0]?.reason ?? '', /the cards sit inside a group, so they stay where the group draws them and a span would change nothing/);
   assert.deepEqual(changeManifest(loadTemplate(pptx, inner), [{ op: 'setRepeat', pattern: 'cards', span: null }]).rejected, [], 'a span can still be taken away');
+});
+
+/** The fixture's card slide with its three cards at other places, first in reading order last. */
+const cardsAt = (first: number, second: number, third: number, wrap = false): Uint8Array =>
+  fixtureWithSlide(4, (xml) => {
+    const moved = xml.replace(card(10, 6000000), card(10, third)).replace(card(20, 4000000), card(20, second)).replace(card(30, 2000000), card(30, first));
+    if (!wrap) return moved;
+    // The three cards as children of one group, which is how a designer often draws a row.
+    const start = moved.indexOf('<p:grpSp><p:nvGrpSpPr><p:cNvPr id="10"');
+    const end = moved.indexOf('</p:spTree>');
+    const group = `<p:grpSp><p:nvGrpSpPr><p:cNvPr id="50" name="Row"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="${first}" y="2000000"/><a:ext cx="${third + 1000000 - first}" cy="1800000"/><a:chOff x="${first}" y="2000000"/><a:chExt cx="${third + 1000000 - first}" cy="1800000"/></a:xfrm></p:grpSpPr>`;
+    return `${moved.slice(0, start)}${group}${moved.slice(start, end)}</p:grpSp>${moved.slice(end)}`;
+  });
+
+test('setRepeat counts the fit when it is asked about the number or the span, and never refuses the row as drawn', () => {
+  const template = loadTemplate(pptx, plain);
+  // A span the drawn three do not fit in is refused, with or without the number.
+  for (const change of [{ op: 'setRepeat', pattern: 'cards', span: { left: 0.4, right: 0.6 } }, { op: 'setRepeat', pattern: 'cards', span: { left: 0.4, right: 0.6 }, max: 3 }] as const) {
+    assert.match(changeManifest(template, [change]).rejected[0]?.reason ?? '', /3 cards do not fit side by side: each is 11% of the slide wide and the row has 20%\. The most is 1/);
+  }
+
+  // Cards drawn 1% of a card apart: closer than the fit allows for new items, and still the row as drawn.
+  const tight = loadTemplate(cardsAt(2000000, 3010000, 4020000), plain);
+  assert.deepEqual(changeManifest(tight, [{ op: 'setRepeat', pattern: 'cards', widen: 2 }]).rejected, []);
+  assert.deepEqual(changeManifest(tight, [{ op: 'setRepeat', pattern: 'cards', max: 3 }]).rejected, []);
+  assert.deepEqual(suggestChanges(tight, { kinds: ['row-max'] }), [], 'nothing more is offered for cards that nearly touch');
+
+  // Cards that touch: a person may ask for a fourth, which is drawn touching like the others.
+  const touching = loadTemplate(cardsAt(2000000, 3000000, 4000000), plain);
+  const four = changeManifest(touching, [{ op: 'setRepeat', pattern: 'cards', max: 4 }]);
+  assert.deepEqual(four.rejected, []);
+  const frames = cardFrames(renderDeck(loadTemplate(cardsAt(2000000, 3000000, 4000000), four.manifest), deckOf(4)).pptx);
+  assert.deepEqual(frames.slice(1).map((frame, index) => frame.x - ((frames[index] as { x: number; w: number }).x + 1000000)), [0, 0, 0]);
+});
+
+test('a manifest with a span on a row inside a group can still be changed, and the span taken away', () => {
+  // 0.2.0 accepted a span and a number of items for such a row, though the renderer uses neither the span nor room outside the group.
+  const grouped = cardsAt(2000000, 4000000, 6000000, true);
+  const stale: TemplateManifest = { ...plain, patterns: [{ ...(plain.patterns[0] as TemplateManifest['patterns'][number]), repeat: { item: 'card', slots: ['card{n}Text'], shapes: [['10'], ['20'], ['30']], min: 1, max: 5, span: { left: 0.05, right: 0.95 } } }] };
+  const template = loadTemplate(grouped, stale);
+  assert.deepEqual(checkManifest(template).filter((issue) => issue.severity === 'error'), []);
+  for (const change of [{ op: 'setRepeat', pattern: 'cards', widen: 2 }, { op: 'setRepeat', pattern: 'cards', min: 2 }, { op: 'setRepeat', pattern: 'cards', span: null }] as const) {
+    assert.deepEqual(changeManifest(template, [change]).rejected, [], JSON.stringify(change));
+  }
+  assert.equal(changeManifest(template, [{ op: 'setRepeat', pattern: 'cards', span: null }]).manifest.patterns[0]?.repeat?.span, undefined);
+  // Asked about the number, it counts the row where the group draws it, and never says fewer than are drawn.
+  const asked = changeManifest(template, [{ op: 'setRepeat', pattern: 'cards', max: 5 }]);
+  assert.match(asked.rejected[0]?.reason ?? '', /5 cards do not fit side by side: .* The most is 4/);
+  assert.deepEqual(changeManifest(template, [{ op: 'setRepeat', pattern: 'cards', max: 4 }]).rejected, []);
+  // And nothing is suggested on the strength of the span.
+  assert.deepEqual(suggestChanges(template, { kinds: ['row-max'] }), []);
+});
+
+test('a sample deck is one the manifest allows, when a row takes fewer than it draws', () => {
+  const fewer = changeManifest(loadTemplate(pptx, cardsManifest), [{ op: 'setRepeat', pattern: 'cards', max: 2 }]);
+  assert.deepEqual(fewer.rejected, []);
+  const template = loadTemplate(pptx, fewer.manifest);
+  const { deck, assets } = sampleDeck(template);
+  assert.equal(deck.slides.find((slide) => slide.pattern === 'cards')?.items, 2, 'the nearest the row takes to the three it draws');
+  assert.ok(renderDeck(template, deck, { assets }).pptx.length > 1000);
 });
 
 test('a slot that points at a shape the slide does not have makes no row, and nothing throws', () => {

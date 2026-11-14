@@ -210,9 +210,14 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
       if (definition?.repeat) {
         // A slide that keeps its layout keeps its number of items unless the plan says otherwise.
         const source = entry.from > 0 ? deck.slides[entry.from - 1] : undefined;
-        const count = readItems(definition, given.items ?? (source?.pattern === entry.pattern ? source.items : undefined));
-        if (count.problem) countProblems.push(`slide ${index + 1}: ${count.problem}`);
-        if (count.items !== undefined) entry.items = count.items;
+        const keeps = source?.pattern === entry.pattern;
+        // A slide that keeps its layout and states no number, in the plan or on the slide, shows
+        // what the template draws. It is given no number here, so that it is copied as it is.
+        if (!(keeps && (given.items === undefined || given.items === null) && source?.items === undefined)) {
+          const count = readItems(definition, given.items ?? (keeps ? source?.items : undefined));
+          if (count.problem) countProblems.push(`slide ${index + 1}: ${count.problem}`);
+          if (count.items !== undefined) entry.items = count.items;
+        }
       }
       return entry;
     });
@@ -241,7 +246,9 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
     return plan;
   };
 
-  const mostItems = Math.max(0, ...patternIds.map((id) => itemRange(definitions.get(id) as PatternDef)).map((range) => (range && range.max > range.min ? range.max : 0)));
+  // Rows that take one number are counted in when some row varies: the list names their number, so it must be allowed.
+  const itemRanges = patternIds.map((id) => itemRange(definitions.get(id) as PatternDef));
+  const mostItems = itemRanges.some((range) => range && range.max > range.min) ? Math.max(0, ...itemRanges.map((range) => range?.max ?? 0)) : 0;
   const planSchema = editPlanSchema(patternIds, deck.slides.length, fieldNames, mostItems);
   // The edit plan says a little more for each slide than an outline does, and may add slides.
   const room = planRoom(deck.slides.length + 10) * 1.5;

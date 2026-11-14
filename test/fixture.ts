@@ -93,7 +93,7 @@ const slide3 =
 
 // A row of three cards, first in reading order at the right. Each card is a group holding a text
 // box and a picture; the first card also has a text box that sits outside its group.
-const card = (id: number, x: number, y = 2000000) =>
+export const card = (id: number, x: number, y = 2000000) =>
   `<p:grpSp><p:nvGrpSpPr><p:cNvPr id="${id}" name="Card"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>` +
   `<p:grpSpPr><a:xfrm><a:off x="${x}" y="${y}"/><a:ext cx="1000000" cy="1500000"/><a:chOff x="${x}" y="${y}"/><a:chExt cx="1000000" cy="1500000"/></a:xfrm></p:grpSpPr>` +
   `<p:sp><p:nvSpPr><p:cNvPr id="${id + 1}" name="Card text"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>` +

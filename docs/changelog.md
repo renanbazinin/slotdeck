@@ -35,48 +35,66 @@ is already in use can be repaired without a model and without renaming anything.
 ### Changed
 
 - **A drafted row takes more than it draws.** With 0.2.0 a row drawn with four cards took two to four, so a
-  deck that wanted five went to a table or a grid. It now takes what the slide has room for. Three kinds of row
-  still take what they draw: a grid, a row whose items differ in width or sit closer together than one is
-  wide, and a row with a line or an arrow through it. Manifests that exist are not touched.
+  deck that wanted five went to a table or a grid. It now takes what the slide has room for. Some rows still
+  take what they draw: a grid; a row whose items touch, or differ in width by more than its spacing can absorb;
+  and a row with a line, an arrow or a highlight among its items. Manifests that exist are not touched.
 - **A small picture is an icon.** A picture with no side over 1.1 inch that is not a JPEG and not cropped into
   a frame is marked `small: a pictogram` for the drafting model, and becomes an icon slot even when the model
   answers `photo`. For a row this is decided for all its items together, and the slot keeps the name the model
   gave it. A model that does not see the slide was observed to call the pictograms of a row of cards
   photographs; the layout then asked for a photograph per card and was not offered when pictures were off.
+  An unknown value of `rows`, or a `widen` that is not a number above 1 and at most 4, is refused.
 - **A draft names layouts by their structure.** The drafting model is told to name and describe a layout by
   what it holds, never by the subject of the filler and without a number of items, and to name repeated items
   `card`, `column`, `step` or `stat`. A layout described as "four team member profiles" was passed over by the
   planner for every other subject.
 - **The planner is told how a pattern sets its items.** The line it reads for a row or grid now says
   `items: 2 to 6 cards side by side in one row, numbered N = 1, 2, ...` or
-  `items: 2 to 6 cards in lines of 3, numbered N = 1, 2, ...`; a row that takes one number of items gets a line
-  too, `items: always 3 cards side by side in one row, numbered N = 1, ..., 3`; and a grid that never takes
-  more than one line holds reads as a row. A new rule, in `planOutline`, `editPlan` and `planEdit`, tells it to
-  answer a wish for a number of columns, or for items side by side, with a pattern that sets that number on one
-  line, and to use the closest when there is none.
+  `items: 2 to 6 cards in lines of up to 3, numbered N = 1, 2, ...`; a row that takes one number of items gets
+  a line too, `items: always 3 cards side by side in one row, numbered N = 1, ..., 3`; and a grid that never
+  takes more than one line holds reads as a row. A new rule, in `planOutline`, `editPlan` and `planEdit`, tells
+  it to answer a wish for a number of columns, or for items side by side, with a pattern that takes that number
+  and sets it on one line, and to use the closest when there is none.
 - **A row with no number of items given** is planned with the number it draws or, when it does not take that
   number, the nearest it takes. Before, a row that always takes two and draws three was planned with three and
-  then refused.
-- **A row that takes one number says so in its refusal**: `pattern "x" takes exactly 2 cards, not 3`, from
-  `validateDeck` and the planner, where it said `takes 2 to 2 cards`.
+  then refused. `sampleDeck` does the same by default, so its sample is a deck the manifest allows. An edit
+  still copies a stored slide that states no number as it is.
+- **A row that takes one number says so**: `pattern "x" takes exactly 2 cards, not 3`, from `validateDeck` and
+  the planner, where it said `takes 2 to 2 cards`; `describeManifest` says `takes exactly 2` too.
 - **`setRepeat` is stricter about what cannot render.** The room it counts for a row stops at the edge of a
   shape the row is drawn on, such as a panel. More items than drawn are refused for a row whose items differ
-  in width or sit closer together than one is wide, because copies of the last item would overlap. A `span` is
-  refused for a row whose items sit inside a group, where the renderer never used one. With a `span`, the
-  message says how far the row may spread.
+  in width so much that copies of the last, set out by the step from the first to the second, would overlap. A
+  `span` is refused for a row whose items sit inside a group, where the renderer never used one, and such a
+  span already in a manifest is no longer counted. The fit is counted when a change is about the number of
+  items or the span, and a refusal never names fewer than the row draws. With a `span`, the message says how
+  far the row may spread.
 
 ### Fixed
 
-- `setRepeat` refused the number of items a row draws (`4 cards do not fit side by side`) when the items sat
-  closer together than 3% of their width, for example when only `widen` was being set. What the template draws
-  fits in the width it is drawn in.
+- `setRepeat` refused the number of items a row draws (`4 cards do not fit side by side`) when the items of a
+  row inside a group sat closer together than 3% of their width, for example when only `widen` was being set.
+  What the template draws fits in the width it is drawn in.
 
 ### Measured
 
 One 36-slide template with two rows of four cards, drafted with `gemini-3.8-flash` and no slide pictures,
-twice with each version. Requests then asked for 2, 3, 4, 5 and 6 columns side by side, with pictures off.
+twice with 0.2.0 and three times with 0.3.0. Requests then asked for 2, 3, 4, 5 and 6 columns side by side,
+with pictures off and a set of icons.
 
-MEASURED_TABLE
+| | 0.2.0 | 0.3.0 |
+| --- | --- | --- |
+| Model calls for a draft | 37 | 37 |
+| Patterns drafted, of 36 slides | 23 and 23 | 23, 23 and 24 |
+| The two rows of cards take more than the four they draw | in neither draft | in every draft (up to 5 and up to 6) |
+| The pictograms of those cards | photo slots, in both drafts | icon slots, in every draft |
+| Those rows are described as | team or speaker profiles with photos, in both drafts | a row of columns, each with an icon, a heading and a text, in every draft |
+| One brief for five slides, 2 to 6 columns: slides with the asked number on one line | 2 of 5, both on layouts for figures | 5 of 5, all on the rows of cards |
+| The same brief on a 0.2.0 draft after `suggestChanges` (`icon`, `row`, `row-max`) and no new draft | | 5 of 5 |
+| Each number asked for on its own, on a new draft and on two repaired 0.2.0 drafts | | 5 of 5 on each (two columns as one line of a two-column grid) |
+| Sample decks at the fewest and at the most items | no validation problem | no validation problem |
+
+What code cannot repair in a 0.2.0 draft is its descriptions: a row still described as team profiles is passed
+over more easily for other subjects. Give it a description of its structure with `setPattern`.
 
 ### Upgrading from 0.2.0
 
@@ -94,9 +112,10 @@ MEASURED_TABLE
   Then give any pattern whose description names the filler's subject a description of its structure, with
   `{ op: 'setPattern', pattern, description }`.
 - **Icon slots need an icon set.** An icon slot is filled from the `icons` given to `planDeck`, `generateDeck`
-  or `presentationTools`. If your app gives none, leave `'icon'` out of `kinds` above, or keep the template's
-  own pictograms with `{ op: 'setSlot', pattern, slot, empty: 'keep' }`: a pattern with a required icon slot
-  and no icon set is not offered to the planner. The same holds for a new draft, which makes such slots icons.
+  or `presentationTools`. If your app gives none, follow the repair with
+  `{ op: 'setSlot', pattern, slot, empty: 'keep' }` for each such row, which keeps the template's own
+  pictograms: a pattern with a required icon slot and no icon set is not offered to the planner. The same holds
+  for a new draft, which makes such slots icons.
 - **Do not draft again to get this.** A new draft renames every pattern, and stored decks then point at ids
   that do not exist.
 - **A new draft differs from a 0.2.0 draft**: rows take more, small pictures are icons. Pass `rows: 'drawn'`
@@ -104,13 +123,14 @@ MEASURED_TABLE
 - **Code that builds a `DraftResult` by hand**, such as a test double, needs the two new fields, `notes` and
   `suggestions`.
 - **Tests with a scripted model** that match the planner's prompt: the line
-  `items: 1 to 5 cards, numbered` is now `items: 1 to 5 cards side by side in one row, numbered`; a row that
-  takes one number of items now has an `items: always ...` line; and the heading `Patterns for new slides` of
-  `planEdit` is now `Patterns, for new slides and for a slide that changes its layout`.
+  `items: 1 to 5 cards, numbered` is now `items: 1 to 5 cards side by side in one row, numbered` (for a grid
+  that can break a line, `in lines of up to 2`); a row that takes one number of items now has an
+  `items: always ...` line; and the heading `Patterns for new slides` of `planEdit` is now
+  `Patterns, for new slides and for a slide that changes its layout`.
 - **Code that matches refusals**: `takes 2 to 2 cards, not 3` is now `takes exactly 2 cards, not 3`.
-- **`setRepeat` may now refuse** a `span` on a row inside a group, a `span` narrower than the drawn row, and
-  more items than drawn on a row of unequal items. Show `rejected[i].reason` as it is; `span: null` clears a
-  span that no longer applies.
+- **`setRepeat` may now refuse** a `span` on a row inside a group, more items than drawn on a row whose items
+  differ much in width, and more items than fit inside a panel the row is drawn on. Show `rejected[i].reason`
+  as it is; `span: null` clears a span that no longer applies.
 - **Your own `LlmProvider`**: draft requests now carry `maxOutputTokens`. Pass it on as the output limit, with
   room for reasoning on top if your model counts reasoning against it, as the Gemini adapter does.
 

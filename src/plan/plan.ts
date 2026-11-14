@@ -140,14 +140,14 @@ function briefText(brief: Brief): string {
     .join('\n\n');
 }
 
-/** What a wish about the kind of slides means, in the planner's own terms. Shared by every prompt that chooses patterns. */
 /**
  * A wish for columns is a wish about how items sit. The catalogue says it for each pattern:
- * "side by side in one row", or "in lines of N" for a grid, which sets up to N on a line.
+ * "side by side in one row", or "in lines of" a number for a grid.
  */
 export const columnsRule = (asked: 'brief' | 'request'): string =>
-  `When the ${asked} asks for a number of columns, or for items side by side, use a pattern whose items are "side by side in one row" and that takes that number, or one whose items are "in lines of" that number or more: both set them on one line. Items "in lines of" a smaller number are broken over several lines. When the list has no such pattern, use the one that comes closest.`;
+  `When the ${asked} asks for a number of columns, or for items side by side, use a pattern that takes that number of items and whose items are "side by side in one row" or "in lines of" that number or more: either sets them on one line. Items "in lines of" a smaller number are broken over several lines. When the list has no such pattern, use the one that comes closest.`;
 
+/** What a wish about the kind of slides means, in the planner's own terms. Shared by every prompt that chooses patterns. */
 export const SLIDE_KIND_RULE =
   'A wish about the kind of slides (text only, no tables, only cards) decides which patterns may be used, and comes before variety. ' +
   '"Text only" means the patterns marked "Plain text.": a title with paragraphs or a list, and no cards, figures, tables, charts, icons or pictures. ' +

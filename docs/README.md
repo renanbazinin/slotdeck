@@ -46,6 +46,7 @@ slotdeck makes new PowerPoint files from an existing PowerPoint template.
 | [api-reference.md](api-reference.md) | Look up any export: its signature and what it does |
 | [troubleshooting.md](troubleshooting.md) | Find the meaning of an error or warning, and the known limits |
 | [changelog.md](changelog.md) | See what changed in each version, and what to do when upgrading |
+| [prompts/README.md](prompts/README.md) | Hand a coding agent a complete prompt for work on an app that uses slotdeck, such as the logic of a template studio |
 
 ## Which function do I need?
 

@@ -42,8 +42,12 @@ test('every export is described in the API reference', () => {
   }
 });
 
+// Prompts for a coding agent, one folder down. They ship in the package like the pages.
+const promptsDir = join(docsDir, 'prompts');
+const prompts = readdirSync(promptsDir).filter((name) => name.endsWith('.md'));
+
 test('every import shown in the documentation exists', () => {
-  for (const file of [...pages.map((page) => join(docsDir, page)), join(root, 'README.md')]) {
+  for (const file of [...pages.map((page) => join(docsDir, page)), ...prompts.map((name) => join(promptsDir, name)), join(root, 'README.md')]) {
     const text = readFileSync(file, 'utf8');
     for (const match of text.matchAll(/import (?:type )?\{([^}]+)\} from '(slotdeck(?:\/node)?)'/g)) {
       const known = match[2] === 'slotdeck' ? mainExports : nodeExports;
@@ -60,6 +64,30 @@ test('the documentation links only to its own pages', () => {
     assert.doesNotMatch(text, /\]\(https?:/, `${page} links to the internet`);
     for (const match of text.matchAll(/\]\(([^)#]+)(#[^)]*)?\)/g)) {
       assert.ok(existsSync(join(docsDir, match[1] as string)), `${page} links to ${match[1]}, which does not exist`);
+    }
+  }
+});
+
+test('the prompts are listed, ship in the package, and name only what exists', () => {
+  assert.ok(prompts.length >= 2, 'a README and at least one prompt');
+  assert.match(read('README.md'), /\]\(prompts\/README\.md\)/, 'the index of the documentation leads to the prompts');
+  const files = (JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { files: string[] }).files;
+  assert.ok(files.includes('docs/prompts/*.md'), 'package.json ships docs/prompts');
+
+  const list = readFileSync(join(promptsDir, 'README.md'), 'utf8');
+  const operations = ['setManifest', 'addPattern', 'copyPattern', 'derivePattern', 'removePattern', 'setPattern', 'addSlot', 'removeSlot', 'setSlot', 'setRepeat', 'removeRepeat'];
+  for (const name of prompts) {
+    const text = readFileSync(join(promptsDir, name), 'utf8');
+    if (name !== 'README.md') assert.ok(list.includes(`](${name})`), `${name} is not listed in prompts/README.md`);
+    assert.doesNotMatch(text, /https?:\/\//, `${name} points at the internet, which its reader cannot reach`);
+    // Links are relative to the prompts folder; paths are given as an agent finds them in an app.
+    for (const match of text.matchAll(/\]\(([^)#]+)(#[^)]*)?\)/g)) assert.ok(existsSync(join(promptsDir, match[1] as string)), `${name} links to ${match[1]}, which does not exist`);
+    for (const match of text.matchAll(/node_modules\/slotdeck\/docs\/([A-Za-z0-9/._-]+\.md)/g)) assert.ok(existsSync(join(docsDir, match[1] as string)), `${name} names docs/${match[1]}, which does not exist`);
+    for (const match of text.matchAll(/op: '([A-Za-z]+)'/g)) assert.ok(operations.includes(match[1] as string), `${name} names the operation ${match[1]}, which does not exist`);
+    // A function of the package is written as `name(` in code; one that is not exported is a mistake or belongs to the app.
+    for (const match of text.matchAll(/\b(draft|suggest|change|edit|check|sample|load|render|validate|describe|inspect|studio|pattern|plan|presentation|preview|fontkit|template|measured|text)([A-Z][A-Za-z]+)\(/g)) {
+      const called = `${match[1]}${match[2]}`;
+      assert.ok(mainExports.includes(called) || nodeExports.includes(called), `${name} calls ${called}(), which slotdeck does not export`);
     }
   }
 });

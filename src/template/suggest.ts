@@ -64,6 +64,7 @@ const areaOf = (slot: SlotDef | undefined, slide: SlideInfo, shapeId: string): B
 export function suggestChanges(template: Template, options: SuggestOptions = {}): ManifestSuggestion[] {
   const kinds = new Set<SuggestionKind>(options.kinds ?? SUGGESTION_KINDS);
   const factor = options.widen ?? 2;
+  if (!(typeof factor === 'number' && factor > 1 && factor <= 4)) throw new Error('widen is a factor above 1 and at most 4, such as 2 to let an item become twice as wide');
   const info = inspectTemplate(template.pkg);
   const manifest = template.manifest;
   const context: VariantContext = { pkg: template.pkg, info, manifest };
@@ -82,9 +83,13 @@ export function suggestChanges(template: Template, options: SuggestOptions = {})
     if (!slide) continue;
     const add = (suggestion: Omit<ManifestSuggestion, 'pattern' | 'slide'>) => found.push({ ...suggestion, pattern: pattern.id, slide: pattern.sourceSlide });
     const repeat = pattern.repeat;
+    // The row a pattern has, or the one its slot names describe and a `row` suggestion would make.
+    const row = repeat ?? detectRepeat(pattern.slots.filter((slot) => !(slot.kind === 'text' && slot.deckField)), slide);
 
     if (kinds.has('icon')) {
-      for (const family of pictureFamilies(pattern)) {
+      // Pictures are judged by the row they are in or are about to be in, so that taking `icon`
+      // and `row` together cannot leave a row whose items are filled unlike.
+      for (const family of pictureFamilies(row ? { ...pattern, repeat: row } : pattern)) {
         const photos = family.filter((slot) => slot.imageKind === 'photo');
         // A change to one item of a row is made to every item, so it is offered only where it is
         // true of them all: each picture of the row measures as a pictogram.
@@ -94,13 +99,14 @@ export function suggestChanges(template: Template, options: SuggestOptions = {})
         add({
           kind: 'icon',
           message: `${quoted(photos.map((slot) => slot.name))} ${one ? 'is a photo slot, but its picture is' : 'are photo slots, but their pictures are'} no more than ${pct(widest)} of the slide wide: ${one ? 'a pictogram' : 'pictograms'}. As ${one ? 'an icon slot it is' : 'icon slots they are'} filled from the icon set given to the planner, and the layout no longer waits for photographs. Without an icon set, a required icon slot keeps the layout from being offered.`,
-          changes: [{ op: 'setSlot', pattern: pattern.id, slot: (photos[0] as ImageSlot).name, imageKind: 'icon' }],
+          // In a row one change reaches every item. Where the row is not made yet, each slot is changed by itself.
+          changes: (repeat ? photos.slice(0, 1) : photos).map((slot) => ({ op: 'setSlot', pattern: pattern.id, slot: slot.name, imageKind: 'icon' })),
         });
       }
     }
 
     if (!repeat && kinds.has('row')) {
-      const detected = detectRepeat(pattern.slots.filter((slot) => !(slot.kind === 'text' && slot.deckField)), slide);
+      const detected = row;
       if (detected) {
         const count = detected.shapes.length;
         const ranges = (detected.max ?? count) > (detected.min ?? count);
@@ -208,17 +214,24 @@ function measuresAsPictogram(slot: ImageSlot, slide: SlideInfo, info: TemplateIn
 
 /**
  * What a pattern does to its slide, compared with the pattern it would be a variant of: which
- * shapes it takes away, and on which side it has the pictures that the mirror image moves. Names,
- * budgets, texts and exact boxes are left out, because ordinary tuning changes them; a variant
- * that was given its own id and then tuned is still the same variant.
+ * shapes it takes away or brings back, what kind of thing fills its pictures, and on which side
+ * it has what the mirror image moves. Names, budgets, texts and exact boxes are left out, because
+ * ordinary tuning changes them; a variant that was given its own id and then tuned is still the
+ * same variant. A pattern with a native chart where the source has a picture is another layout,
+ * and so are its variants.
  */
 function layoutOf(pattern: PatternDef, source: PatternDef, mirror: PatternDef | undefined, slide: SlideInfo): string {
-  const droppedBySource = new Set(source.slots.filter((slot) => slot.empty === 'drop').map((slot) => slot.shapeId));
-  const removed = [...new Set(pattern.slots.filter((slot) => slot.empty === 'drop' && !droppedBySource.has(slot.shapeId)).map((slot) => slot.shapeId))].sort();
+  const dropped = (of: PatternDef) => new Set(of.slots.filter((slot) => slot.empty === 'drop').map((slot) => slot.shapeId));
+  const droppedBySource = dropped(source);
+  const droppedHere = dropped(pattern);
+  const removed = [...droppedHere].filter((id) => !droppedBySource.has(id)).sort();
+  const restored = [...droppedBySource].filter((id) => !droppedHere.has(id)).sort();
+  const fills = pattern.slots.filter((slot) => slot.kind !== 'text' && slot.empty !== 'drop' && slot.empty !== 'keep').map((slot) => `${slot.shapeId}:${slot.kind}`).sort();
   const sides: string[] = [];
   for (const moved of mirror?.slots ?? []) {
-    // The side is read from the pictures. A text is widened and tuned in ways that say nothing about sides.
-    if (moved.kind === 'text') continue;
+    // The side is read from pictures and from what is moved as it is (a group, an ornament). A
+    // text that is written is widened and tuned in ways that say nothing about sides.
+    if (moved.kind === 'text' && moved.empty !== 'keep') continue;
     const from = areaOf(source.slots.find((slot) => slot.shapeId === moved.shapeId), slide, moved.shapeId);
     const to = areaOf(moved, slide, moved.shapeId);
     if (!from || !to || Math.abs(middle(to) - middle(from)) < 0.02) continue;
@@ -227,5 +240,5 @@ function layoutOf(pattern: PatternDef, source: PatternDef, mirror: PatternDef | 
     const at = areaOf(own, slide, moved.shapeId);
     if (at) sides.push(`${moved.shapeId}:${Math.abs(middle(at) - middle(to)) < Math.abs(middle(at) - middle(from)) ? 'mirrored' : 'as drawn'}`);
   }
-  return JSON.stringify([removed, [...new Set(sides)].sort()]);
+  return JSON.stringify([removed, restored, fills, [...new Set(sides)].sort()]);
 }

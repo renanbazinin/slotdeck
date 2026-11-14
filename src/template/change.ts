@@ -385,15 +385,20 @@ function apply(manifest: TemplateManifest, change: ManifestChange, info: Templat
         const span = rowSpan(slide, repeat, room.area);
         // Items beyond the drawn ones are copies of the last, set out by the step from the first
         // item to the second. Where that step is shorter than the widest item they would overlap.
-        if (change.max !== undefined && max > drawn && room.pitch < room.itemWidth * 1.03 - 1e-4) {
-          reject(`the ${repeat.item}s are drawn at different widths or closer together than one is wide, so more than the ${drawn} drawn would lie on top of each other`);
+        if (change.max !== undefined && max > drawn && room.pitch < room.itemWidth - 1e-4) {
+          reject(`the ${repeat.item}s are drawn at different widths, and further ones are set out by the step from the first to the second, which is shorter than the widest: more than the ${drawn} drawn would lie on top of each other`);
         }
         // What the template draws fits in the width it is drawn in, however close its items sit.
         // A span narrower than that is not the row as drawn, and has to pass the fit like any other.
-        const asDrawn = max <= drawn && span.right - span.left >= room.area.w - 0.001;
-        if (!asDrawn && max > fits(span.left, span.right)) {
-          // The room beside a row always holds the row itself.
-          const most = change.span === undefined && onSlide ? Math.max(drawn, fits(room.left, room.right)) : fits(span.left, span.right);
+        const covers = span.right - span.left >= room.area.w - 0.001;
+        const asDrawn = max <= drawn && covers;
+        // The fit is counted when the change is about the number of items or the span. A change
+        // to something else, such as `widen`, or one that takes a span away, is not held up by a
+        // number an earlier version accepted.
+        const asks = change.max !== undefined || (change.span !== undefined && change.span !== null) || found;
+        if (asks && !asDrawn && max > fits(span.left, span.right)) {
+          // The room beside a row always holds the row itself, and so do limits as wide as the row.
+          const most = change.span === undefined && onSlide ? Math.max(drawn, fits(room.left, room.right)) : covers ? Math.max(drawn, fits(span.left, span.right)) : fits(span.left, span.right);
           if (max > most) {
             reject(`${max} ${repeat.item}s do not fit side by side: each is ${Math.round(room.itemWidth * 100)}% of the slide wide and the row has ${Math.round(((change.span === undefined && onSlide ? room.right - room.left : span.right - span.left)) * 100)}%. The most is ${most}`);
           }

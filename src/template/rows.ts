@@ -95,10 +95,11 @@ export function rowCapacity(slide: SlideInfo, repeat: RepeatDef): number {
   const drawn = repeat.shapes.length;
   if (repeat.columns !== undefined || drawn < 2) return drawn;
   const room = rowRoom(slide, repeat.shapes);
-  // Further items are set out by the step from the first item to the second and are copies of the
-  // last. Where that step is shorter than the widest item, as in a row whose items differ in
-  // width, they would lie on top of each other: such a row takes what it draws.
-  if (room.pitch < room.itemWidth * 1.03 - 1e-4) return drawn;
+  // Further items are copies of the last, set out by the step from the first item to the second.
+  // Where that step is shorter than the widest item, as it can be in a row whose items differ in
+  // width, they would lie on top of each other. And where an arrow or a line lies among the items,
+  // they would be drawn across it. Such rows take what they draw.
+  if (room.pinned || room.pitch < room.itemWidth - 1e-4) return drawn;
   const span = rowSpan(slide, repeat, room.area);
   return Math.max(drawn, rowFit(room.itemWidth, span.left, span.right), rowOnSlide(slide, repeat) ? rowFit(room.itemWidth, room.left, room.right) : 0);
 }
@@ -117,11 +118,13 @@ export function rowComfort(slide: SlideInfo, repeat: RepeatDef): { most: number;
   const drawn = repeat.shapes.length;
   if (repeat.columns !== undefined || drawn < 2) return { most: drawn };
   const room = rowRoom(slide, repeat.shapes);
+  if (room.pinned) return { most: drawn };
   const current = rowSpan(slide, repeat, room.area);
-  const drawnGap = (room.area.w - drawn * room.itemWidth) / (drawn - 1);
-  const gap = Math.max(drawnGap * TIGHTEST, room.itemWidth * 0.03);
-  // The renderer steps by the distance from the first item to the second. A step shorter than the
-  // widest item and the gap would break the promise, so such a row stays at what it draws.
+  const gap = Math.max(room.gap * TIGHTEST, room.itemWidth * 0.03);
+  // The renderer steps by the distance from the first item to the second, and every further item
+  // is a copy of the last. A step that leaves less than the gap after the widest item would break
+  // the promise, so such a row stays at what it draws: items that touch, or that differ in width
+  // by more than the spacing can absorb.
   if (room.pitch < room.itemWidth + gap - 1e-4) return { most: drawn };
   const spaced = (left: number, right: number) => Math.floor((right - left + gap) / (room.itemWidth + gap) + 1e-6);
   const within = Math.max(drawn, spaced(current.left, current.right));

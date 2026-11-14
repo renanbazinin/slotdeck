@@ -4,7 +4,7 @@ import { solidPng } from '../util/png.ts';
 import { measurerFor } from '../text/measure.ts';
 import type { TextMeasurer } from '../text/measure.ts';
 import { inspectTemplate } from './inspect.ts';
-import { COPY_ID_STEP, effectiveSlots, itemRange, tableAtScale, textBudget } from './manifest.ts';
+import { COPY_ID_STEP, defaultItems, effectiveSlots, itemRange, tableAtScale, textBudget } from './manifest.ts';
 import type { PatternDef, TextSlotDef } from './manifest.ts';
 
 export interface SampleOptions {
@@ -41,7 +41,8 @@ export function sampleDeck(template: Template, options: SampleOptions = {}): { d
   const slides = manifest.patterns.map((pattern): SlideSpec => {
     const shapes = new Map((info.slides[pattern.sourceSlide - 1]?.shapes ?? []).map((shape) => [shape.id, shape]));
     const range = itemRange(pattern);
-    const items = range ? (options.items === 'max' ? range.max : options.items === 'min' ? range.min : range.drawn) : undefined;
+    // By default the number the template draws, or the nearest the row takes, so that the sample is a deck the manifest allows.
+    const items = range ? (options.items === 'max' ? range.max : options.items === 'min' ? range.min : defaultItems(pattern)) : undefined;
     const slots: Record<string, SlotValue> = {};
 
     for (const slot of effectiveSlots(pattern, items)) {
