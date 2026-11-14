@@ -132,17 +132,19 @@ test('a heading that ends with one word on a line of its own is reported, with t
 
 test('the checks agree with PowerPoint on the example deck, measured with real fonts', () => {
   // In PowerPoint's own picture of this deck the cover title ends with "Share" on a line of its
-  // own, and the title of slide 4 with "trip". Nothing else in the deck is a problem.
+  // own, the title of slide 5 with "trip", and the title of slide 6 (the mirrored figure slide)
+  // with "week". Nothing else in the deck is a problem.
   const deck = JSON.parse(readFileSync(join(root, 'examples', 'decks', 'patterns.en.deck.json'), 'utf8')) as DeckSpec;
   const found = (files: FontFiles) =>
     checkDesign(loadTemplate(pptx, manifest, { fonts: fontkitMetrics(fontkit, files) }), deck, { layout: 'adaptive' }).map((issue) => `${issue.slide} ${issue.slot} ${issue.kind} ${/"(\w+)"/.exec(issue.message)?.[1]}`);
   const office = officeFonts();
-  if (office) assert.deepEqual(found(office), ['1 title orphan Share', '4 title orphan trip']);
-  // The open stand-ins are not the template's fonts to the last unit: they find the same two,
+  const seen = ['1 title orphan Share', '5 title orphan trip', '6 title orphan week'];
+  if (office) assert.deepEqual(found(office), seen);
+  // The open stand-ins are not the template's fonts to the last unit: they find the same three,
   // and may break one more title a word differently.
   const open = found(openFonts());
-  assert.ok(open.includes('1 title orphan Share') && open.includes('4 title orphan trip'), open.join('; '));
-  assert.ok(open.length <= 3 && open.every((entry) => / orphan /.test(entry)), open.join('; '));
+  assert.ok(seen.every((entry) => open.includes(entry)), open.join('; '));
+  assert.ok(open.length <= seen.length + 1 && open.every((entry) => / orphan /.test(entry)), open.join('; '));
 });
 
 // --- a second look in the planner -------------------------------------------------------------

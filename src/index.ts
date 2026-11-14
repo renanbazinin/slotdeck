@@ -31,6 +31,8 @@ export { DeckValidationError, validateDeck } from './deck/validate.ts';
 export type { Issue, LayoutMode, ValidateOptions } from './deck/validate.ts';
 export type { ChartType, ChartValue, DeckSpec, ImageRef, SlideSpec, SlotValue, TableValue } from './deck/spec.ts';
 export { isChartValue, isImageRef, isTableValue } from './deck/spec.ts';
+export { slideAlternatives } from './deck/alternatives.ts';
+export type { AlternativesOptions, SlideAlternative } from './deck/alternatives.ts';
 
 // Templates.
 export { draftManifest } from './template/draft.ts';
@@ -41,6 +43,8 @@ export { sampleDeck } from './template/sample.ts';
 export type { SampleOptions } from './template/sample.ts';
 export { changeManifest, describeSlot } from './template/change.ts';
 export type { ChangeResult, ManifestChange, SlotPatch } from './template/change.ts';
+export { VARIANTS, patternVariants } from './template/derive.ts';
+export type { PatternVariant, VariantOption } from './template/derive.ts';
 export { describeManifest, editManifest } from './template/instruct.ts';
 export type { ManifestEditOptions, ManifestEditResult } from './template/instruct.ts';
 export { studioView } from './template/view.ts';

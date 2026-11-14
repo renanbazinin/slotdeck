@@ -35,12 +35,33 @@
       }
     },
     {
+      "pattern": "text-and-photo-mirrored",
+      "slots": {
+        "title": "The river path carries most of the rides",
+        "subtitle": "Three in four trips use it",
+        "body": [
+          "The path along the river is flat, lit and free of traffic, so riders choose it even when a street would be shorter.",
+          "That is why the next docks go where the path meets a tram stop, not where a map shows a gap."
+        ],
+        "photo": { "asset": "photo-tall", "alt": "A paved path beside a river, with a rider in the distance" }
+      }
+    },
+    {
       "pattern": "photo-stat",
       "slots": {
         "title": "Most rides replace a short car trip",
         "statValue": "62%",
         "statDescription": "of riders in the end-of-season survey said their last ride replaced a trip they would otherwise have made by car or taxi.",
         "photo": { "asset": "photo-square", "alt": "A row of bikes at a docking station" }
+      }
+    },
+    {
+      "pattern": "photo-stat-mirrored",
+      "slots": {
+        "title": "Members ride more than once a week",
+        "statValue": "3.4",
+        "statDescription": "rides a week for the average member this season, up from 2.1 the season before. Day-pass riders took 1.2.",
+        "photo": { "asset": "photo-square", "alt": "A member unlocking a bike with a card" }
       }
     },
     {
@@ -54,6 +75,19 @@
           "Clearer signs where the river path splits"
         ],
         "photo": { "asset": "photo-wide", "alt": "Cyclists on a tree-lined path" }
+      }
+    },
+    {
+      "pattern": "list-with-photo-mirrored",
+      "slots": {
+        "title": "What we will change first",
+        "bulletList": [
+          "Two more docks at each of the four busiest tram stops",
+          "A family pass, sold from the first day of the season",
+          "Lights that stay on for ten minutes after a stop",
+          "New signs at the three places where the river path splits"
+        ],
+        "photo": { "asset": "photo-wide", "alt": "A docking station being installed beside a tram stop" }
       }
     },
     {

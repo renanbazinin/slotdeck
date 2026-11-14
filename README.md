@@ -218,7 +218,9 @@ data reaches a model, and a pptx can be rebuilt from the JSON and the pictures a
 new plan or deck under a new id; earlier versions stay.
 
 To show a plan as layout thumbnails, render the template once and name the pictures after the patterns
-(`scripts/pattern-thumbnails.ts`). `examples/plan-preview.ts` turns a plan into a self-contained page.
+(`scripts/pattern-thumbnails.ts`). A derived pattern, such as a mirror image, looks different from the slide it
+comes from: `scripts/template-deck.ts` writes a deck with one slide per pattern, filled with the template's own
+sample content, to take those pictures from. `examples/plan-preview.ts` turns a plan into a self-contained page.
 
 ### Other models
 
@@ -285,6 +287,10 @@ manifest allows and the code moves the shapes; the model never positions anythin
   accepts (in the demo template `icon-cards` takes 2 to 4 and `stat-cards` 2 to 6). A slide says how many with
   `items`. Surplus cards are removed, extra ones are copies of the last, and the row is spaced out again around
   its centre. A copied card has its own slots (`card5Icon`, `card5Heading`, ...).
+- **Rows that fill their line.** With `widen` on the `repeat`, fewer cards than drawn grow wider instead of
+  standing in the middle of the row: backgrounds and text boxes widen, icons and pictures keep their size
+  and their side, and the text budgets grow with the cards. The number of cards decides, never the length of
+  the text.
 - **Grids.** With `columns`, the items form a grid. They take as few rows as they need and spread evenly: four
   figures in a three-column grid make two rows of two, five make three and two, three make one row.
 - **Larger text.** `textScale` on a deck (or `textSize: 'large' | 'x-large'` on a brief) enlarges body text:
@@ -295,6 +301,26 @@ manifest allows and the code moves the shapes; the model never positions anythin
   given a font size (`fontSize`) and paragraph spacing, and any shape can be dropped. In the demo template
   `text-only` is the photo slide with its photo dropped and its text widened, and `chart-native` is the chart
   slide with a native chart in place of the picture.
+- **Variants the code works out.** For three common variants nobody types a box: the mirror image of a slide
+  with a picture, the same slide without its picture, and a slide without one of its optional lines. One
+  operation (`derivePattern`) makes each, moving the shapes and measuring the budgets again; the header, logo
+  and page number stay where they are. In the demo template `text-and-photo-mirrored`, `photo-stat-mirrored`
+  and `list-with-photo-mirrored` were made this way.
+
+### Another layout for a slide
+
+`slideAlternatives(manifest, deck, slideNumber)` takes a slide that already has its content and lists the
+other patterns that can hold the same content, with the slide written for each: three cards as a list of three
+points, two cards as two columns, a photo slide as its mirror image. It is code only. No model is asked and no
+word is changed, so a pattern that would need a subtitle, a number or an icon the slide does not have is not
+offered. What does not fit a new slot's budget is reported, not cut.
+
+```ts
+import { slideAlternatives } from 'slotdeck';
+
+const [first] = slideAlternatives(manifest, deck, 5, { layout: 'adaptive' });
+// first.pattern, first.slide, first.changes, first.dropped, first.warnings
+```
 
 ### Text that fits
 
@@ -423,8 +449,9 @@ const view = studioView(template);
 | `setSlot` | A slot's budget, whether it is required, optional, kept or always removed (`empty`), font size, area (`box`), name, deck field, picture kind, and the settings of a table or chart. |
 | `addSlot` | Makes a shape a slot in a role (`title`, `text`, `list`, `number`, `caption`, `photo`, `icon`, `graphic`, `chart`, `table`, `decoration`), with limits measured from the shape. On a shape that is already a slot it changes the role. |
 | `removeSlot` | The shape goes back to being part of the design. |
-| `setRepeat`, `removeRepeat` | How many items a row or grid takes. Finds the row from numbered slot names when the pattern has none. |
+| `setRepeat`, `removeRepeat` | How many items a row or grid takes, and whether fewer items grow wider to fill the row (`widen`). Finds the row from numbered slot names when the pattern has none. |
 | `addPattern`, `copyPattern`, `setPattern`, `removePattern` | Which slides are patterns, their ids and descriptions, and variants of a pattern from the same slide. |
+| `derivePattern` | A variant of a pattern that the code lays out by itself: `mirror`, `text-only`, or `without` an optional text. Refused with the reason when the slide does not allow it. |
 | `setManifest` | The template's name, language, direction and alignment policy. |
 
 What the code adds to each change:
@@ -438,7 +465,8 @@ What the code adds to each change:
   is refused, and the rest of the list is still applied.
 
 `editManifest` makes one model call, and a second when some of its operations were refused, so the model can
-correct them. The model never sets a position: `box` and `span` exist only for changes made by hand.
+correct them. The model never sets a position: `box` and `span` exist only for changes made by hand, and a
+variant it asks for by name is laid out by the code.
 `describeManifest(template)` returns the text the model reads, for an app that wants to show the manifest to its
 own chat model.
 
@@ -453,6 +481,7 @@ own chat model.
    native-chart variant. It also asked for five cards in a row; that was refused, because four fit.
 3. A few changes by hand with `changeManifest`: the text-only variant, chart colours, mirrored alignment for
    right-to-left decks, and tighter budgets for figures and one-line captions.
+4. Three `derivePattern` operations for the mirror images of the slides with a photo.
 
 A draft is a starting point. What it does not contain, and a person adds while reviewing: budgets tuned by eye,
 derived patterns, wider rows, picture areas and chart colours. On a 36-slide corporate template (not included
@@ -539,8 +568,7 @@ powershell -File scripts/render-pptx.ps1 -Path out/patterns-en.pptx -OutDir out/
 - **What has been run.** The whole path was run against the Gemini Developer API with `gemini-3.8-flash` for
   text and `gemini-3.1-flash-image` for photos, in English and Hebrew. Vertex AI is supported by the adapter but
   has not been run live. Output was checked by rendering in PowerPoint on Windows; other viewers were not tested.
-- **Not built:** swapping the photo side, stacked or combined charts, speaker notes, and reading back changes
-  made in PowerPoint.
+- **Not built:** stacked or combined charts, speaker notes, and reading back changes made in PowerPoint.
 
 ## The demo template and pictures
 

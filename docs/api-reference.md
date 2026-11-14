@@ -46,6 +46,26 @@ function extractAssets(template: Template, deck: DeckSpec, pptx: Uint8Array): Re
 
 Reads a deck's pictures back from a pptx rendered from it, by asset id.
 
+### `slideAlternatives`
+
+```ts
+function slideAlternatives(manifest: TemplateManifest, deck: DeckSpec, slide: number, options?: AlternativesOptions): SlideAlternative[];
+
+interface AlternativesOptions { layout?: LayoutMode; patterns?: string[] }
+interface SlideAlternative {
+  pattern: string;      // a pattern that has a place for everything the slide says
+  description: string;  // what that pattern is for
+  slide: SlideSpec;     // the slide written for that pattern
+  changes: string[];    // what was done where the content was not copied slot for slot
+  dropped: string[];    // slots of the original whose photo or icon has no place
+  warnings: Issue[];    // what validateDeck says about the new slide
+}
+```
+
+The other patterns that can hold what slide number `slide` (from 1) of a deck says, with the slide written for
+each. Synchronous, no model, no words changed. Throws a `RangeError` when the deck has no such slide. See
+"Another layout for the same slide" in [layout-freedom.md](layout-freedom.md).
+
 ### `DeckValidationError`
 
 ```ts
@@ -449,6 +469,17 @@ function changeManifest(template: Template, changes: ManifestChange[]): ChangeRe
 function editManifest(template: Template, instruction: string, options: ManifestEditOptions): Promise<ManifestEditResult>;
 ```
 
+### `patternVariants`, `VARIANTS`
+
+```ts
+function patternVariants(template: Template, pattern: string): VariantOption[];
+const VARIANTS: readonly ['mirror', 'text-only', 'without'];
+type PatternVariant = (typeof VARIANTS)[number];
+```
+
+The variants of a pattern that `changeManifest` can derive with `{ op: 'derivePattern' }`, each with whether
+the pattern's slide allows it. See [template-studio.md](template-studio.md).
+
 ### `describeManifest`, `describeSlot`
 
 ```ts
@@ -503,6 +534,7 @@ interface DraftOptions {
   name?: string;
   slideImage?: (slide: number) => SlidePicture | undefined | Promise<SlidePicture | undefined>;
   slides?: number[];
+  variants?: Array<'mirror' | 'text-only'>; // also add these variants of every pattern that allows them
   concurrency?: number;
   onProgress?: (event: { done: number; total: number; slide: number }) => void;
   signal?: AbortSignal;
@@ -516,12 +548,13 @@ type ManifestChange =
   | { op: 'setManifest'; name?: string; language?: string; direction?: Direction; alignOnDirectionChange?: AlignPolicy; textScale?: number | null }
   | { op: 'addPattern'; slide: number; id: string; description?: string }
   | { op: 'copyPattern'; pattern: string; id: string; description?: string }
+  | { op: 'derivePattern'; pattern: string; variant: PatternVariant; slot?: string; id?: string; description?: string }
   | { op: 'removePattern'; pattern: string }
   | { op: 'setPattern'; pattern: string; id?: string; description?: string; figures?: boolean }
   | { op: 'addSlot'; pattern: string; shape: string; role: Role; name?: string; optional?: boolean }
   | { op: 'removeSlot'; pattern: string; slot: string }
   | ({ op: 'setSlot'; pattern: string; slot: string } & SlotPatch)
-  | { op: 'setRepeat'; pattern: string; min?: number; max?: number; item?: string; span?: { left: number; right: number } | null }
+  | { op: 'setRepeat'; pattern: string; min?: number; max?: number; item?: string; span?: { left: number; right: number } | null; widen?: number | null }
   | { op: 'removeRepeat'; pattern: string };
 
 interface SlotPatch {
@@ -557,6 +590,7 @@ interface ChangeResult {
   rejected: Array<{ index: number; change: ManifestChange; reason: string }>;
   issues: ManifestIssue[];
 }
+interface VariantOption { variant: PatternVariant; slot?: string; available: boolean; note: string }
 interface ManifestEditOptions { llm: LlmProvider; signal?: AbortSignal }
 interface ManifestEditResult extends ChangeResult { note: string }
 
@@ -855,6 +889,7 @@ interface RepeatDef {
   max?: number;
   span?: { left: number; right: number };
   columns?: number;
+  widen?: number; // fewer items on a line than drawn grow up to this factor to fill the row
 }
 type SlotDef = TextSlotDef | ImageSlotDef | TableSlotDef | ChartSlotDef;
 

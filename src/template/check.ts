@@ -59,8 +59,9 @@ export function checkManifest(template: Template, inspected?: TemplateInfo): Man
       usedShapes.set(slot.shapeId, slot.name);
 
       const grouped = shape.groupId !== undefined;
-      // A slot that only ever removes its shape may point at any kind of shape.
-      const dropped = slot.empty === 'drop';
+      // A slot that only ever removes its shape may point at any kind of shape, and so may one
+      // that keeps the shape as designed and only shows it in another place.
+      const dropped = slot.empty === 'drop' || (slot.empty === 'keep' && 'box' in slot && slot.box !== undefined);
       if (slot.kind === 'text' && shape.kind !== 'text' && !dropped) {
         report(shape.kind === 'shape' ? 'warning' : 'error', `is a text slot, but shape #${slot.shapeId} is ${describe(shape)}`, slot.name);
       }
@@ -68,7 +69,7 @@ export function checkManifest(template: Template, inspected?: TemplateInfo): Man
       if (slot.kind === 'table' && shape.kind !== 'table') report('error', `is a table slot, but shape #${slot.shapeId} is ${describe(shape)}`, slot.name);
       if (slot.kind === 'chart' && grouped) report('error', 'is a chart slot, but its shape is inside a group', slot.name);
       if ((slot.kind === 'text' || slot.kind === 'image') && slot.box && grouped) report('error', 'has a box, but its shape is inside a group', slot.name);
-      if (slot.kind === 'text' && slot.maxChars === undefined && !slot.deckField && (slot.empty ?? 'error') !== 'drop') {
+      if (slot.kind === 'text' && slot.maxChars === undefined && !slot.deckField && !dropped) {
         report('warning', 'has no character budget, so nothing stops text that does not fit', slot.name);
       }
       // With fonts, a budget is tried out: the slot's own sample words, as many as the budget allows.
@@ -108,6 +109,7 @@ export function checkManifest(template: Template, inspected?: TemplateInfo): Man
       const max = repeat.max ?? drawn;
       if (min < 1 || min > max) report('error', `repeat range ${min} to ${max} is not valid`);
       if (repeat.columns !== undefined && max > drawn) report('warning', 'a grid cannot hold more items than it draws');
+      if (repeat.widen !== undefined && !(typeof repeat.widen === 'number' && repeat.widen >= 1)) report('error', 'repeat.widen is a factor of 1 or more, such as 1.5');
     }
   }
   if (measure) {
