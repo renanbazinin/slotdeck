@@ -7,6 +7,7 @@ import type { JsonSchema } from '../llm/provider.ts';
 import type { Template } from '../render/render.ts';
 import { TEXT_SIZES, effectiveSlots, itemCount, itemRange } from '../template/manifest.ts';
 import type { Direction, PatternDef, TextSize } from '../template/manifest.ts';
+import { measurerFor } from '../text/measure.ts';
 import { budgetScale, buildCatalog, describeCatalog, planPattern, readItems } from './catalog.ts';
 import type { CatalogContext, ImageDensity } from './catalog.ts';
 import { PlanError, SLIDE_KIND_RULE, asker, directionOf, hasFigures, planRoom } from './plan.ts';
@@ -139,6 +140,7 @@ function planSchemaBase(patternIds: string[], slideCount: number): JsonSchema {
  */
 export async function planEdit(template: Template, deck: DeckSpec, instruction: string, options: EditOptions): Promise<EditResult> {
   const { manifest } = template;
+  const measure = measurerFor(template);
   const layout = options.layout ?? 'strict';
   const fields = options.fields ?? deck.fields ?? {};
   const currentLanguage = deck.language ?? manifest.language ?? 'en';
@@ -260,7 +262,7 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
   const resized = textScale !== context.textScale;
   context.textScale = textScale;
   const overflows = (slide: SlideSpec) =>
-    validateDeck(manifest, { ...deck, textScale, slides: [slide] }, { layout }).some((issue) => /characters|paragraphs/.test(issue.message));
+    validateDeck(manifest, { ...deck, textScale, slides: [slide] }, measure ? { layout, measure } : { layout }).some((issue) => /characters|paragraphs|lines/.test(issue.message));
 
   // 2. Work out, per slide, whether it is copied or written, and what a written slide carries over.
   const jobs: Array<WriteJob & { source?: SlideSpec; relaid: boolean }> = [];
@@ -391,6 +393,7 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
     context,
     assemble,
     manifest,
+    measure,
     layout,
     maxRepairs: options.maxRepairs ?? 2,
     onRepair: (attempt, issues) => options.onProgress?.({ stage: 'repair', attempt, issues }),

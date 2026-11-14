@@ -296,6 +296,28 @@ manifest allows and the code moves the shapes; the model never positions anythin
   `text-only` is the photo slide with its photo dropped and its text widened, and `chart-native` is the chart
   slide with a native chart in place of the picture.
 
+### Text that fits
+
+By default a slot's limit is a character budget, which cannot see where lines break. Give the template its font
+files and text is measured the way PowerPoint sets it: broken into lines at the slot's typeface and size and
+compared with the room in its box.
+
+```ts
+import * as fontkit from 'fontkit'; // installed by you; slotdeck does not depend on it
+import { fontkitMetrics, loadTemplate, renderDeck } from 'slotdeck';
+
+const fonts = fontkitMetrics(fontkit, { Calibri: [calibri, calibriBold], Cambria: [cambria, cambriaBold] });
+const template = loadTemplate(pptx, manifest, { fonts });
+
+renderDeck(template, deck, { assets }).warnings;
+// text takes 7 lines at 18 pt; the box holds 5 (2 lines too many). Text of about 290 characters fits.
+```
+
+The planner repairs drafts by the same measurement, `shrinkText` on the manifest lets text that does not fit be
+set a little smaller, and `measuredBudgets` works out budgets from what the boxes hold. On the demo template
+every line broke at the same word as in PowerPoint in all 1,153 text slots checked, in English and Hebrew. See
+[`docs/text-fit.md`](docs/text-fit.md).
+
 ## Template studio
 
 Writing a manifest by hand means reading shape ids out of a pptx. The studio functions do that work with a
@@ -480,7 +502,8 @@ powershell -File scripts/render-pptx.ps1 -Path out/patterns-en.pptx -OutDir out/
   as empty, so its budget is only as long as its sample text. Decks exported from Google Slides and decks built
   from free-standing text boxes work as they are.
 - **Budgets are estimates.** A character budget cannot see lines lost to wrapping. Budgets for slots with several
-  paragraphs should be set with room to spare, and a sample deck is the way to see them.
+  paragraphs should be set with room to spare, and a sample deck is the way to see them. A template loaded with
+  its fonts measures text slots in lines instead (see Text that fits); tables and charts keep their budgets.
 - **Models invent details.** In the showcase deck the model made up an email address and a phone number for the
   closing slide, which were replaced by hand. Figures are guarded (see How planning works); contact details and
   names are not.

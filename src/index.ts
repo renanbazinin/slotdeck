@@ -19,7 +19,7 @@ export { extractAssets } from './render/extract.ts';
 export type { AssetDef, IconDef, ImageDensity } from './plan/catalog.ts';
 export { isPlainText } from './plan/catalog.ts';
 export { loadTemplate, renderDeck } from './render/render.ts';
-export type { RenderOptions, RenderResult, Template } from './render/render.ts';
+export type { RenderOptions, RenderResult, Template, TemplateOptions } from './render/render.ts';
 
 // Model providers.
 export type { ImageProvider, ImageRequest, JsonRequest, JsonSchema, LlmProvider } from './llm/provider.ts';
@@ -67,5 +67,14 @@ export type {
   TextSlotDef,
 } from './template/manifest.ts';
 export { TEXT_SIZES } from './template/manifest.ts';
+
+// Measuring text with real fonts.
+export { fontkitMetrics } from './text/fontkit.ts';
+export type { FontFiles, FontkitModule } from './text/fontkit.ts';
+export type { FontFace, FontMetrics, FontStyle } from './text/fonts.ts';
+export { templateFonts, textMeasurer } from './text/measure.ts';
+export type { FitOptions, ShrinkLimit, TemplateFont, TextFit, TextMeasurer } from './text/measure.ts';
+export { measuredBudgets } from './template/budgets.ts';
+export type { BudgetOptions, MeasuredBudget } from './template/budgets.ts';
 
 export { PptxPackage } from './pptx/package.ts';

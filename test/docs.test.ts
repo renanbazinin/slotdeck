@@ -25,7 +25,7 @@ function exportsOf(file: string): string[] {
   );
 }
 const mainExports = exportsOf('index.ts');
-const nodeExports = ['directoryStore'];
+const nodeExports = ['directoryStore', 'fontFiles'];
 
 test('the documentation covers the pages its index promises', () => {
   const index = read('README.md');

@@ -67,6 +67,7 @@ operations (`changeManifest`) or by instruction (`editManifest`), and verify it 
 | `language` | string | no | BCP 47 tag of the template's sample text. Decks default to it. |
 | `alignOnDirectionChange` | `"flip"` or `"keep"` | no | What happens to left and right paragraph alignment in a deck that reads the other way. `flip` (default) mirrors it. `keep` leaves it as designed. A text slot can override this. |
 | `textScale` | number | no | Enlarges the body text of every deck made from this template, as a factor on the designed size: `1.3` turns 9 pt into about 12 pt. For a template whose body text is too small to read comfortably. Budgets shrink to match. See "Larger text" in [layout-freedom.md](layout-freedom.md). |
+| `shrinkText` | `{ to, minSize? }` | no | Lets text that does not fit its box be set smaller: down to `to` of its size (`0.85` is 85%) and never under `minSize` points. Acts only for a template loaded with fonts. See "Shrinking text to fit" in [text-fit.md](text-fit.md). |
 
 ## `PatternDef`
 

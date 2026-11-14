@@ -25,6 +25,12 @@ export interface TemplateManifest {
    * comfortably. Budgets shrink with it, and a deck's own text size is applied on top.
    */
   textScale?: number;
+  /**
+   * Lets text that does not fit its box be set smaller: down to `to` of its size (0.85 is 85%)
+   * and never under `minSize` points. It needs fonts to measure with, so it only acts for a
+   * template loaded with fonts; without them nothing is shrunk.
+   */
+  shrinkText?: { to: number; minSize?: number };
   patterns: PatternDef[];
 }
 

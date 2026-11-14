@@ -60,7 +60,11 @@
     "fflate": "^0.8.3"
   },
   "devDependencies": {
+    "@expo-google-fonts/caladea": "^0.4.2",
+    "@expo-google-fonts/carlito": "^0.4.1",
+    "@expo-google-fonts/heebo": "^0.4.2",
     "@types/node": "^26.6.6",
+    "fontkit": "^3.0.0",
     "typescript": "^7.0.2"
   }
 }

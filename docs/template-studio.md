@@ -106,6 +106,9 @@ kind of shape, names are unique, rows are consistent. The rules are listed in
 [manifest-format.md](manifest-format.md). Run it when a template is loaded, so a template that someone changed
 shows up there and not in the middle of a render.
 
+For a template loaded with fonts it also tries every text budget out and warns about one that lets text run
+over its box. See "The studio: checking and setting budgets" in [text-fit.md](text-fit.md).
+
 ## `sampleDeck(template, options?)`
 
 ```ts
@@ -120,6 +123,7 @@ filler words and plain coloured rectangles for pictures.
 | --- | --- | --- |
 | `fill` | `0.95` | How full to make each text slot, as a share of its budget. |
 | `items` | `'drawn'` | For patterns with a row or grid: `'drawn'` uses the template's number, `'max'` the most allowed, `'min'` the fewest. |
+| `fit` | `'budget'` | What "full" means for a text slot: `'budget'` is its character budget; `'box'` is what its box holds as measured with the template's fonts (see [text-fit.md](text-fit.md)). |
 
 ## `changeManifest(template, changes)`
 

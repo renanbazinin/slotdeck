@@ -20,6 +20,10 @@ is fast: a 15-slide deck from the demo template takes about 100 ms.
 It does not verify the manifest. Call `checkManifest(template)` when a template or manifest is loaded if you
 want to catch a manifest that no longer matches its file (see [template-studio.md](template-studio.md)).
 
+A third argument, `{ fonts }`, gives the template the metrics of its fonts. Text is then measured as it will
+be set: warnings say how many lines a text runs over, and text can be shrunk to fit. See
+[text-fit.md](text-fit.md).
+
 ## `renderDeck(template, deck, options?)`
 
 ```ts
@@ -33,6 +37,7 @@ interface RenderOptions {
 interface RenderResult {
   pptx: Uint8Array;
   warnings: Issue[]; // non-blocking findings, such as text over a slot's budget
+  shrunk: Array<{ slide: number; slot: string; size: number; scale: number }>; // see text-fit.md; empty unless the manifest has shrinkText
 }
 ```
 
@@ -97,6 +102,7 @@ function validateDeck(manifest: TemplateManifest, deck: DeckSpec, options?: Vali
 interface ValidateOptions {
   layout?: 'strict' | 'adaptive';
   assets?: Iterable<string>; // ids that will be available at render time; when given, image references are checked
+  measure?: TextMeasurer;    // measures text with the template's fonts: see text-fit.md
 }
 
 interface Issue {

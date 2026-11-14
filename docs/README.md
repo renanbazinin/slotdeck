@@ -39,6 +39,7 @@ slotdeck makes new PowerPoint files from an existing PowerPoint template.
 | [providers.md](providers.md) | Connect your own language model or image source, including an internal gateway |
 | [layout-freedom.md](layout-freedom.md) | Vary the number of cards, enlarge text, and derive several patterns from one slide |
 | [languages.md](languages.md) | Make right-to-left decks from a left-to-right template, or the reverse |
+| [text-fit.md](text-fit.md) | Measure text with the template's fonts: overflow in lines, shrinking to fit, budgets from measurement |
 | [template-studio.md](template-studio.md) | Draft a manifest with a model, check it, change it by hand or by instruction |
 | [api-reference.md](api-reference.md) | Look up any export: its signature and what it does |
 | [troubleshooting.md](troubleshooting.md) | Find the meaning of an error or warning, and the known limits |
@@ -58,6 +59,8 @@ slotdeck makes new PowerPoint files from an existing PowerPoint template.
 | Describe a new template | `draftManifest` | 1 per slide, plus 1 |
 | Verify a manifest against its pptx | `checkManifest` | none |
 | See whether a manifest's budgets hold | `sampleDeck` then `renderDeck` | none |
+| Know whether a text fits its box, in lines | `loadTemplate` with `fonts`, or `textMeasurer` | none |
+| Set budgets from what the boxes hold | `measuredBudgets` | none |
 | Change a manifest by operations | `changeManifest` | none |
 | Change a manifest by instruction | `editManifest` | 1 or 2 |
 | List the shapes of a template | `inspectTemplate`, `studioView` | none |
@@ -65,8 +68,8 @@ slotdeck makes new PowerPoint files from an existing PowerPoint template.
 ## Facts worth knowing before writing code
 
 - The package is ESM only (`import`, not `require`) and needs Node 22.18 or later.
-- Entry points: `slotdeck` (everything that runs anywhere) and `slotdeck/node` (`directoryStore`, which uses
-  the file system).
+- Entry points: `slotdeck` (everything that runs anywhere) and `slotdeck/node` (`directoryStore` and
+  `fontFiles`, which use the file system).
 - All binary data is `Uint8Array`. In Node a `Buffer` is a `Uint8Array`, so `fs.readFileSync(path)` can be
   passed directly.
 - Functions that call a model are `async`. `renderDeck`, `validateDeck`, `checkManifest`, `sampleDeck`,

@@ -3,6 +3,52 @@
 What changed in each version, newest first, with what to do when upgrading. The version you have installed is
 in `node_modules/slotdeck/package.json`.
 
+## Unreleased
+
+### Added
+
+- **Text is measured with the template's fonts.** Load a template with font metrics
+  (`loadTemplate(pptx, manifest, { fonts })`) and text is broken into lines at each slot's typeface and size,
+  the way PowerPoint sets it. Validation and `renderDeck` then warn by the lines a text runs over
+  (`text takes 7 lines at 18 pt; the box holds 5 (2 lines too many). Text of about 290 characters fits.`), and
+  the planner sends a draft back to the model with that sentence. On the demo template every line broke at
+  the same word as in PowerPoint in all 1,153 text slots checked at the designed sizes, in English and in
+  Hebrew, and 699 of 700 slots had PowerPoint's line count with every font size halved. See
+  [text-fit.md](text-fit.md).
+- **`fontkitMetrics(fontkit, files)`** builds the metrics from font files with the `fontkit` library, which
+  you install yourself: slotdeck does not depend on it. `FontMetrics` is the small interface behind it, for
+  using another library.
+- **`templateFonts(template)`** lists the typefaces, weights and slants a template's text is set in, and
+  **`fontFiles(fontkit, folder, typefaces)`** from `slotdeck/node` finds their files in a font folder.
+- **Shrinking text to fit.** `shrinkText: { to: 0.85, minSize: 10 }` on the manifest lets text that does not
+  fit be set smaller, in half points, down to the stated limit. `renderDeck` returns what it shrank in `shrunk`.
+- **`textMeasurer(template)`** measures any text in any text slot: lines, capacity, overflow, the lines
+  themselves. `validateDeck` takes it as the `measure` option.
+- **`measuredBudgets(template)`** says how many characters each text slot's box really holds and suggests a
+  budget, to set with `changeManifest`.
+- **`checkManifest`** tries every text budget out when the template has fonts, and warns about a budget that
+  lets text run over its box. It also names typefaces that were not supplied.
+- **`sampleDeck(template, { fit: 'box' })`** fills every text slot to what its box holds by measurement.
+
+### Changed
+
+- `renderDeck` returns `shrunk` next to `pptx` and `warnings`. It is an empty array unless the manifest has
+  `shrinkText` and the template has fonts.
+- `loadTemplate` takes a third, optional argument. `Template` has an optional `fonts` field.
+
+### Upgrading
+
+- Nothing to do. Without fonts every result is the same as in 0.1.2: character budgets, the same warnings,
+  the same files.
+- To turn measuring on: `npm install fontkit`, build metrics with `fontkitMetrics`, and pass them to
+  `loadTemplate`. Code that builds a `Template` object by hand (`{ pkg, manifest }`) keeps working; add
+  `fonts` to it to measure.
+- Once a template has fonts, a text longer than its `maxChars` that fits its box is no longer reported, and a
+  text within `maxChars` that does not fit is. Code that looks for the words `characters; the slot fits` in a
+  warning should also expect `lines`.
+- Budgets drafted without fonts are cautious. `measuredBudgets` usually suggests larger ones; setting them
+  lets the planning model write more per slide.
+
 ## 0.1.2
 
 ### Added

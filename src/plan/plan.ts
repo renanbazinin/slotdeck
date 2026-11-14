@@ -5,6 +5,7 @@ import type { DeckSpec } from '../deck/spec.ts';
 import type { JsonRequest, JsonSchema, LlmProvider } from '../llm/provider.ts';
 import type { Template } from '../render/render.ts';
 import { TEXT_SIZES } from '../template/manifest.ts';
+import { measurerFor } from '../text/measure.ts';
 import type { Direction, TextSize } from '../template/manifest.ts';
 import { budgetScale, buildCatalog, describeCatalog, isPlainText, itemsProperty, outlineSchema, planPattern, readItems } from './catalog.ts';
 import type { AssetDef, Catalog, CatalogContext, IconDef, ImageDensity, UsablePattern, WriteItem } from './catalog.ts';
@@ -366,6 +367,7 @@ export async function writeDeck(template: Template, plan: DeckPlan, options: Pla
       return deck;
     },
     manifest: template.manifest,
+    measure: measurerFor(template),
     layout,
     maxRepairs: options.maxRepairs ?? 2,
     onRepair: (attempt, issues) => options.onProgress?.({ stage: 'repair', attempt, issues }),

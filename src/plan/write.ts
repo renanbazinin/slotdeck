@@ -1,12 +1,13 @@
 // The part of planning that planDeck and planEdit share: asking the model for the content of
 // a set of slides, turning its answer into slide specs, and sending drafts back for repair.
 import { validateDeck } from '../deck/validate.ts';
-import type { Issue, LayoutMode } from '../deck/validate.ts';
+import type { Issue, LayoutMode, ValidateOptions } from '../deck/validate.ts';
 import { isImageRef } from '../deck/spec.ts';
 import type { DeckSpec, ImageRef, SlideSpec, SlotValue } from '../deck/spec.ts';
 import type { JsonSchema } from '../llm/provider.ts';
 import { textBudget } from '../template/manifest.ts';
 import type { TemplateManifest } from '../template/manifest.ts';
+import type { TextMeasurer } from '../text/measure.ts';
 import { readImageInfo } from '../util/image.ts';
 import { budgetScale, contentSchema } from './catalog.ts';
 import type { CatalogContext, UsablePattern, WriteItem } from './catalog.ts';
@@ -149,6 +150,8 @@ export interface WriteArgs {
   /** Builds the whole deck from the freshly written slides, keyed by slide number. */
   assemble: (written: Map<number, SlideSpec>) => DeckSpec;
   manifest: TemplateManifest;
+  /** Measures text with the template's fonts, so drafts are checked and repaired by the lines they take. */
+  measure?: TextMeasurer | undefined;
   layout: LayoutMode;
   maxRepairs: number;
   onRepair?: (attempt: number, issues: number) => void;
@@ -195,7 +198,9 @@ export async function writeSlides(args: WriteArgs): Promise<{ deck: DeckSpec; is
       written.set(job.number, next);
     }
     const deck = args.assemble(written);
-    return { deck, issues: validateDeck(args.manifest, deck, { layout: args.layout, assets: knownAssets(deck, context) }) };
+    const options: ValidateOptions = { layout: args.layout, assets: knownAssets(deck, context) };
+    if (args.measure) options.measure = args.measure;
+    return { deck, issues: validateDeck(args.manifest, deck, options) };
   };
   // Only slides that were just written can be fixed by asking again.
   const repairable = (issues: Issue[]) => issues.filter((issue) => issue.slide !== undefined && numbers.has(issue.slide));

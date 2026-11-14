@@ -1,5 +1,6 @@
 import { bodyTextScale, effectiveSlots, itemRange, slotSources, tableAtScale, textBudget } from '../template/manifest.ts';
 import type { PatternDef, SlotDef, TemplateManifest } from '../template/manifest.ts';
+import type { TextFit, TextMeasurer } from '../text/measure.ts';
 import { isChartValue, isImageRef, isTableValue, toParagraphs } from './spec.ts';
 import type { ChartValue, DeckSpec, ImageRef, SlideSpec, TableValue } from './spec.ts';
 
@@ -40,6 +41,27 @@ export interface ValidateOptions {
   layout?: LayoutMode;
   /** Ids of the assets that will be available at render time. When given, image references are checked. */
   assets?: Iterable<string>;
+  /**
+   * Measures text with the template's fonts (see `textMeasurer`). With it, text that does not fit
+   * is reported by the lines it runs over, in place of the character count. A slot it cannot
+   * measure keeps the character check.
+   */
+  measure?: TextMeasurer;
+}
+
+/**
+ * The warning for a text that does not fit its slot, as measured. `undefined` when it fits,
+ * which includes fitting once it is set smaller within the manifest's `shrinkText`.
+ */
+export function overflowMessage(fit: TextFit): string | undefined {
+  if (fit.fits) return undefined;
+  const about = fit.approximate ? 'about ' : '';
+  const size = `${fit.scale < 1 ? 'even at ' : 'at '}${fit.size} pt`;
+  const hint = `Text of about ${fit.fitsChars} characters fits.`;
+  if (fit.overflow === 0) {
+    return `text is ${about}${Math.round((fit.widthRatio - 1) * 100)}% wider than its box ${size}, and the box does not wrap. ${hint}`;
+  }
+  return `text takes ${about}${fit.lines} lines ${size}; the box holds ${fit.capacity} (${fit.overflow} ${fit.overflow === 1 ? 'line' : 'lines'} too many). ${hint}`;
 }
 
 /**
@@ -172,9 +194,15 @@ export function validateDeck(manifest: TemplateManifest, deck: DeckSpec, options
       const action = resolved.action;
       if (action.type === 'text' && slot.kind === 'text') {
         // Larger text, asked for by the template or the deck, leaves less room in the same box.
-        const budget = textBudget(slot, bodyTextScale(manifest, deck.textScale));
+        const scale = bodyTextScale(manifest, deck.textScale);
+        const budget = textBudget(slot, scale);
         const chars = action.paragraphs.reduce((sum, paragraph) => sum + paragraph.length, 0);
-        if (budget.maxChars !== undefined && chars > budget.maxChars) {
+        // With fonts the text is measured as it will be set, and the character budget steps aside.
+        const fit = options.measure?.fit(pattern, slot, action.paragraphs, manifest.shrinkText ? { textScale: scale, shrink: manifest.shrinkText } : { textScale: scale });
+        if (fit) {
+          const message = overflowMessage(fit);
+          if (message) issues.push({ severity: 'warning', slide: number, slot: source, message });
+        } else if (budget.maxChars !== undefined && chars > budget.maxChars) {
           issues.push({
             severity: 'warning',
             slide: number,

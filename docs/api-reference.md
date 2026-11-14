@@ -16,10 +16,11 @@ every field.
 ### `loadTemplate`
 
 ```ts
-function loadTemplate(pptx: Uint8Array, manifest: TemplateManifest): Template;
+function loadTemplate(pptx: Uint8Array, manifest: TemplateManifest, options?: TemplateOptions): Template;
 ```
 
-Unzips a template once. Reuse the result.
+Unzips a template once. Reuse the result. `options.fonts` gives it font metrics, which turns on text measuring
+everywhere the template is used (see "Measuring text" below).
 
 ### `renderDeck`
 
@@ -66,13 +67,18 @@ Tell the kinds of slot value apart when walking a deck.
 ### Types
 
 ```ts
-interface Template { pkg: PptxPackage; manifest: TemplateManifest }
+interface Template { pkg: PptxPackage; manifest: TemplateManifest; fonts?: FontMetrics }
+interface TemplateOptions { fonts?: FontMetrics }
 
 interface RenderOptions { assets?: Record<string, Uint8Array>; layout?: LayoutMode }
-interface RenderResult { pptx: Uint8Array; warnings: Issue[] }
+interface RenderResult {
+  pptx: Uint8Array;
+  warnings: Issue[];
+  shrunk: Array<{ slide: number; slot: string; size: number; scale: number }>; // texts set smaller to fit; empty without shrinkText
+}
 
 type LayoutMode = 'strict' | 'adaptive';
-interface ValidateOptions { layout?: LayoutMode; assets?: Iterable<string> }
+interface ValidateOptions { layout?: LayoutMode; assets?: Iterable<string>; measure?: TextMeasurer }
 interface Issue { severity: 'error' | 'warning'; slide?: number; slot?: string; message: string }
 
 interface DeckSpec {
@@ -500,7 +506,7 @@ interface DraftOptions {
 interface DraftResult { manifest: TemplateManifest; skipped: Array<{ slide: number; reason: string }>; issues: ManifestIssue[] }
 
 interface ManifestIssue { severity: 'error' | 'warning'; pattern?: string; slot?: string; message: string }
-interface SampleOptions { fill?: number; items?: 'drawn' | 'max' | 'min' }
+interface SampleOptions { fill?: number; items?: 'drawn' | 'max' | 'min'; fit?: 'budget' | 'box' }
 
 type ManifestChange =
   | { op: 'setManifest'; name?: string; language?: string; direction?: Direction; alignOnDirectionChange?: AlignPolicy; textScale?: number | null }
@@ -582,6 +588,107 @@ interface SlideInfo { number: number; part: string; layout: string; shapes: Shap
 interface TemplateInfo { slideWidth: number; slideHeight: number; defaultFontSize: number; slides: SlideInfo[] }
 ```
 
+## Measuring text
+
+Explained in [text-fit.md](text-fit.md). All of it is optional: without fonts nothing here is used.
+
+### `fontkitMetrics`
+
+```ts
+function fontkitMetrics(fontkit: FontkitModule, files: FontFiles): FontMetrics;
+
+type FontFiles = Record<string, Uint8Array | Uint8Array[]>; // typeface name as the template states it -> its font files
+interface FontkitModule { create(buffer: never, postscriptName?: string): unknown } // the `fontkit` module itself
+```
+
+Font metrics from font files, read with the `fontkit` library, which you install and pass in:
+`fontkitMetrics(fontkit, { Calibri: [regularBytes, boldBytes] })` after `import * as fontkit from 'fontkit'`.
+Reads TrueType, OpenType, collections, WOFF and WOFF2.
+
+### `fontFiles` (from `slotdeck/node`)
+
+```ts
+function fontFiles(fontkit: FontkitModule, directory: string, typefaces: Iterable<string>): FontFiles;
+```
+
+Finds the font files of the given typefaces in a folder, such as the system's font folder, by the family name
+each file states. Typefaces with no file there are left out.
+
+### `templateFonts`
+
+```ts
+function templateFonts(template: Template, language?: string): TemplateFont[];
+```
+
+The typefaces a template's text slots are set in, with the weights and slants used: the font files to supply.
+`language` (default: the manifest's) adds the typeface that text of that language is set in.
+
+### `textMeasurer`
+
+```ts
+function textMeasurer(template: Template, fonts?: FontMetrics): TextMeasurer;
+```
+
+A measurer for a template. `fonts` defaults to the fonts the template was loaded with; it throws when there
+are none. Pass the result to `validateDeck` as `measure`, or call `fit` yourself.
+
+### `measuredBudgets`
+
+```ts
+function measuredBudgets(template: Template, options?: BudgetOptions): MeasuredBudget[];
+```
+
+How many characters each text slot's box holds, as measured, with a budget to set. The template must have
+fonts.
+
+### Types
+
+```ts
+// What slotdeck needs from a font library. Implement it to use a library other than fontkit.
+interface FontMetrics {
+  face(typeface: string, style: FontStyle): FontFace | undefined; // undefined: the typeface was not supplied
+  fallback?(codePoint: number, style: FontStyle): FontFace | undefined; // a face for a character the chosen one lacks
+}
+interface FontStyle { bold: boolean; italic: boolean }
+interface FontFace {
+  has(codePoint: number): boolean;
+  advances(text: string, kerning: boolean): number[]; // the advance of each glyph after shaping, in ems
+  substitute?: boolean; // stands in for a weight or slant that was not supplied
+}
+
+interface TemplateFont { typeface: string; bold: boolean; italic: boolean }
+
+interface TextMeasurer {
+  fit(pattern: string | PatternDef, slot: string | TextSlotDef, text: string | string[], options?: FitOptions): TextFit | undefined;
+  missingFonts(): TemplateFont[];
+}
+interface FitOptions {
+  textScale?: number;   // the factor on body text the deck is rendered with; default 1
+  shrink?: ShrinkLimit; // allow the text to be set smaller when it does not fit
+}
+interface ShrinkLimit { to: number; minSize?: number } // the shape of the manifest's shrinkText
+interface TextFit {
+  fits: boolean;
+  lines: number;       // lines the text takes
+  capacity: number;    // lines of this text the box holds
+  overflow: number;    // lines that do not fit
+  height: number;      // points the text takes
+  room: number;        // points the box gives
+  widthRatio: number;  // for a box that does not wrap: longest line / box width
+  size: number;        // font size of the first paragraph, in points
+  sizes: number[];     // font size of each paragraph
+  scale: number;       // the factor the text was shrunk by; 1 when it was not
+  fitsChars: number;   // about how many characters of such text the box holds
+  paragraphs: string[][]; // the lines of each paragraph
+  widths: number[][];     // the width of each of those lines, in points
+  lineRoom: number[];     // the width a line of each paragraph may take, in points
+  approximate: boolean;   // a typeface, weight or outline was stood in for
+}
+
+interface BudgetOptions { sample?: string; margin?: number } // margin defaults to 0.9
+interface MeasuredBudget { pattern: string; slot: string; maxChars?: number; fits: number; suggested: number }
+```
+
 ## Manifest types
 
 Described field by field in [manifest-format.md](manifest-format.md).
@@ -601,6 +708,7 @@ interface TemplateManifest {
   direction: Direction;
   alignOnDirectionChange?: AlignPolicy;
   textScale?: number; // enlarges body text in every deck made from the template
+  shrinkText?: { to: number; minSize?: number }; // lets text that does not fit be set smaller; needs fonts
   patterns: PatternDef[];
 }
 interface PatternDef {
