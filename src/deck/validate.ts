@@ -182,7 +182,7 @@ export function validateDeck(manifest: TemplateManifest, deck: DeckSpec, options
       issues.push({
         severity: 'error',
         slide: number,
-        message: `pattern "${pattern.id}" takes ${range.min} to ${range.max} ${pattern.repeat?.item ?? 'item'}s, not ${slide.items}`,
+        message: `pattern "${pattern.id}" takes ${range.min === range.max ? `exactly ${range.min}` : `${range.min} to ${range.max}`} ${pattern.repeat?.item ?? 'item'}s, not ${slide.items}`,
       });
       return;
     }

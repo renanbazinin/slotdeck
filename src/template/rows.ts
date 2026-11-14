@@ -1,6 +1,6 @@
 // Rows and grids of like items: finding one from the names of a pattern's slots, and working
 // out how many items a row has room for.
-import type { ShapeInfo, SlideInfo } from './inspect.ts';
+import type { Box, ShapeInfo, SlideInfo } from './inspect.ts';
 import type { RepeatDef, SlotDef } from './manifest.ts';
 import { rowRoom } from './measure.ts';
 
@@ -21,6 +21,8 @@ export function detectRepeat(slots: SlotDef[], slide: SlideInfo): RepeatDef | un
   for (const [prefix, byNumber] of items) {
     const count = byNumber.size;
     if (count < 2 || !Array.from({ length: count }, (_, index) => byNumber.has(index + 1)).every(Boolean)) continue;
+    // A slot that points at a shape the slide does not have is for checkManifest to report; no row is made of it.
+    if ([...byNumber.values()].flat().some((slot) => !byId.has(slot.shapeId))) continue;
     const suffixes = (n: number) => (byNumber.get(n) ?? []).map((slot) => slot.name.slice(prefix.length + String(n).length));
     const first = suffixes(1);
     if (!Array.from({ length: count }, (_, index) => suffixes(index + 1).slice().sort().join()).every((set) => set === first.slice().sort().join())) continue;
@@ -77,15 +79,27 @@ export const rowFit = (itemWidth: number, left: number, right: number): number =
 export const rowOnSlide = (slide: SlideInfo, repeat: RepeatDef): boolean => repeat.shapes.flat().every((id) => slide.shapes.find((shape) => shape.id === id)?.groupId === undefined);
 
 /**
+ * The limits a row is laid out between: its `span` when its items sit on the slide, otherwise the
+ * row as drawn. The renderer uses a span only for a row on the slide, so counting must do the same.
+ */
+export const rowSpan = (slide: SlideInfo, repeat: RepeatDef, area: Box): { left: number; right: number } =>
+  repeat.span && rowOnSlide(slide, repeat) ? repeat.span : { left: area.x, right: area.x + area.w };
+
+/**
  * The most items a row can take on its slide: as many as fit side by side at their drawn width,
- * spreading out to the slide's margin or the next shape where the row is free to. Never fewer
- * than it draws. A grid takes what it draws, because one more would need another line.
+ * spreading out to the slide's margin, the next shape or the edge of the shape it is drawn on,
+ * where the row is free to. Never fewer than it draws. A grid takes what it draws, because one
+ * more would need another line.
  */
 export function rowCapacity(slide: SlideInfo, repeat: RepeatDef): number {
   const drawn = repeat.shapes.length;
-  if (repeat.columns !== undefined) return drawn;
+  if (repeat.columns !== undefined || drawn < 2) return drawn;
   const room = rowRoom(slide, repeat.shapes);
-  const span = repeat.span ?? { left: room.area.x, right: room.area.x + room.area.w };
+  // Further items are set out by the step from the first item to the second and are copies of the
+  // last. Where that step is shorter than the widest item, as in a row whose items differ in
+  // width, they would lie on top of each other: such a row takes what it draws.
+  if (room.pitch < room.itemWidth * 1.03 - 1e-4) return drawn;
+  const span = rowSpan(slide, repeat, room.area);
   return Math.max(drawn, rowFit(room.itemWidth, span.left, span.right), rowOnSlide(slide, repeat) ? rowFit(room.itemWidth, room.left, room.right) : 0);
 }
 
@@ -94,22 +108,27 @@ const TIGHTEST = 1 / 3;
 
 /**
  * The most items a row takes while it still looks spaced as the template draws it: the space
- * between items no less than a third of the drawn one. This is what a draft settles on by itself.
- * Never more than {@link rowCapacity}, which a person may still ask for, and never fewer than drawn.
+ * between items no less than a third of the drawn one. This is what a draft settles on by itself;
+ * a person may ask for more, up to {@link rowCapacity}. Never fewer than drawn. When the count
+ * holds only with the row spread into the room beside it, the span it needs is returned with it,
+ * and the count is made on that span, so that asking again after taking it gives the same answer.
  */
 export function rowComfort(slide: SlideInfo, repeat: RepeatDef): { most: number; span?: { left: number; right: number } } {
   const drawn = repeat.shapes.length;
   if (repeat.columns !== undefined || drawn < 2) return { most: drawn };
   const room = rowRoom(slide, repeat.shapes);
-  const current = repeat.span ?? { left: room.area.x, right: room.area.x + room.area.w };
+  const current = rowSpan(slide, repeat, room.area);
   const drawnGap = (room.area.w - drawn * room.itemWidth) / (drawn - 1);
   const gap = Math.max(drawnGap * TIGHTEST, room.itemWidth * 0.03);
+  // The renderer steps by the distance from the first item to the second. A step shorter than the
+  // widest item and the gap would break the promise, so such a row stays at what it draws.
+  if (room.pitch < room.itemWidth + gap - 1e-4) return { most: drawn };
   const spaced = (left: number, right: number) => Math.floor((right - left + gap) / (room.itemWidth + gap) + 1e-6);
   const within = Math.max(drawn, spaced(current.left, current.right));
   if (!rowOnSlide(slide, repeat)) return { most: within };
-  // The row may spread into the free room beside it. The count holds only with that span, so the span is part of the answer.
-  const left = Math.max(0, Math.floor(Math.min(current.left, room.left) * 1000) / 1000);
-  const right = Math.min(1, Math.ceil(Math.max(current.right, room.right) * 1000) / 1000);
-  const spread = Math.min(rowCapacity(slide, repeat), spaced(left, right));
+  // Rounded outward to the precision spans are stored at, less the noise of the arithmetic.
+  const left = Math.max(0, Math.floor(Math.min(current.left, room.left) * 1000 + 1e-6) / 1000);
+  const right = Math.min(1, Math.ceil(Math.max(current.right, room.right) * 1000 - 1e-6) / 1000);
+  const spread = spaced(left, right);
   return spread > within ? { most: spread, span: { left, right } } : { most: within };
 }

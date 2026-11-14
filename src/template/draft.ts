@@ -5,6 +5,7 @@ import type { JsonSchema, LlmProvider } from '../llm/provider.ts';
 import { PptxPackage } from '../pptx/package.ts';
 import { detectDirection } from '../render/text.ts';
 import { changeWith } from './change.ts';
+import type { ManifestChange } from './change.ts';
 import { checkManifest } from './check.ts';
 import type { ManifestIssue } from './check.ts';
 import { deriveVariant } from './derive.ts';
@@ -13,7 +14,7 @@ import type { ShapeInfo, SlideInfo } from './inspect.ts';
 import type { Direction, PatternDef, SlotDef, TemplateManifest } from './manifest.ts';
 import { ROLES, describeShape, frameFacts, isPictogram, normalize, shapeText, slotFromShape, slotName, textLimits } from './measure.ts';
 import { detectRepeat } from './rows.ts';
-import { suggestChanges } from './suggest.ts';
+import { pictureFamilies, suggestChanges } from './suggest.ts';
 import type { ManifestSuggestion, SuggestionKind } from './suggest.ts';
 
 export { detectRepeat } from './rows.ts';
@@ -51,9 +52,10 @@ export interface DraftOptions {
    */
   rows?: 'fit' | 'drawn';
   /**
-   * Lets the items of every drafted row and grid grow wider, up to this factor (above 1, at most
-   * 4), when a slide has fewer of them than the template draws on a line. Off by default: the
-   * items then keep their width. The same change is offered afterwards in `suggestions`.
+   * Lets the items of drafted rows and grids grow wider, up to this factor (above 1, at most 4),
+   * when a slide has fewer of them than the template draws on a line. It is set on every row or
+   * grid where that can happen: a grid whose fewest items already fill a line gets none. Off by
+   * default: the items then keep their width, and the same change is offered in `suggestions`.
    */
   widen?: number;
   /** How many slides to send to the model at once. Defaults to 4. */
@@ -68,7 +70,7 @@ export interface DraftResult {
   skipped: Array<{ slide: number; reason: string }>;
   /** What {@link checkManifest} finds in the draft. */
   issues: ManifestIssue[];
-  /** What the code settled from measurement on top of the model's labels, in sentences: rows that take more than they draw, small pictures made icons. */
+  /** What the code settled from measurement on top of the model's labels, in sentences: rows that take more than they draw, pictures labelled photo that are icons. */
   notes: string[];
   /** What the slides allow beyond the draft, each with the changes for `changeManifest`: variants, wider rows. */
   suggestions: ManifestSuggestion[];
@@ -90,7 +92,7 @@ export async function draftManifest(pptx: Uint8Array | PptxPackage, options: Dra
   const pkg = pptx instanceof PptxPackage ? pptx : PptxPackage.load(pptx);
   const info = inspectTemplate(pkg);
   const total = info.slides.length;
-  if (options.widen !== undefined && !(options.widen > 1 && options.widen <= 4)) throw new Error('widen is a factor above 1 and at most 4, such as 2 to let an item become twice as wide');
+  if (options.widen !== undefined && !(typeof options.widen === 'number' && options.widen > 1 && options.widen <= 4)) throw new Error('widen is a factor above 1 and at most 4, such as 2 to let an item become twice as wide');
   // `room` is a ceiling on the answer in tokens: the answers are short, and a ceiling ends a model that runs away.
   const ask = async (prompt: string, schema: JsonSchema, room: number, slide?: number) => {
     const image = slide !== undefined ? await options.slideImage?.(slide) : undefined;
@@ -130,7 +132,8 @@ export async function draftManifest(pptx: Uint8Array | PptxPackage, options: Dra
       },
       required: ['language', 'fields'],
     },
-    300 + 40 * repeatedTexts.length,
+    // The answer repeats each of these texts, so its ceiling grows with them. Bytes bound tokens from above.
+    300 + repeatedTexts.reduce((sum, text) => sum + 40 + new TextEncoder().encode(text).length, 0),
   )) as { language?: unknown; fields?: Array<{ text?: unknown; name?: unknown }> } | null;
   const fieldOf = new Map<string, string>();
   repeatedTexts.forEach((text, index) => {
@@ -241,20 +244,12 @@ export async function draftManifest(pptx: Uint8Array | PptxPackage, options: Dra
     const slots: SlotDef[] = [];
     const names = new Set(fixedSlots.map((slot) => slot.name));
     const seen = new Set<string>();
-    const madeIcons: string[] = [];
     for (const entry of Array.isArray(answer.shapes) ? answer.shapes : []) {
       const shape = byId.get(String(entry?.shape ?? ''));
-      let role = DRAFT_ROLES.find((candidate) => candidate === entry?.role);
+      const role = DRAFT_ROLES.find((candidate) => candidate === entry?.role);
       if (!shape || !role || role === 'fixed' || seen.has(shape.id)) continue;
       seen.add(shape.id);
-      let given = String(entry?.name ?? '');
-      if (role === 'photo' && isPictogram(shape, info)) {
-        // No photograph is drawn this small. The name follows, so that the slot says what it holds.
-        role = 'icon';
-        given = given.replace(/photo|picture|image|portrait|avatar/gi, (word) => (word[0] === word[0]?.toUpperCase() ? 'Icon' : 'icon'));
-        madeIcons.push(shape.id);
-      }
-      let name = slotName(given, `${role}${slots.length + 1}`);
+      let name = slotName(String(entry?.name ?? ''), `${role}${slots.length + 1}`);
       while (names.has(name)) name = `${name}x`;
       names.add(name);
       const slot = slotFromShape(shape, info, role, name, entry?.optional === true, slide);
@@ -275,9 +270,28 @@ export async function draftManifest(pptx: Uint8Array | PptxPackage, options: Dra
     const repeat = detectRepeat(slots, slide);
     if (repeat) pattern.repeat = repeat;
     patterns.set(number, pattern);
-    if (madeIcons.length > 0) {
-      slideNotes.set(number, `Slide ${number}: ${madeIcons.length === 1 ? 'a picture' : `${madeIcons.length} pictures`} labelled photo ${madeIcons.length === 1 ? 'is' : 'are'} no more than 1.1 inch on a side, so ${madeIcons.length === 1 ? 'it was made an icon' : 'they were made icons'}.`);
+
+    // Photo or icon is settled by measurement, and for a row by all its items together: every item
+    // of a row is filled alike, and items beyond the drawn ones are copies of the last. The names
+    // stay as the model gave them, so the row found from them stands.
+    const settledPictures: string[] = [];
+    const quoted = (list: Array<{ name: string }>) => list.map((slot) => `"${slot.name}"`).join(', ');
+    for (const family of pictureFamilies(pattern)) {
+      const photos = family.filter((slot) => slot.imageKind === 'photo');
+      const icons = family.filter((slot) => slot.imageKind === 'icon');
+      if (photos.length + icons.length !== family.length || photos.length === 0) continue;
+      const small = family.every((slot) => isPictogram(byId.get(slot.shapeId) as ShapeInfo, info));
+      const one = photos.length === 1;
+      if (small) {
+        // No photograph is drawn this small.
+        for (const slot of photos) slot.imageKind = 'icon';
+        settledPictures.push(`${quoted(photos)} ${one ? 'was' : 'were'} labelled photo, but ${one ? 'its picture is' : 'their pictures are'} no more than 1.1 inch on a side: ${one ? 'an icon slot' : 'icon slots'}.`);
+      } else if (icons.length > 0) {
+        for (const slot of icons) slot.imageKind = 'photo';
+        settledPictures.push(`${quoted(icons)} ${icons.length === 1 ? 'was' : 'were'} labelled icon, but another picture of the same row is too large for a pictogram: all of them are photo slots, so that every item is filled alike.`);
+      }
     }
+    if (settledPictures.length > 0) slideNotes.set(number, `Slide ${number}: ${settledPictures.join(' ')}`);
   };
 
   const queue = [...wanted];
@@ -311,7 +325,12 @@ export async function draftManifest(pptx: Uint8Array | PptxPackage, options: Dra
   const settle: SuggestionKind[] = [...((options.rows ?? 'fit') === 'fit' ? (['row-max'] as const) : []), ...(options.widen !== undefined ? (['row-widen'] as const) : [])];
   if (settle.length > 0) {
     const wanted = suggestChanges({ pkg, manifest }, { kinds: settle, ...(options.widen !== undefined ? { widen: options.widen } : {}) });
-    const settled = changeWith({ pkg, manifest }, wanted.flatMap((suggestion) => suggestion.changes), info);
+    // One change for each row, so that one sentence says what it takes.
+    const perRow = new Map<string, ManifestChange>();
+    for (const change of wanted.flatMap((suggestion) => suggestion.changes)) {
+      if (change.op === 'setRepeat') perRow.set(change.pattern, { ...perRow.get(change.pattern), ...change });
+    }
+    const settled = changeWith({ pkg, manifest }, [...perRow.values()], info);
     manifest = settled.manifest;
     notes.push(...settled.applied.map((change) => change.message));
   }

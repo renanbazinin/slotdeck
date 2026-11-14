@@ -47,7 +47,7 @@ const { manifest, skipped, issues } = await draftManifest(pptxBytes, {
   slides: [1, 2, 5],                             // optional: only these slides; default all
   variants: ['mirror', 'text-only'],             // optional: also add these variants of every pattern that allows them; default none
   rows: 'fit',                                   // optional: 'fit' (default) lets a row take as many items as the slide has room for; 'drawn' only what the template draws
-  widen: 2,                                      // optional: let the items of every row and grid grow up to this factor when there are fewer; default off
+  widen: 2,                                      // optional: let the items of rows and grids grow up to this factor when a line holds fewer than drawn; default off
   concurrency: 4,                                // optional: slides sent to the model at once; default 4
   onProgress: ({ done, total, slide }) => {},    // optional
   signal,                                        // optional
@@ -60,8 +60,10 @@ const { manifest, skipped, issues } = await draftManifest(pptxBytes, {
 ```
 
 Model calls: one about the deck as a whole, then one per slide. Each call carries a ceiling on the size of its
-answer (`maxOutputTokens` on the request: 400 tokens plus 60 for each shape listed), which ends a model that
-runs away inside a text field. A provider should pass it on as its output limit; the Gemini adapter does.
+answer, as `maxOutputTokens` on the request: for a slide, 400 tokens plus 60 for each shape listed; for the
+deck, 300 tokens plus 40 and the size in bytes of each repeated text, which the answer has to repeat. The
+ceiling ends a model that runs away inside a text field. A provider should pass it on as its output limit; the
+Gemini adapter does.
 
 What the code works out without the model:
 
@@ -103,10 +105,18 @@ Two things are facts of the slide, so the code decides them and says so in `note
 
 **How many items a row takes.** A row drawn with four cards takes four by default in the manifest format, and a
 deck that wants five then has nowhere to go: the planner picks a table or a grid. With `rows: 'fit'`, the
-default, a drafted row takes as many items as fit side by side at their drawn width, spreading out to the
-slide's margin or to the next shape, while the space between items stays at a third of the drawn space or more.
-The row's `span` is set with it. A grid takes what it draws, because one more item would need another line.
-`rows: 'drawn'` keeps every row at what the template draws; the same change is then the first suggestion.
+default, a drafted row takes as many items as fit side by side at their drawn width, while the space between
+items stays at a third of the drawn space or more. The row may spread for it, and its `span` is then set: out
+to the slide's margin, to the next shape beside it, or to the edge of a shape it is drawn on, such as a tinted
+panel. `rows: 'drawn'` keeps every row at what the template draws; the change then comes back as a `row-max`
+suggestion.
+
+Three kinds of row take what they draw, whatever the room:
+
+- A grid, because one more item would need another line.
+- A row whose items differ in width, or sit closer together than one is wide. Further items are copies of the
+  last, set out by the step from the first item to the second, and would lie on top of each other.
+- A row with a line or an arrow running through it, which stays where it is.
 
 ```ts
 // notes
@@ -118,16 +128,27 @@ says that number.
 
 **Which pictures are icons.** A model that does not see the slide was observed to label the small pictograms of
 a row of cards as photographs. Such a layout then asks for one photograph per card, and is not offered at all
-when pictures are turned off. A picture labelled `photo` that measures as a pictogram becomes an icon slot, and
-a name such as `card1Photo` becomes `card1Icon`.
+when pictures are turned off. A picture labelled `photo` that measures as a pictogram becomes an icon slot. Its
+name stays as the model gave it, so the row its names describe is the row that is found.
 
 ```ts
 // notes
-// 'Slide 15: 4 pictures labelled photo are no more than 1.1 inch on a side, so they were made icons.'
+// 'Slide 15: "card1Photo", "card2Photo", "card3Photo", "card4Photo" were labelled photo, but their pictures are no more than 1.1 inch on a side: icon slots.'
 ```
 
+For a row this is decided for all its items together, because every item of a row is filled alike and items
+beyond the drawn ones are copies of the last. When each picture of the row is a pictogram, each becomes an
+icon. When one is not (a portrait cropped into a frame among pictograms), they all stay, or become, photo
+slots, and a note says so.
+
+An icon slot is filled from the icon set the app gives the planner (`icons` on `planDeck`, `generateDeck` and
+`presentationTools`). An app that gives none should know that a pattern with a required icon slot is then not
+offered at all (`needs icons, and no icon set was supplied`). Such an app can keep the template's own
+pictogram on every card with `{ op: 'setSlot', pattern, slot, empty: 'keep' }`; one change covers a row.
+
 `widen` is off unless asked for: whether two cards should grow to fill a row drawn for four is a matter of
-taste. With `widen: 2` every drafted row and grid gets it; without, it comes back as a suggestion.
+taste. With `widen: 2` it is set on every drafted row or grid where it can change a slide; a grid whose fewest
+items already fill a line gets none. Without the option, it comes back as a suggestion.
 
 ### Variants in a draft
 
@@ -354,7 +375,12 @@ they become a row.
 
 A row may take more items than it draws, as long as they fit side by side at their drawn width; a refusal says
 the most that do. `suggestChanges` proposes a number that keeps a third of the drawn spacing, which is fewer
-than the most that fit. A grid takes at most what it draws.
+than the most that fit. A grid takes at most what it draws. More than drawn is also refused for a row whose
+items differ in width or sit closer together than one is wide, because the further items would overlap.
+
+A `span` is refused when the drawn row does not fit in it, and for a row whose items sit inside a group: the
+renderer lays out between the limits of a span only a row whose items are on the slide. `span: null` takes a
+span away.
 
 `widen` lets the items grow wider when a line holds fewer of them than the template draws, so that two or
 three cards fill a row drawn for four. It is the most an item may grow, as a factor on its drawn width,
@@ -511,7 +537,7 @@ that are slots, and on a click offers the shape's `roles` (sending `addSlot`) or
 const suggestions = suggestChanges(template);
 // [
 //   { kind: 'icon', pattern: 'team-cards', slide: 15,
-//     message: '"card1Photo", "card2Photo", "card3Photo", "card4Photo" are photo slots, but their pictures are no more than 6% of the slide wide: pictograms. As icons they are filled from the icon set, and the layout no longer waits for photographs.',
+//     message: '"card1Photo", "card2Photo", "card3Photo", "card4Photo" are photo slots, but their pictures are no more than 6% of the slide wide: pictograms. As icon slots they are filled from the icon set given to the planner, and the layout no longer waits for photographs. Without an icon set, a required icon slot keeps the layout from being offered.',
 //     changes: [{ op: 'setSlot', pattern: 'team-cards', slot: 'card1Photo', imageKind: 'icon' }] },
 //   { kind: 'row-max', pattern: 'team-cards', slide: 15,
 //     message: 'The row of cards in "team-cards" takes up to 4, and the slide has room for 5 side by side at their drawn width, with the space between them no less than a third of what the template draws. For that the row spreads from 4% to 68% of the slide\'s width.',
@@ -530,14 +556,16 @@ apply as they stand.
 
 | `kind` | What was found | The change |
 | --- | --- | --- |
-| `icon` | Photo slots whose pictures measure as pictograms (no side over 1.1 inch, not a JPEG, not cropped into a frame). | `setSlot` with `imageKind: 'icon'`. One change covers a row. |
-| `row` | Slots that name several items alike (`card1Text`, `card2Text`) in a pattern with no row, so a deck must fill them all. | `setRepeat`, which finds the row. |
-| `row-max` | A row with room for more items than it takes, at a third of the drawn spacing or more. | `setRepeat` with `max`, and `span` when the row has to spread for it. |
-| `row-widen` | A row or grid that may hold fewer items than it draws on a line, and keeps them at their drawn width. | `setRepeat` with `widen`. |
-| `variant` | A mirrored, text-only or shortened layout the slide allows and the manifest does not have. `variant` says which, and `slot` the text a `without` leaves out. | `derivePattern`. |
+| `icon` | Photo slots whose pictures measure as pictograms (no side over 1.1 inch, not a JPEG, not cropped into a frame). For a row, only when every item's picture does. Slots that nothing fills (`empty: 'keep'` or `'drop'`) are left alone. | `setSlot` with `imageKind: 'icon'`. One change covers a row. |
+| `row` | Slots that name several items alike (`card1Text`, `card2Text`) in a pattern with no row, so every slide draws them all. | `setRepeat`, which finds the row. |
+| `row-max` | A row with room for more items than it takes, at a third of the drawn spacing or more. Never a grid, and never a row whose items differ in width. | `setRepeat` with `max`, and `span` when the row has to spread for it. |
+| `row-widen` | A row or grid where some number of items it takes leaves a line short of what the template draws, and the items keep their drawn width. | `setRepeat` with `widen`. |
+| `variant` | A mirrored, text-only or shortened layout the slide allows and the manifest does not have. `variant` says which, and `slot` the text a `without` leaves out. A variant is known by the id a derived pattern gets, or by what it does to the slide (which shapes it takes away, on which side its picture sits), so one that was renamed and tuned is not offered again. | `derivePattern`. |
 
-`SUGGESTION_KINDS` lists the kinds. The first three are facts of the slide and safe to take together; the last
-two are choices about how a deck should look.
+`SUGGESTION_KINDS` lists the kinds. `row` and `row-max` are facts of the slide and safe to take. `icon` is a
+fact too, with one condition: icon slots are filled from the icon set the app gives the planner, and without
+one a pattern with a required icon slot is not offered. `row-widen` and `variant` are choices about how a deck
+should look.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
@@ -563,6 +591,10 @@ const facts = suggestChanges(template, { kinds: ['icon', 'row', 'row-max'] });
 const { manifest, applied, rejected } = changeManifest(template, facts.flatMap((s) => s.changes));
 // store `manifest`; show `applied[i].message` to whoever reviews it
 ```
+
+Leave `'icon'` out of `kinds` in an app that gives the planner no icon set, or follow it with
+`{ op: 'setSlot', pattern, slot, empty: 'keep' }` for each such row, which keeps the template's own pictogram
+on every card: a pattern with a required icon slot and no icon set is not offered at all.
 
 What the code cannot repair is a description that names the subject of the filler ("Four team member profiles
 with photos"). The planner reads it and passes the layout over for other subjects. Change it with

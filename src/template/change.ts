@@ -7,7 +7,7 @@ import { checkManifest } from './check.ts';
 import type { ManifestIssue } from './check.ts';
 import { VARIANTS, deriveVariant } from './derive.ts';
 import type { PatternVariant } from './derive.ts';
-import { detectRepeat, rowFit, rowOnSlide } from './rows.ts';
+import { detectRepeat, rowFit, rowOnSlide, rowSpan } from './rows.ts';
 import { inspectTemplate } from './inspect.ts';
 import type { ShapeInfo, SlideInfo, TemplateInfo } from './inspect.ts';
 import type { AlignPolicy, Direction, EmptyPolicy, ImageKind, PatternDef, SlideBox, SlotDef, TableTextStyle, TemplateManifest } from './manifest.ts';
@@ -364,6 +364,8 @@ function apply(manifest: TemplateManifest, change: ManifestChange, info: Templat
       if (change.span === null) delete repeat.span;
       else if (change.span !== undefined) {
         if (!(change.span.left >= 0 && change.span.right <= 1 && change.span.left < change.span.right)) reject('a span runs from left to right, both between 0 and 1');
+        // Only a row whose items sit on the slide is laid out between the limits of a span.
+        if (!rowOnSlide(slide, repeat)) reject(`the ${repeat.item}s sit inside a group, so they stay where the group draws them and a span would change nothing`);
         repeat.span = { left: change.span.left, right: change.span.right };
         spanned = ` The row may now spread from ${Math.round(change.span.left * 100)}% to ${Math.round(change.span.right * 100)}% of the slide's width.`;
       }
@@ -380,10 +382,18 @@ function apply(manifest: TemplateManifest, change: ManifestChange, info: Templat
         const room = rowRoom(slide, repeat.shapes);
         const onSlide = rowOnSlide(slide, repeat);
         const fits = (left: number, right: number) => rowFit(room.itemWidth, left, right);
-        const span = repeat.span ?? { left: room.area.x, right: room.area.x + room.area.w };
-        // What the template draws always fits, however close its items sit.
-        if (max > drawn && max > fits(span.left, span.right)) {
-          const most = change.span === undefined && onSlide ? fits(room.left, room.right) : fits(span.left, span.right);
+        const span = rowSpan(slide, repeat, room.area);
+        // Items beyond the drawn ones are copies of the last, set out by the step from the first
+        // item to the second. Where that step is shorter than the widest item they would overlap.
+        if (change.max !== undefined && max > drawn && room.pitch < room.itemWidth * 1.03 - 1e-4) {
+          reject(`the ${repeat.item}s are drawn at different widths or closer together than one is wide, so more than the ${drawn} drawn would lie on top of each other`);
+        }
+        // What the template draws fits in the width it is drawn in, however close its items sit.
+        // A span narrower than that is not the row as drawn, and has to pass the fit like any other.
+        const asDrawn = max <= drawn && span.right - span.left >= room.area.w - 0.001;
+        if (!asDrawn && max > fits(span.left, span.right)) {
+          // The room beside a row always holds the row itself.
+          const most = change.span === undefined && onSlide ? Math.max(drawn, fits(room.left, room.right)) : fits(span.left, span.right);
           if (max > most) {
             reject(`${max} ${repeat.item}s do not fit side by side: each is ${Math.round(room.itemWidth * 100)}% of the slide wide and the row has ${Math.round(((change.span === undefined && onSlide ? room.right - room.left : span.right - span.left)) * 100)}%. The most is ${most}`);
           }

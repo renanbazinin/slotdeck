@@ -205,9 +205,11 @@ export function unionBox(boxes: Box[]): Box {
 
 /**
  * How far a row of items may spread on its slide: from the row as drawn outwards, until the
- * slide's margin or another shape that sits beside the row. Fractions of the slide width.
+ * slide's margin, another shape that sits beside the row, or the edge of a shape the row is drawn
+ * on. Fractions of the slide width. `pitch` is the distance from the first item to the second,
+ * which is the step the renderer lays further items out by.
  */
-export function rowRoom(slide: SlideInfo, itemShapes: string[][]): { area: Box; itemWidth: number; left: number; right: number } {
+export function rowRoom(slide: SlideInfo, itemShapes: string[][]): { area: Box; itemWidth: number; pitch: number; left: number; right: number } {
   const byId = new Map(slide.shapes.map((shape) => [shape.id, shape]));
   const inRow = new Set<string>();
   const mark = (id: string) => {
@@ -229,12 +231,29 @@ export function rowRoom(slide: SlideInfo, itemShapes: string[][]): { area: Box; 
   const gap = 0.02;
   let left = Math.min(area.x, margin);
   let right = Math.max(area.x + area.w, 1 - margin);
+  const areaEnd = area.x + area.w;
   for (const shape of slide.shapes) {
-    if (inRow.has(shape.id) || isFramePlaceholder(shape) || shape.kind === 'group' || shape.box.w >= 0.9) continue;
-    const overlaps = shape.box.y < area.y + area.h && shape.box.y + shape.box.h > area.y;
-    if (!overlaps) continue;
-    if (shape.box.x + shape.box.w <= area.x + 0.005) left = Math.max(left, Math.min(area.x, shape.box.x + shape.box.w + gap));
-    else if (shape.box.x >= area.x + area.w - 0.005) right = Math.min(right, Math.max(area.x + area.w, shape.box.x - gap));
+    if (inRow.has(shape.id) || isFramePlaceholder(shape) || shape.kind === 'group') continue;
+    const end = shape.box.x + shape.box.w;
+    // The height the shape shares with the row. A line has no height and counts when it lies within the row's.
+    const shared = Math.min(shape.box.y + shape.box.h, area.y + area.h) - Math.max(shape.box.y, area.y);
+    if (shape.box.h > 0 ? shared <= 0 : shared < 0) continue;
+    if (end <= area.x + 0.005) {
+      if (shape.box.w < 0.9) left = Math.max(left, Math.min(area.x, end + gap));
+    } else if (shape.box.x >= areaEnd - 0.005) {
+      if (shape.box.w < 0.9) right = Math.min(right, Math.max(areaEnd, shape.box.x - gap));
+    } else {
+      // The shape shares width with the row: a panel the row is drawn on, a line through it, an
+      // arrow between two items. It stays where it is, so the row may not spread past it. A
+      // background from edge to edge of the slide limits nothing, and neither does a shape that
+      // only brushes the row's height, such as a heading whose box dips into it.
+      const edgeToEdge = shape.box.x <= 0.005 && end >= 0.995;
+      const behind = shape.box.h > 0 ? shared >= Math.min(shape.box.h, area.h) * 0.5 : true;
+      if (edgeToEdge || !behind) continue;
+      left = Math.max(left, Math.min(area.x, shape.box.x + gap));
+      right = Math.min(right, Math.max(areaEnd, end - gap));
+    }
   }
-  return { area, itemWidth, left, right };
+  const pitch = boxes.length > 1 ? Math.abs((boxes[1] as Box).x - (boxes[0] as Box).x) : itemWidth;
+  return { area, itemWidth, pitch, left, right };
 }

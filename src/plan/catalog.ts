@@ -207,9 +207,17 @@ export function describeCatalog(catalog: Catalog, textScale = 1): string {
         .join('; ');
       // A row that widens its items gives each of fewer items more room; the limits shown are those of the drawn number.
       const roomier = repeat?.widen && repeat.widen > 1 && range && range.min < (repeat.columns ?? range.drawn) ? ` With fewer on a line than ${repeat.columns ?? range.drawn}, each ${repeat.item} is wider and holds more text.` : '';
-      // How the items sit is said too: a wish for columns side by side is met by a row, not by a grid.
-      const placed = repeat?.columns !== undefined ? `in lines of ${repeat.columns}` : 'side by side in one row';
-      const count = repeat && range && range.max > range.min ? `\n  items: ${range.min} to ${range.max} ${repeat.item}s ${placed}, numbered N = 1, 2, ...${roomier}` : '';
+      // How the items sit is said too: a wish for columns side by side is met by a row, not by a
+      // grid that breaks them over lines. A grid that never takes more than one line holds is a row.
+      const placed = repeat?.columns !== undefined && range !== undefined && range.max > repeat.columns ? `in lines of ${repeat.columns}` : 'side by side in one row';
+      // A row that takes one number of items says so too: its description gives no number.
+      const count = !repeat || !range
+        ? ''
+        : range.max > range.min
+          ? `\n  items: ${range.min} to ${range.max} ${repeat.item}s ${placed}, numbered N = 1, 2, ...${roomier}`
+          : range.min > 1
+            ? `\n  items: always ${range.min} ${repeat.item}s ${placed}, numbered N = 1, ..., ${range.min}`
+            : `\n  items: always 1 ${repeat.item}, numbered N = 1`;
       // Said in so many words, so that a wish for text-only slides can be met without guessing from the slots.
       const plain = isPlainText(pattern.def) ? ' Plain text.' : '';
       return `- ${pattern.def.id}: ${pattern.def.description}${plain}\n  slots: ${slots}${count}`;
@@ -374,9 +382,10 @@ export function readItems(pattern: PatternDef, value: unknown): { items?: number
   const range = itemRange(pattern);
   if (!range) return {};
   const items = Number(value);
-  if (value === undefined || value === null || !Number.isInteger(items)) return { items: range.drawn };
+  // With no number given, the number drawn, or the nearest the row takes.
+  if (value === undefined || value === null || !Number.isInteger(items)) return { items: Math.min(Math.max(range.drawn, range.min), range.max) };
   if (items < range.min || items > range.max) {
-    return { problem: `pattern "${pattern.id}" takes ${range.min} to ${range.max} ${pattern.repeat?.item ?? 'item'}s, not ${items}` };
+    return { problem: `pattern "${pattern.id}" takes ${range.min === range.max ? `exactly ${range.min}` : `${range.min} to ${range.max}`} ${pattern.repeat?.item ?? 'item'}s, not ${items}` };
   }
   return { items };
 }

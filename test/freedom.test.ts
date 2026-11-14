@@ -14,8 +14,10 @@ import {
   extractAssets,
   loadTemplate,
   memoryStore,
+  editPlan as changePlan,
   planDeck,
   planEdit,
+  planOutline,
   presentationTools,
   renderDeck,
   sampleDeck,
@@ -255,6 +257,43 @@ test('the planner is told which patterns set their items in one row and which br
   assert.match(prompt, /\n {2}items: 1 to 5 cards side by side in one row, numbered N = 1, 2, \.\.\./);
   assert.match(prompt, /\n {2}items: 1 to 4 cards in lines of 2, numbered N = 1, 2, \.\.\./);
   assert.match(prompt, /When the brief asks for a number of columns, or for items side by side, use a pattern whose items are "side by side in one row"/);
+  // The rule names a grid whose line holds the number, and says what to do when nothing fits.
+  assert.match(prompt, /or one whose items are "in lines of" that number or more: both set them on one line\. .* When the list has no such pattern, use the one that comes closest\./);
+});
+
+test('a row that takes one number of items says so, and a grid that never breaks a line reads as a row', async () => {
+  const cards = cardsManifest.patterns.find((pattern) => pattern.id === 'cards') as TemplateManifest['patterns'][number];
+  const grid = gridManifest.patterns.find((pattern) => pattern.id === 'grid') as TemplateManifest['patterns'][number];
+  const fixed: TemplateManifest = {
+    ...cardsManifest,
+    patterns: [
+      ...fixtureManifest.patterns,
+      // Three cards are drawn; this row always takes two.
+      { ...cards, repeat: { ...(cards.repeat as NonNullable<typeof cards.repeat>), min: 2, max: 2 } },
+      // Two of the grid's four cards are one line of two.
+      { ...grid, repeat: { ...(grid.repeat as NonNullable<typeof grid.repeat>), min: 1, max: 2 } },
+    ],
+  };
+  // The outline names no number for the row: its description gives none, and the line in the list does.
+  const { llm, requests } = scripted({ title: 'T', slides: [{ pattern: 'cards', purpose: 'Two things' }] }, { s1: { title: 'T', card1Text: 'One', card2Text: 'Two' } });
+  const { deck } = await planDeck(loadTemplate(pptx, fixed), { prompt: 'Two things', language: 'en', imageDensity: 'none' }, { llm });
+  const prompt = requests[0]?.prompt ?? '';
+  assert.match(prompt, /\n {2}items: always 2 cards side by side in one row, numbered N = 1, \.\.\., 2/);
+  assert.match(prompt, /\n {2}items: 1 to 2 cards side by side in one row, numbered N = 1, 2, \.\.\./);
+  // With no number given, the row is planned with the number it takes, not the three it draws.
+  assert.deepEqual(Object.keys(deck.slides[0]?.slots ?? {}), ['title', 'card1Text', 'card2Text']);
+
+  const wrong = scripted({ title: 'T', slides: [{ pattern: 'cards', purpose: 'p', items: 3 }] }, { title: 'T', slides: [{ pattern: 'cards', purpose: 'p' }] }, { s1: {} });
+  await planDeck(loadTemplate(pptx, fixed), { prompt: 'x', language: 'en', imageDensity: 'none' }, { llm: wrong.llm, maxRepairs: 0 }).catch(() => undefined);
+  assert.match(wrong.requests[1]?.prompt ?? '', /takes exactly 2 cards, not 3/);
+});
+
+test('a request to change a plan or a deck carries the rule about columns too', async () => {
+  const outline = scripted({ title: 'T', slides: [{ pattern: 'cards', purpose: 'Three things', items: 3 }] });
+  const plan = await planOutline(template, { prompt: 'Three things', language: 'en', imageDensity: 'none' }, { llm: outline.llm });
+  const change = scripted({ summary: 'Done.', title: 'T', slides: [{ pattern: 'cards', purpose: 'Five things', items: 5 }] });
+  await changePlan(template, plan, 'Show slide 1 as five columns', { llm: change.llm }).catch(() => undefined);
+  assert.match(change.requests[0]?.prompt ?? '', /- When the request asks for a number of columns, or for items side by side, use a pattern whose items are "side by side in one row"/);
 });
 
 test('a larger text size reaches the model as smaller limits', async () => {
@@ -279,6 +318,9 @@ test('an edit can change the number of items on a slide', async () => {
   const result = await planEdit(template, three, 'Make slide 1 two cards', { llm });
 
   assert.match(requests[0]?.prompt ?? '', /1\. \[cards, 3 items\]/);
+  // The list of patterns is for a slide that changes its layout as well, and comes with the rule about columns.
+  assert.match(requests[0]?.prompt ?? '', /When the request asks for a number of columns, or for items side by side/);
+  assert.match(requests[0]?.prompt ?? '', /Patterns, for new slides and for a slide that changes its layout/);
   assert.deepEqual(result.rewritten, [1], 'a new count rewrites the slide even with no other change');
   assert.match(requests[1]?.prompt ?? '', /Change: Use 2 cards\./);
   assert.equal(result.deck.slides[0]?.items, 2);

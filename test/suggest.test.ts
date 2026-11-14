@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { SUGGESTION_KINDS, changeManifest, checkManifest, draftManifest, loadTemplate, renderDeck, sampleDeck, suggestChanges, validateDeck } from '../src/index.ts';
 import type { JsonRequest, LlmProvider, ManifestSuggestion, PatternDef, Template, TemplateManifest } from '../src/index.ts';
-import { buildFixturePptx, cardsManifest, fixtureManifest, gridManifest } from './fixture.ts';
+import { buildFixturePptx, cardsManifest, fixtureManifest, fixtureWithSlide, gridManifest } from './fixture.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const pptx = buildFixturePptx();
@@ -16,7 +16,7 @@ const pptx = buildFixturePptx();
  * Labels as a model gave them for a slide it could not see: the small pictograms of the cards as
  * photographs, and the cards as people because the filler is about a team.
  */
-function labelling(): { llm: LlmProvider; requests: JsonRequest[] } {
+function labelling(pictures: [string, string, string] = ['photo', 'photo', 'photo']): { llm: LlmProvider; requests: JsonRequest[] } {
   const requests: JsonRequest[] = [];
   const llm: LlmProvider = {
     async generateJson(request) {
@@ -33,7 +33,7 @@ function labelling(): { llm: LlmProvider; requests: JsonRequest[] } {
             { shape: '2', role: 'title', name: 'title', optional: false },
             ...[1, 2, 3].flatMap((n) => [
               { shape: `${n}1`, role: 'text', name: `card${n}Text`, optional: false },
-              { shape: `${n}2`, role: 'photo', name: `card${n}Photo`, optional: false },
+              { shape: `${n}2`, role: pictures[n - 1], name: `card${n}Photo`, optional: false },
             ]),
           ],
         };
@@ -70,25 +70,27 @@ test('a draft settles by measurement how many items a row takes and what a small
   assert.equal(slide4?.maxOutputTokens, 400 + 60 * 8, 'eight shapes are listed for slide 4');
   assert.ok(requests.every((request) => typeof request.maxOutputTokens === 'number'));
 
-  // It answered "photo" all the same. A picture that small is an icon, and its name says so.
+  // It answered "photo" all the same. A picture that small is an icon. The name stays the model's,
+  // so the row its names describe is the row that is found.
   const row = patternOf(manifest, 'card-row');
   assert.deepEqual(row.slots.filter((slot) => slot.kind === 'image'), [
-    { name: 'card1Icon', kind: 'image', imageKind: 'icon', shapeId: '12' },
-    { name: 'card2Icon', kind: 'image', imageKind: 'icon', shapeId: '22' },
-    { name: 'card3Icon', kind: 'image', imageKind: 'icon', shapeId: '32' },
+    { name: 'card1Photo', kind: 'image', imageKind: 'icon', shapeId: '12' },
+    { name: 'card2Photo', kind: 'image', imageKind: 'icon', shapeId: '22' },
+    { name: 'card3Photo', kind: 'image', imageKind: 'icon', shapeId: '32' },
   ]);
 
   // Three cards are drawn. Six fit with a third of the drawn space between them; eight would touch.
-  assert.deepEqual(row.repeat, { item: 'card', slots: ['card{n}Text', 'card{n}Icon'], shapes: [['10'], ['20'], ['30']], min: 2, max: 6, span: { left: 0.03, right: 0.97 } });
+  assert.deepEqual(row.repeat, { item: 'card', slots: ['card{n}Text', 'card{n}Photo'], shapes: [['10'], ['20'], ['30']], min: 2, max: 6, span: { left: 0.03, right: 0.97 } });
   // A grid takes what it draws: one more would need a line the slide does not have.
   assert.deepEqual([patternOf(manifest, 'stat-grid').repeat?.max, patternOf(manifest, 'stat-grid').repeat?.span], [4, undefined]);
 
   assert.equal(notes.length, 2);
-  assert.match(notes[0] ?? '', /^Slide 4: 3 pictures labelled photo are no more than 1\.1 inch on a side, so they were made icons\.$/);
+  assert.match(notes[0] ?? '', /^Slide 4: "card1Photo", "card2Photo", "card3Photo" were labelled photo, but their pictures are no more than 1\.1 inch on a side: icon slots\.$/);
   assert.match(notes[1] ?? '', /^"card-row": the row of cards takes 2 to 6\. The row may now spread from 3% to 97% of the slide's width\.$/);
 
-  // What is left to a person is a matter of taste, and comes as suggestions.
-  assert.deepEqual(kindsOf(suggestions), ['row-widen card-row', 'row-widen stat-grid']);
+  // What is left to a person is a matter of taste, and comes as suggestions. The two-by-two grid
+  // gets none: it takes two to four figures, and with any of those its fullest line is full.
+  assert.deepEqual(kindsOf(suggestions), ['row-widen card-row']);
 
   // The draft is usable as it is: a deck with six cards stays in every limit and renders.
   const template = loadTemplate(pptx, manifest);
@@ -100,7 +102,7 @@ test('a draft settles by measurement how many items a row takes and what a small
 
 test('a draft can keep rows as drawn, or let their items widen', async () => {
   const drawn = await draftManifest(pptx, { llm: labelling().llm, slides: [4, 5], rows: 'drawn' });
-  assert.deepEqual(patternOf(drawn.manifest, 'card-row').repeat, { item: 'card', slots: ['card{n}Text', 'card{n}Icon'], shapes: [['10'], ['20'], ['30']], min: 2, max: 3 });
+  assert.deepEqual(patternOf(drawn.manifest, 'card-row').repeat, { item: 'card', slots: ['card{n}Text', 'card{n}Photo'], shapes: [['10'], ['20'], ['30']], min: 2, max: 3 });
   assert.equal(drawn.notes.length, 1, 'only the icons are noted');
   // What `fit` would have done is then the first suggestion.
   const more = drawn.suggestions.find((suggestion) => suggestion.kind === 'row-max');
@@ -113,11 +115,16 @@ test('a draft can keep rows as drawn, or let their items widen', async () => {
   assert.deepEqual(patternOf(taken.manifest, 'card-row').repeat, patternOf((await draftManifest(pptx, { llm: labelling().llm, slides: [4, 5] })).manifest, 'card-row').repeat);
 
   const wide = await draftManifest(pptx, { llm: labelling().llm, slides: [4, 5], widen: 1.5 });
-  assert.deepEqual([patternOf(wide.manifest, 'card-row').repeat?.widen, patternOf(wide.manifest, 'stat-grid').repeat?.widen], [1.5, 1.5]);
+  // Only where it can change a slide: the grid's fullest line is full with every number it takes.
+  assert.deepEqual([patternOf(wide.manifest, 'card-row').repeat?.widen, patternOf(wide.manifest, 'stat-grid').repeat?.widen], [1.5, undefined]);
   assert.deepEqual(wide.suggestions.filter((suggestion) => suggestion.kind === 'row-widen'), []);
   assert.deepEqual(errorsOf(loadTemplate(pptx, wide.manifest)), []);
+  // One sentence for the row, though two things were settled for it.
+  const rowNotes = wide.notes.filter((note) => note.startsWith('"card-row"'));
+  assert.equal(rowNotes.length, 1);
+  assert.match(rowNotes[0] ?? '', /takes 2 to 6\. The row may now spread from 3% to 97% of the slide's width\. With fewer cards on a line than drawn, each grows up to 1\.5 times as wide/);
 
-  for (const widen of [1, 5, Number.NaN]) {
+  for (const widen of [1, 5, Number.NaN, '2' as unknown as number]) {
     await assert.rejects(draftManifest(pptx, { llm: labelling().llm, slides: [4], widen }), /widen is a factor above 1 and at most 4/);
   }
 });
@@ -142,7 +149,7 @@ test('suggestChanges lists what the slides allow that a manifest does not use, a
   assert.deepEqual(suggestions.map((suggestion) => suggestion.slide), [4, 4, 4]);
   // One change covers the row: a change to one item's slot is made to every item.
   assert.deepEqual(suggestions[0]?.changes, [{ op: 'setSlot', pattern: 'cards', slot: 'card1Icon', imageKind: 'icon' }]);
-  assert.match(suggestions[0]?.message ?? '', /^"card1Icon", "card2Icon", "card3Icon" are photo slots, but their pictures are no more than 4% of the slide wide: pictograms\./);
+  assert.match(suggestions[0]?.message ?? '', /^"card1Icon", "card2Icon", "card3Icon" are photo slots, but their pictures are no more than 4% of the slide wide: pictograms\. As icon slots they are filled from the icon set given to the planner, .* Without an icon set, a required icon slot keeps the layout from being offered\.$/);
   assert.deepEqual(before, template.manifest, 'nothing is changed by asking');
   assert.equal(patternOf(template.manifest, 'cards').repeat?.max, 3);
 
@@ -170,7 +177,7 @@ test('suggestChanges finds a row that numbered slot names describe but the patte
   const template = loadTemplate(pptx, { ...cardsManifest, patterns: [...fixtureManifest.patterns, loose] });
   const suggestions = suggestChanges(template);
   assert.deepEqual(kindsOf(suggestions), ['row cards']);
-  assert.match(suggestions[0]?.message ?? '', /name 3 cards alike, but the pattern has no row, so a deck must fill all 3\. As a row, a slide can use 2 to 3 of them\./);
+  assert.match(suggestions[0]?.message ?? '', /name 3 cards alike, but the pattern has no row, so every slide draws all 3\. As a row, a slide can use 2 to 3 of them\./);
 
   const found = changeManifest(template, suggestions[0]?.changes ?? []);
   assert.deepEqual(found.rejected, []);
@@ -204,4 +211,84 @@ test('suggestChanges offers each variant once, and none of a variant', () => {
   const made = demoManifest.patterns.filter((pattern) => pattern.id.endsWith('-mirrored')).map((pattern) => pattern.id.replace(/-mirrored$/, ''));
   assert.ok(made.length > 0);
   for (const id of made) assert.ok(!shipped.includes(`variant ${id} mirror`), `${id} is already mirrored`);
+  // Its text-only layout of the same slide was made by hand, under an id of its own, with its own
+  // boxes. It is known by what it does: it takes the picture away.
+  assert.ok(demoManifest.patterns.some((pattern) => pattern.id === 'text-only' && pattern.sourceSlide === patternOf(demoManifest, 'text-and-photo').sourceSlide));
+  assert.ok(!shipped.includes('variant text-and-photo text-only'), shipped.join(', '));
+
+  // A variant given its own id stays known after the pattern it came from is tuned.
+  const named = changeManifest(template, [
+    { op: 'derivePattern', pattern: 'text-and-photo', variant: 'mirror', id: 'photo-left' },
+    { op: 'setSlot', pattern: 'text-and-photo', slot: 'body', maxChars: 300 },
+  ]);
+  assert.deepEqual(named.rejected, []);
+  const again = kindsOf(suggestChanges(loadTemplate(demoPptx, named.manifest), { kinds: ['variant'] }));
+  assert.ok(!again.includes('variant text-and-photo mirror'), again.join(', '));
+  assert.ok(again.includes('variant text-and-photo without'), 'what it does not have is still offered');
+});
+
+test('an icon suggestion is one change for a row, true of every item, and gone once taken', () => {
+  const cards = patternOf(cardsManifest, 'cards');
+  const withKinds = (kinds: string[], more: Record<string, unknown> = {}): TemplateManifest => ({
+    ...cardsManifest,
+    patterns: [
+      {
+        ...cards,
+        slots: cards.slots.map((slot) => (slot.kind === 'image' ? ({ name: slot.name, kind: 'image', imageKind: kinds[Number(slot.name[4]) - 1], shapeId: slot.shapeId, ...more } as typeof slot) : slot)),
+      },
+    ],
+  });
+
+  // A draft labels each shape on its own, so a row can come out icon, photo, photo.
+  const mixed = loadTemplate(pptx, withKinds(['icon', 'photo', 'photo']));
+  const [icon, ...rest] = suggestChanges(mixed, { kinds: ['icon'] });
+  assert.deepEqual(rest, []);
+  assert.deepEqual(icon?.changes, [{ op: 'setSlot', pattern: 'cards', slot: 'card2Icon', imageKind: 'icon' }]);
+  assert.match(icon?.message ?? '', /^"card2Icon", "card3Icon" are photo slots/);
+  const taken = changeManifest(mixed, icon?.changes ?? []);
+  assert.deepEqual(patternOf(taken.manifest, 'cards').slots.filter((slot) => slot.kind === 'image').map((slot) => slot.imageKind), ['icon', 'icon', 'icon']);
+  assert.deepEqual(suggestChanges(loadTemplate(pptx, taken.manifest), { kinds: ['icon'] }), []);
+
+  // One card's picture is cropped into its frame, as a portrait is: not a pictogram. A change to
+  // one item is made to every item, so the row is left as it is.
+  const cropped = fixtureWithSlide(4, (xml) => xml.replace(/(<p:cNvPr id="32" name="Card icon"\/><p:cNvPicPr\/><p:nvPr\/><\/p:nvPicPr><p:blipFill><a:blip r:embed="rId2"\/>)/, '$1<a:srcRect l="10000" r="10000"/>'));
+  assert.deepEqual(suggestChanges(loadTemplate(cropped, withKinds(['photo', 'photo', 'photo'])), { kinds: ['icon'] }), []);
+
+  // A picture the manifest keeps as designed, or always removes, is filled by nothing: no advice.
+  assert.deepEqual(suggestChanges(loadTemplate(pptx, withKinds(['photo', 'photo', 'photo'], { empty: 'keep' })), { kinds: ['icon'] }), []);
+  // One picture outside a row reads in the singular.
+  const single: TemplateManifest = { ...fixtureManifest, patterns: fixtureManifest.patterns.map((pattern) => (pattern.id === 'content' ? { ...pattern, slots: pattern.slots.map((slot) => (slot.name === 'icon' ? { name: 'icon', kind: 'image', imageKind: 'photo', shapeId: '8' } : slot)) } : pattern)) } as TemplateManifest;
+  const lone = suggestChanges(loadTemplate(pptx, single), { kinds: ['icon'] });
+  assert.match(lone[0]?.message ?? '', /^"icon" is a photo slot, but its picture is no more than \d+% of the slide wide: a pictogram\. As an icon slot it is filled/);
+});
+
+test('a draft settles photo or icon for a row as a whole, and keeps the row', async () => {
+  const pictures = (manifest: TemplateManifest) => patternOf(manifest, 'card-row').slots.filter((slot) => slot.kind === 'image').map((slot) => slot.imageKind);
+  // One of three pictures is cropped into a frame. Labelled photo: all stay photo, and the row stands.
+  const cropped = fixtureWithSlide(4, (xml) => xml.replace(/(<p:cNvPr id="32" name="Card icon"\/><p:cNvPicPr\/><p:nvPr\/><\/p:nvPicPr><p:blipFill><a:blip r:embed="rId2"\/>)/, '$1<a:srcRect l="10000" r="10000"/>'));
+  const kept = await draftManifest(cropped, { llm: labelling().llm, slides: [4] });
+  assert.deepEqual(pictures(kept.manifest), ['photo', 'photo', 'photo']);
+  assert.equal(patternOf(kept.manifest, 'card-row').repeat?.max, 6);
+  assert.equal(kept.notes.length, 1, 'only the row is noted');
+
+  // The model follows the marker shape by shape: icon, icon, photo. Items of a row are filled alike.
+  const evened = await draftManifest(cropped, { llm: labelling(['icon', 'icon', 'photo']).llm, slides: [4] });
+  assert.deepEqual(pictures(evened.manifest), ['photo', 'photo', 'photo']);
+  assert.match(evened.notes[0] ?? '', /^Slide 4: "card1Photo", "card2Photo" were labelled icon, but another picture of the same row is too large for a pictogram: all of them are photo slots/);
+  assert.equal(patternOf(evened.manifest, 'card-row').repeat?.slots.length, 2);
+
+  // On the plain fixture, where all three are pictograms, a mixed answer becomes icons.
+  const icons = await draftManifest(pptx, { llm: labelling(['icon', 'photo', 'photo']).llm, slides: [4] });
+  assert.deepEqual(pictures(icons.manifest), ['icon', 'icon', 'icon']);
+  assert.match(icons.notes[0] ?? '', /^Slide 4: "card2Photo", "card3Photo" were labelled photo/);
+});
+
+test('the ceiling on the answer about the deck grows with the texts it must repeat', async () => {
+  const demoPptx = readFileSync(join(root, 'templates', 'demo.pptx'));
+  const { llm, requests } = labelling();
+  await draftManifest(demoPptx, { llm, slides: [1] });
+  const deckCall = requests.find((request) => request.prompt.startsWith('Sample texts'));
+  const repeated = [...(deckCall?.prompt.split('Give each a short camelCase field name:')[1]?.split('Also give')[0] ?? '').matchAll(/^- (".*")$/gm)].map((match) => JSON.parse(match[1] as string) as string);
+  assert.ok(repeated.length > 0, 'the demo template has a text that repeats across its slides');
+  assert.equal(deckCall?.maxOutputTokens, 300 + repeated.reduce((sum, text) => sum + 40 + new TextEncoder().encode(text).length, 0));
 });

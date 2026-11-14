@@ -10,7 +10,7 @@ import type { Direction, PatternDef, TextSize } from '../template/manifest.ts';
 import { measurerFor } from '../text/measure.ts';
 import { budgetScale, buildCatalog, describeCatalog, planPattern, readItems } from './catalog.ts';
 import type { CatalogContext, ImageDensity } from './catalog.ts';
-import { PlanError, SLIDE_KIND_RULE, asker, directionOf, hasFigures, planRoom, reviewWith } from './plan.ts';
+import { PlanError, SLIDE_KIND_RULE, asker, columnsRule, directionOf, hasFigures, planRoom, reviewWith } from './plan.ts';
 import type { PlanOptions } from './plan.ts';
 import { cleanText, suppliesText, systemPrompt, writeSlides } from './write.ts';
 import type { WriteJob } from './write.ts';
@@ -184,11 +184,13 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
       '- from: the number of the existing slide a slide is based on, or 0 for a new slide. Leave a slide out to delete it.',
       '- pattern: keep the pattern of an existing slide unless the request calls for a different layout.',
       `  ${SLIDE_KIND_RULE}`,
+      // The phrases the rule quotes are in the list of patterns, so it is given only with that list.
+      ...(offer.patterns.length > 0 ? [`  ${columnsRule('request')}`] : []),
       '- change: what to write or change on that slide. Leave it empty for every slide the request does not touch.',
       '- images: true only when the pictures or icons of that slide should change.',
       '- items: for a pattern with a row of items, the number the slide has after the change.',
     ].join('\n'),
-    offer.patterns.length > 0 ? `Patterns for new slides ("?" marks an optional slot):\n${describeCatalog(offer, budgetScale(context))}` : '',
+    offer.patterns.length > 0 ? `Patterns, for new slides and for a slide that changes its layout ("?" marks an optional slot):\n${describeCatalog(offer, budgetScale(context))}` : '',
   ]
     .filter(Boolean)
     .join('\n\n');

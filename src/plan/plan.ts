@@ -141,6 +141,13 @@ function briefText(brief: Brief): string {
 }
 
 /** What a wish about the kind of slides means, in the planner's own terms. Shared by every prompt that chooses patterns. */
+/**
+ * A wish for columns is a wish about how items sit. The catalogue says it for each pattern:
+ * "side by side in one row", or "in lines of N" for a grid, which sets up to N on a line.
+ */
+export const columnsRule = (asked: 'brief' | 'request'): string =>
+  `When the ${asked} asks for a number of columns, or for items side by side, use a pattern whose items are "side by side in one row" and that takes that number, or one whose items are "in lines of" that number or more: both set them on one line. Items "in lines of" a smaller number are broken over several lines. When the list has no such pattern, use the one that comes closest.`;
+
 export const SLIDE_KIND_RULE =
   'A wish about the kind of slides (text only, no tables, only cards) decides which patterns may be used, and comes before variety. ' +
   '"Text only" means the patterns marked "Plain text.": a title with paragraphs or a list, and no cards, figures, tables, charts, icons or pictures. ' +
@@ -155,7 +162,7 @@ function outlinePrompt(brief: Brief, catalog: Catalog, count: { min: number; max
     [
       '- Open with an opening pattern and end with a closing pattern when the list has them.',
       '- For a pattern with a row of items, set "items" to the number the content really has. Do not pad a list to fill a row.',
-      '- When the brief asks for a number of columns, or for items side by side, use a pattern whose items are "side by side in one row" and that takes that number. A pattern whose items are "in lines of" a number is a grid: it breaks them over several lines.',
+      `- ${columnsRule('brief')}`,
       '- Choose a pattern only when the content can fill every required slot within its limits.',
       ...(brief.textOnly
         ? ['- The deck is text only, and every pattern in the list is plain text. Using the same pattern for several slides in a row is expected.']
@@ -296,6 +303,7 @@ export async function editPlan(
     [
       '- Change only what the request asks for. Keep every other slide, its pattern, its purpose and its place.',
       '- Choose a pattern only when the content can fill every required slot within its limits.',
+      `- ${columnsRule('request')}`,
       `- ${SLIDE_KIND_RULE}`,
       ...(plan.brief.textOnly ? ['- This deck was asked to be text only: keep to the patterns marked "Plain text." unless the requested change asks for something else.'] : []),
       `- ${DENSITY_GUIDANCE[density]}`,

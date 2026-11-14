@@ -2,7 +2,7 @@
 // paragraphs, a cropped picture, a picture inside a scaled group, a slide-number field,
 // speaker notes, revision history and named sections. It is only read by slotdeck itself;
 // the master and layout are stubs, so PowerPoint would not open it.
-import { strToU8, zipSync } from 'fflate';
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { placeholderPhoto } from '../examples/placeholder.ts';
 import type { TemplateManifest } from '../src/index.ts';
 
@@ -203,6 +203,14 @@ export function buildFixturePptx(): Uint8Array {
     'ppt/media/image1.png': placeholderPhoto(8, 8, [0, 0, 0], [255, 255, 255]),
   };
   return zipSync(Object.fromEntries(Object.entries(files).map(([name, data]) => [name, typeof data === 'string' ? strToU8(data) : data])));
+}
+
+/** The fixture with the XML of one of its slides changed, for a case the fixture does not draw. */
+export function fixtureWithSlide(number: number, change: (xml: string) => string): Uint8Array {
+  const files = unzipSync(buildFixturePptx());
+  const name = `ppt/slides/slide${number}.xml`;
+  files[name] = strToU8(change(strFromU8(files[name] as Uint8Array)));
+  return zipSync(files);
 }
 
 export const fixtureManifest: TemplateManifest = {

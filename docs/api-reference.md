@@ -449,9 +449,9 @@ interface DraftOptions {
   name?: string;
   slideImage?: (slide: number) => SlidePicture | undefined | Promise<SlidePicture | undefined>;
   slides?: number[];
-  variants?: Array<'mirror' | 'text-only'>;
+  variants?: Array<'mirror' | 'text-only'>;   // also add these variants of every pattern that allows them
   rows?: 'fit' | 'drawn';   // default 'fit': a row takes as many items as the slide has room for
-  widen?: number;           // above 1, at most 4; default off
+  widen?: number;           // above 1, at most 4; default off. Set where it can change a slide
   concurrency?: number;
   onProgress?: (event: { done: number; total: number; slide: number }) => void;
   signal?: AbortSignal;
@@ -579,17 +579,6 @@ picture out of a template (`template.pkg.read('ppt/media/image1.png')`).
 
 ```ts
 interface SlidePicture { mimeType: string; data: Uint8Array }
-interface DraftOptions {
-  llm: LlmProvider;
-  name?: string;
-  slideImage?: (slide: number) => SlidePicture | undefined | Promise<SlidePicture | undefined>;
-  slides?: number[];
-  variants?: Array<'mirror' | 'text-only'>; // also add these variants of every pattern that allows them
-  concurrency?: number;
-  onProgress?: (event: { done: number; total: number; slide: number }) => void;
-  signal?: AbortSignal;
-}
-interface DraftResult { manifest: TemplateManifest; skipped: Array<{ slide: number; reason: string }>; issues: ManifestIssue[] }
 
 interface ManifestIssue { severity: 'error' | 'warning'; pattern?: string; slot?: string; message: string }
 interface SampleOptions { fill?: number; items?: 'drawn' | 'max' | 'min'; fit?: 'budget' | 'box' }
