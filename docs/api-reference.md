@@ -302,6 +302,7 @@ const storeKeys: {
   deck(id: string): string;  // 'deck/<id>.json'
   pptx(id: string): string;  // 'pptx/<id>.pptx'
   asset(id: string): string; // 'asset/<id>'
+  preview(id: string, slide: number, extension: string): string; // 'preview/<id>/slide-03.svg'
 };
 ```
 
@@ -338,6 +339,7 @@ interface PresentationToolsOptions {
   fields?: Record<string, string>;
   numberPatterns?: 'from-brief' | 'always' | 'never';
   thumbnail?: (patternId: string) => string | undefined;
+  preview?: PreviewProvider; // draws every presentation the tools create or change
   newId?: (kind: 'plan' | 'deck') => string;
   onProgress?: (event: GenerateProgress, tool: string) => void;
 }
@@ -346,7 +348,7 @@ interface PresentationTools {
   call(name: string, args: unknown, context?: { signal?: AbortSignal }): Promise<ToolResult>;
 }
 interface ToolDefinition { name: string; description: string; parameters: JsonSchema }
-interface ToolResult { output: Record<string, unknown>; plan?: DeckPlan; deck?: DeckSpec; pptx?: Uint8Array }
+interface ToolResult { output: Record<string, unknown>; plan?: DeckPlan; deck?: DeckSpec; pptx?: Uint8Array; previews?: SlidePreview[] }
 ```
 
 ## Providers
@@ -586,6 +588,71 @@ interface ShapeInfo {
 }
 interface SlideInfo { number: number; part: string; layout: string; shapes: ShapeInfo[] }
 interface TemplateInfo { slideWidth: number; slideHeight: number; defaultFontSize: number; slides: SlideInfo[] }
+```
+
+## Slide previews
+
+Explained in [preview.md](preview.md). slotdeck draws nothing itself: a `PreviewProvider` is a renderer you plug in.
+
+### `pagusPreviews`
+
+```ts
+function pagusPreviews(core: PagusCore, renderer: PagusRenderer, options?: PagusOptions): PreviewProvider;
+
+interface PagusCore { parse(data: ArrayBuffer): Promise<{ slides: readonly unknown[]; slideSize: unknown }> } // the `@pagus-kit/core` module
+interface PagusRenderer { renderSlide(slide: never, slideSize: never, options?: never): { svg: string; width: number; height: number } } // the `@pagus-kit/renderer` module
+interface PagusOptions { scale?: number; fontSubstitutes?: Record<string, string>; fontCss?: string }
+```
+
+A provider that draws slides with the Pagus library, which you install and pass in:
+`pagusPreviews(pagusCore, pagusRenderer)` after `import * as pagusCore from '@pagus-kit/core'` and
+`import * as pagusRenderer from '@pagus-kit/renderer'`. One SVG for each slide, with the text as real text for a
+browser to set. Paragraphs that start with a right-to-left letter are marked as running right to left.
+
+### `previewDeck`
+
+```ts
+function previewDeck(template: Template, deck: DeckSpec, preview: PreviewProvider, options?: PreviewDeckOptions): Promise<{ pptx: Uint8Array; previews: SlidePreview[] }>;
+```
+
+`renderDeck`, then the provider: the pptx and a picture of each of its slides.
+
+### `patternPreviews`
+
+```ts
+function patternPreviews(template: Template, preview: PreviewProvider, options?: SampleOptions & { signal?: AbortSignal }): Promise<Record<string, SlidePreview>>;
+```
+
+A picture of every pattern, by pattern id: each pattern's slide of the template's sample deck.
+
+### `previewExtension`
+
+```ts
+function previewExtension(preview: { mimeType: string }): string; // 'svg', 'png', 'jpg', ...
+```
+
+The file extension for a preview's type, for naming it in a store or on disk.
+
+### Types
+
+```ts
+// What slotdeck needs from a slide renderer. Implement it to plug in any renderer.
+interface PreviewProvider {
+  renderSlides(request: PreviewRequest): Promise<SlidePreview[]>; // one picture for each slide asked for, in slide order
+}
+interface PreviewRequest {
+  pptx: Uint8Array;
+  slides?: number[]; // 1-based; every slide when left out
+  signal?: AbortSignal;
+}
+interface SlidePreview {
+  slide: number;    // 1-based
+  mimeType: string; // 'image/svg+xml', 'image/png'
+  data: Uint8Array; // SVG as UTF-8 text, or the bitmap's bytes
+  width?: number;   // pixels
+  height?: number;
+}
+interface PreviewDeckOptions { assets?: Record<string, Uint8Array>; layout?: LayoutMode; signal?: AbortSignal }
 ```
 
 ## Measuring text

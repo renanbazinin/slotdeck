@@ -10,6 +10,8 @@ import type { AssetDef, IconDef, ImageDensity } from './plan/catalog.ts';
 import { planEdit } from './plan/edit.ts';
 import { editPlan, planOutline, writeDeck } from './plan/plan.ts';
 import type { Brief, DeckPlan, PlanOptions } from './plan/plan.ts';
+import { previewExtension } from './preview/provider.ts';
+import type { PreviewProvider, SlidePreview } from './preview/provider.ts';
 import { renderDeck } from './render/render.ts';
 import type { Template } from './render/render.ts';
 import { readJson, writeJson } from './store.ts';
@@ -38,6 +40,11 @@ export interface PresentationToolsOptions {
   numberPatterns?: PlanOptions['numberPatterns'];
   /** Address of a picture of a pattern's layout, for showing a plan visually. */
   thumbnail?: (patternId: string) => string | undefined;
+  /**
+   * Draws the slides of every presentation the tools create or change. The pictures are kept in
+   * the store under `preview/<presentation id>/`, and returned to the app with the result.
+   */
+  preview?: PreviewProvider;
   /** Makes ids for plans and decks. Defaults to a short random id. */
   newId?: (kind: 'plan' | 'deck') => string;
   onProgress?: (event: GenerateProgress, tool: string) => void;
@@ -50,6 +57,8 @@ export interface ToolResult {
   plan?: DeckPlan;
   deck?: DeckSpec;
   pptx?: Uint8Array;
+  /** Pictures of the slides, when the tools were given a preview provider. */
+  previews?: SlidePreview[];
 }
 
 export interface PresentationTools {
@@ -72,6 +81,8 @@ export const storeKeys = {
   deck: (id: string) => `deck/${id}.json`,
   pptx: (id: string) => `pptx/${id}.pptx`,
   asset: (id: string) => `asset/${id}`,
+  /** A slide's picture: `extension` is `svg` or `png`, as the preview provider made it. */
+  preview: (id: string, slide: number, extension: string) => `preview/${id}/slide-${String(slide).padStart(2, '0')}.${extension}`,
 };
 
 const definitions: ToolDefinition[] = [
@@ -234,7 +245,22 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
     if (warnings.length > 0) {
       output.warnings = warnings.map((issue) => `slide ${issue.slide}${issue.slot ? ` ${issue.slot}` : ''}: ${issue.message}`);
     }
-    return { id, output, pptx };
+
+    // Pictures of the slides are an extra: the presentation stands when they cannot be made.
+    let previews: SlidePreview[] | undefined;
+    if (options.preview) {
+      try {
+        previews = await options.preview.renderSlides(signal ? { pptx, signal } : { pptx });
+        const keys = previews.map((picture) => storeKeys.preview(id, picture.slide, previewExtension(picture)));
+        await Promise.all(previews.map((picture, index) => store.set(keys[index] as string, picture.data)));
+        output.previews = keys;
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        previews = undefined;
+        output.preview_error = error instanceof Error ? error.message : String(error);
+      }
+    }
+    return { id, output, pptx, previews };
   };
 
   const text = (args: Record<string, unknown>, name: string): string => {
@@ -279,8 +305,8 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
       const plan = await readJson<DeckPlan>(store, storeKeys.plan(planId));
       if (!plan) throw new ToolInputError(`There is no plan with id "${planId}"`);
       const written = await writeDeck(template, plan, planOptions(TOOL_NAMES.create, signal));
-      const { output, pptx } = await finish(TOOL_NAMES.create, written.deck, written.warnings, signal);
-      return { output: { ...output, plan_id: planId }, deck: written.deck, pptx };
+      const { output, pptx, previews } = await finish(TOOL_NAMES.create, written.deck, written.warnings, signal);
+      return withPreviews({ output: { ...output, plan_id: planId }, deck: written.deck, pptx }, previews);
     },
 
     async [TOOL_NAMES.edit](args, signal) {
@@ -289,12 +315,15 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
       if (!deck) throw new ToolInputError(`There is no presentation with id "${deckId}"`);
       const editOptions = { ...planOptions(TOOL_NAMES.edit, signal), ...(canMakePhotos ? {} : { imageDensity: 'none' as const }) };
       const edited = await planEdit(template, deck, text(args, 'instruction'), editOptions);
-      const { output, pptx } = await finish(TOOL_NAMES.edit, edited.deck, edited.warnings, signal);
-      return {
-        output: { ...output, summary: edited.summary, rewritten_slides: edited.rewritten, previous_presentation_id: deckId },
-        deck: edited.deck,
-        pptx,
-      };
+      const { output, pptx, previews } = await finish(TOOL_NAMES.edit, edited.deck, edited.warnings, signal);
+      return withPreviews(
+        {
+          output: { ...output, summary: edited.summary, rewritten_slides: edited.rewritten, previous_presentation_id: deckId },
+          deck: edited.deck,
+          pptx,
+        },
+        previews,
+      );
     },
   };
 
@@ -312,6 +341,11 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
       }
     },
   };
+}
+
+function withPreviews(result: ToolResult, previews: SlidePreview[] | undefined): ToolResult {
+  if (previews) result.previews = previews;
+  return result;
 }
 
 class ToolInputError extends Error {}

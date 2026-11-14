@@ -63,6 +63,8 @@
     "@expo-google-fonts/caladea": "^0.4.2",
     "@expo-google-fonts/carlito": "^0.4.1",
     "@expo-google-fonts/heebo": "^0.4.2",
+    "@pagus-kit/core": "^0.1.1",
+    "@pagus-kit/renderer": "^0.1.1",
     "@types/node": "^26.6.6",
     "fontkit": "^3.0.0",
     "typescript": "^7.0.2"

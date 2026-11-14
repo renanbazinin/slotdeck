@@ -10,15 +10,21 @@ import type { DeckPlan } from '../src/index.ts';
 
 const escape = (text: unknown) => String(text ?? '').replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[char] as string);
 
-/** `thumbnailsDir` holds one `<pattern id>.png` per pattern (see scripts/pattern-thumbnails.ts). */
+/**
+ * `thumbnailsDir` holds one picture per pattern, `<pattern id>.png` or `<pattern id>.svg`
+ * (see scripts/pattern-thumbnails.ts, which makes either).
+ */
 export function planPreviewHtml(plan: DeckPlan, thumbnailsDir: string, fallbackLanguage = 'en'): string {
   const language = plan.brief.language ?? fallbackLanguage;
   const direction = plan.brief.direction ?? directionOf(language);
   const cards = plan.slides
     .map((slide, index) => {
-      const file = join(thumbnailsDir, `${slide.pattern}.png`);
-      const picture = existsSync(file)
-        ? `<img src="data:image/png;base64,${readFileSync(file).toString('base64')}" alt="Layout: ${escape(slide.pattern)}">`
+      const found = [
+        { file: join(thumbnailsDir, `${slide.pattern}.png`), type: 'image/png' },
+        { file: join(thumbnailsDir, `${slide.pattern}.svg`), type: 'image/svg+xml' },
+      ].find((candidate) => existsSync(candidate.file));
+      const picture = found
+        ? `<img src="data:${found.type};base64,${readFileSync(found.file).toString('base64')}" alt="Layout: ${escape(slide.pattern)}">`
         : `<div class="missing">${escape(slide.pattern)}</div>`;
       return `<li>${picture}<div class="text"><b>${index + 1}</b><span>${escape(slide.pattern)}</span><p>${escape(slide.purpose)}</p></div></li>`;
     })

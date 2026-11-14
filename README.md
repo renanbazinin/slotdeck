@@ -318,6 +318,26 @@ set a little smaller, and `measuredBudgets` works out budgets from what the boxe
 every line broke at the same word as in PowerPoint in all 1,153 text slots checked, in English and Hebrew. See
 [`docs/text-fit.md`](docs/text-fit.md).
 
+### Previews
+
+slotdeck draws nothing itself, but it has a hook for a renderer that does: a `PreviewProvider` turns a pptx into
+one picture for each slide. An adapter for the Pagus library comes with the package (you install Pagus), and
+any other renderer or service can be plugged in.
+
+```ts
+import * as pagusCore from '@pagus-kit/core';
+import * as pagusRenderer from '@pagus-kit/renderer';
+import { pagusPreviews, patternPreviews, previewDeck } from 'slotdeck';
+
+const preview = pagusPreviews(pagusCore, pagusRenderer);
+const { pptx, previews } = await previewDeck(template, deck, preview, { assets }); // SVG, one for each slide
+const thumbnails = await patternPreviews(template, preview);                      // one for each pattern
+```
+
+The chat tools take the same provider and keep a picture of every slide they make. A preview shows what a deck
+looks like; it is not PowerPoint. What three renderers got right and wrong, in English and in Hebrew, is in
+[`docs/preview.md`](docs/preview.md).
+
 ## Template studio
 
 Writing a manifest by hand means reading shape ids out of a pptx. The studio functions do that work with a

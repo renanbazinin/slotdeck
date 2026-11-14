@@ -125,6 +125,9 @@ filler words and plain coloured rectangles for pictures.
 | `items` | `'drawn'` | For patterns with a row or grid: `'drawn'` uses the template's number, `'max'` the most allowed, `'min'` the fewest. |
 | `fit` | `'budget'` | What "full" means for a text slot: `'budget'` is its character budget; `'box'` is what its box holds as measured with the template's fonts (see [text-fit.md](text-fit.md)). |
 
+To look at the sample deck without opening PowerPoint, draw it with a preview provider:
+`previewDeck(template, deck, preview, { assets, layout: 'adaptive' })`. See [preview.md](preview.md).
+
 ## `changeManifest(template, changes)`
 
 ```ts

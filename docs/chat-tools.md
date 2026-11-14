@@ -39,6 +39,7 @@ const tools = presentationTools({
   fields: { organizationDepartment: 'Acme  |  Operations' }, // optional deck-level values every deck gets
   numberPatterns: 'from-brief',                 // optional
   thumbnail: (patternId) => `/static/thumbnails/${patternId}.png`, // optional address of a picture of each layout
+  preview,                                      // optional PreviewProvider: draws every presentation the tools make
   newId: (kind) => `${kind}_${crypto.randomUUID()}`, // optional; default is a short random id
   onProgress: (event, tool) => console.log(tool, event.stage), // optional
 });
@@ -141,6 +142,10 @@ Output:
 
 `file` is the store key of the rendered pptx. `warnings` is present only when there are any.
 
+With the `preview` option set, the output also has `"previews"`: the store keys of the pictures of the slides,
+such as `["preview/deck_851fbb9677/slide-01.svg", ...]`. If the pictures could not be made, it has
+`"preview_error"` with the reason instead, and the presentation is created all the same.
+
 ### `edit_presentation`
 
 Arguments: `presentation_id` (string, required), `instruction` (string, required).
@@ -177,9 +182,10 @@ interface BlobStore {
 | `deck/<id>.json` | A deck: all text, and for each picture its id and description | 4 KB |
 | `asset/<id>` | One generated picture | tens of KB to 1 MB |
 | `pptx/<id>.pptx` | The rendered file | hundreds of KB and up |
+| `preview/<id>/slide-01.svg` | A picture of one slide, when the tools have a `preview` provider. The extension follows the provider: `svg`, `png` | tens of KB each |
 
-`storeKeys.plan(id)`, `storeKeys.deck(id)`, `storeKeys.asset(id)` and `storeKeys.pptx(id)` build these keys, so
-your app can read what the tools saved:
+`storeKeys.plan(id)`, `storeKeys.deck(id)`, `storeKeys.asset(id)`, `storeKeys.pptx(id)` and
+`storeKeys.preview(id, slide, extension)` build these keys, so your app can read what the tools saved:
 
 ```ts
 const pptx = await store.get(storeKeys.pptx(presentationId)); // to serve a download later
@@ -219,9 +225,19 @@ const store: BlobStore = {
 
 ## Showing a plan visually
 
-A plan lists a layout per slide. To show layouts as pictures, render the template's slides to images once (with
-any tool you have), name each picture after the pattern made from that slide, and return its address from the
-`thumbnail` option. The address is passed through to the chat model's output and is not fetched by slotdeck.
+A plan lists a layout per slide. To show layouts as pictures, make one picture for each pattern once, name it
+after the pattern, and return its address from the `thumbnail` option. The address is passed through to the
+chat model's output and is not fetched by slotdeck.
+
+`patternPreviews(template, preview)` makes those pictures without PowerPoint, through a preview provider; see
+[preview.md](preview.md). Pictures of the template's own slides from any other tool work as well.
+
+## Showing a presentation
+
+Set the `preview` option to a `PreviewProvider` and every presentation the tools create or change is drawn.
+The pictures go to the store under `preview/<presentation id>/`, their keys are in the tool's output, and the
+`ToolResult` carries the pictures themselves in `previews` for your app to show. How to get a provider, and how
+close its pictures are to PowerPoint, is in [preview.md](preview.md).
 
 ## A complete loop
 

@@ -29,12 +29,22 @@ in `node_modules/slotdeck/package.json`.
 - **`checkManifest`** tries every text budget out when the template has fonts, and warns about a budget that
   lets text run over its box. It also names typefaces that were not supplied.
 - **`sampleDeck(template, { fit: 'box' })`** fills every text slot to what its box holds by measurement.
+- **Slide previews.** `PreviewProvider` is a new interface for a renderer that turns a pptx into one picture
+  for each slide. slotdeck draws nothing itself and depends on no renderer. `pagusPreviews(core, renderer)` is
+  an adapter for the Pagus library, which you install yourself; it gives SVG for a browser to show, with
+  Hebrew and Arabic paragraphs marked right to left. `previewDeck` renders a deck and draws it,
+  `patternPreviews` makes a thumbnail for every pattern of a template, and `presentationTools` takes a
+  `preview` option: the pictures of every presentation it makes go to the store under `preview/<id>/` and to
+  the app in `ToolResult.previews`. No renderer tried reproduces PowerPoint exactly; what was found, for
+  English, Hebrew, tables and native charts, is in [preview.md](preview.md).
 
 ### Changed
 
 - `renderDeck` returns `shrunk` next to `pptx` and `warnings`. It is an empty array unless the manifest has
   `shrinkText` and the template has fonts.
 - `loadTemplate` takes a third, optional argument. `Template` has an optional `fonts` field.
+- `storeKeys` has a `preview` key builder. With a `preview` provider the outputs of `create_presentation`
+  and `edit_presentation` gain `previews`, or `preview_error` when the pictures could not be made.
 
 ### Upgrading
 
@@ -46,6 +56,8 @@ in `node_modules/slotdeck/package.json`.
 - Once a template has fonts, a text longer than its `maxChars` that fits its box is no longer reported, and a
   text within `maxChars` that does not fit is. Code that looks for the words `characters; the slot fits` in a
   warning should also expect `lines`.
+- Previews are off unless you pass a `preview` provider. To turn them on with Pagus:
+  `npm install @pagus-kit/core @pagus-kit/renderer` and `pagusPreviews(pagusCore, pagusRenderer)`.
 - Budgets drafted without fonts are cautious. `measuredBudgets` usually suggests larger ones; setting them
   lets the planning model write more per slide.
 

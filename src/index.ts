@@ -68,6 +68,14 @@ export type {
 } from './template/manifest.ts';
 export { TEXT_SIZES } from './template/manifest.ts';
 
+// Pictures of slides.
+export { previewExtension } from './preview/provider.ts';
+export type { PreviewProvider, PreviewRequest, SlidePreview } from './preview/provider.ts';
+export { pagusPreviews } from './preview/pagus.ts';
+export type { PagusCore, PagusOptions, PagusRenderer } from './preview/pagus.ts';
+export { patternPreviews, previewDeck } from './preview/patterns.ts';
+export type { PreviewDeckOptions } from './preview/patterns.ts';
+
 // Measuring text with real fonts.
 export { fontkitMetrics } from './text/fontkit.ts';
 export type { FontFiles, FontkitModule } from './text/fontkit.ts';

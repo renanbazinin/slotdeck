@@ -20,6 +20,8 @@ is fast: a 15-slide deck from the demo template takes about 100 ms.
 It does not verify the manifest. Call `checkManifest(template)` when a template or manifest is loaded if you
 want to catch a manifest that no longer matches its file (see [template-studio.md](template-studio.md)).
 
+To get a picture of each slide of the result without PowerPoint, see [preview.md](preview.md).
+
 A third argument, `{ fonts }`, gives the template the metrics of its fonts. Text is then measured as it will
 be set: warnings say how many lines a text runs over, and text can be shrunk to fit. See
 [text-fit.md](text-fit.md).
