@@ -84,6 +84,9 @@ again, `2.2` lets two cards fill a row drawn for four. With `changeManifest`:
   `validateDeck` uses these budgets, the planner gives them to the model for the number of items it chose,
   and `sampleDeck` with `items: 'min'` fills them. Paragraph budgets do not change. A deck's text size is
   applied on top.
+- **With fonts.** A template loaded with fonts measures the text of a widened item in its wider box, so a
+  text is reported, shrunk or called empty by the box it really gets (see [text-fit.md](text-fit.md)).
+  `checkManifest` then also tries the larger budgets out, one number of items at a time.
 - **Grids.** A grid has one item width, decided by its fullest line. In a three-column grid, four figures make
   two lines of two, which widen; five make three and two, and keep their width.
 - **Both reading directions.** Positions come from the template: a right-to-left template with its icons at

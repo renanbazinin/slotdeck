@@ -12,7 +12,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as fontkit from 'fontkit';
-import { bodyTextScale, effectiveSlots, slotSources } from '../src/template/manifest.ts';
+import { fitOptions } from '../src/deck/validate.ts';
+import { effectiveSlots, slotSources } from '../src/template/manifest.ts';
 import { fontkitMetrics, loadTemplate, textMeasurer } from '../src/index.ts';
 import type { DeckSpec, TemplateManifest } from '../src/index.ts';
 import { officeFonts, openFonts } from '../test/fonts.ts';
@@ -65,7 +66,8 @@ deck.slides.forEach((slide, index) => {
     let taken = 0;
     const byParagraph = (shape.paragraphs ?? []).map((count) => (shape.lines ?? []).slice(taken, (taken += count)).map((line) => line.trimEnd().length));
     ((recorded[String(index + 1)] ??= {})[slot.shapeId] = { lines: byParagraph, height: shape.boundHeight ?? 0 });
-    const fit = measure.fit(pattern, slot, value as string | string[], { textScale: bodyTextScale(manifest, deck.textScale) });
+    // Measured as validation and the renderer measure: at the deck's text size and the slide's number of items.
+    const fit = measure.fit(pattern, slot, value as string | string[], fitOptions(manifest, deck, slide));
     if (!fit) {
       console.log(`slide ${index + 1} ${slot.name}: not measured`);
       continue;

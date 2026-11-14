@@ -295,7 +295,7 @@ be measured: it is not a text slot, its shape holds no text, or a typeface it ne
 | `paragraphs` | The lines of each paragraph, as they break. |
 | `widths` | The width of each of those lines in points, without the space that hangs at its end. |
 | `lineRoom` | The width a line of each paragraph may take, in points. |
-| `sampleLines` | Lines the template's own sample text takes in the slot; `0` for a slot that moves its box or resets its size. |
+| `sampleLines` | Lines the template's own sample text takes in the slot as drawn; `0` for a slot that resizes its box or resets its size. |
 | `approximate` | A typeface, a weight or a shape outline was stood in for, so the figures are close but not exact. |
 
 Options:
@@ -304,7 +304,7 @@ Options:
 | --- | --- |
 | `textScale` | The factor on body text the deck is rendered with: the manifest's `textScale` times the deck's. Defaults to `1`. |
 | `shrink` | `{ to, minSize? }`: allow the text to be set smaller, as `shrinkText` does. |
-| `items` | For a slot of a row of items: how many items the slide has. |
+| `items` | For a slot of a row of items: how many items the slide has. In a row with `widen`, fewer items are wider, and the text is measured in the wider box. |
 
 `measure.missingFonts()` returns the typefaces the template's text slots need that were not supplied.
 
@@ -315,7 +315,17 @@ The rules below were read off PowerPoint's own behaviour.
 **The box.** The room is the shape's size less its text insets (0.1 inch left and right, 0.05 inch top and
 bottom unless the shape says otherwise). A rounded rectangle, an ellipse or a diamond keeps text clear of its
 outline, as PowerPoint does. A box that was drawn around its sample text holds at least what the sample takes.
-A slot with its own `box` or `fontSize` (a derived pattern) is measured in that box at that size.
+A slot with its own `box` or `fontSize` (a derived pattern) is measured in that box at that size. A `box` of
+the shape's own size, such as a mirrored pattern's, only moves the shape, and the sample still counts.
+
+**Rows that widen.** A row with `widen` makes its items wider when a slide has fewer of them than the template
+draws (see [layout-freedom.md](layout-freedom.md)). With `items` in the options, the text of such an item is
+measured in the box the renderer gives it: the same step that lays the row out for a deck is run on a copy of
+the slide, and the width is read from there. Only the width changes. The height of the box, and how full the
+designer drew it (`sampleLines`), are those of the item as drawn. `validateDeck`, `renderDeck`, shrinking and
+`checkDesign` pass the slide's `items` themselves. On the demo template, 22 texts in widened cards and figures
+broke every line where PowerPoint did, in English and in Hebrew; measured in the boxes as drawn, 3 of the 22
+English ones would have had PowerPoint's line count.
 
 **The size.** The size the text will be rendered at: the template run's size or the slot's `fontSize`, times
 the body text scale where it applies (`scales`), rounded to half a point as the renderer rounds it.

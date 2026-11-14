@@ -4,13 +4,16 @@
 //   node scripts/text-fit-stress.ts            writes out/stress-<language>-<n>.pptx and .deck.json
 //   node scripts/text-fit-stress.ts --small    the same with every font size halved, as out/small-*:
 //                                              small text is where PowerPoint's own rounding shows most
+//   node scripts/text-fit-stress.ts --rows     every row and grid at every number of items it takes,
+//                                              as out/rows-*: a row that widens its items gives their
+//                                              texts a wider box, which the measurer has to follow
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { loadTemplate, renderDeck, sampleDeck } from '../src/index.ts';
-import type { DeckSpec, TemplateManifest } from '../src/index.ts';
-import { effectiveSlots, textBudget } from '../src/template/manifest.ts';
+import type { DeckSpec, SlideSpec, SlotValue, TemplateManifest } from '../src/index.ts';
+import { effectiveSlots, itemRange, textBudget } from '../src/template/manifest.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const outDir = join(root, 'out');
@@ -65,7 +68,41 @@ const languages = [
 const fills = small ? [1.5, 2.5, 3.5, 4.5, 6] : [0.5, 0.8, 1.0, 1.3, 1.7];
 
 let seed = 7;
-for (const language of languages) {
+const rows = process.argv.includes('--rows');
+for (const language of rows ? languages : []) {
+  [0.6, 1.0, 1.5].forEach((fill, round) => {
+    const { deck, assets } = sampleDeck(template);
+    const slides: SlideSpec[] = [];
+    for (const pattern of manifest.patterns) {
+      const range = itemRange(pattern);
+      if (!range) continue;
+      const sample = deck.slides.find((slide) => slide.pattern === pattern.id);
+      for (let count = range.min; count <= range.max; count++) {
+        const slots: Record<string, SlotValue> = {};
+        for (const slot of effectiveSlots(pattern, count)) {
+          if (slot.empty === 'drop' || slot.empty === 'keep') continue;
+          if (slot.kind === 'text') {
+            if (slot.deckField) continue;
+            // The budget is the one the slot has at this number of items.
+            const budget = textBudget(slot).maxChars ?? 60;
+            const several = (slot.maxParagraphs ?? 1) > 1;
+            const paragraphs = several ? Math.max(2, (slot.maxParagraphs ?? 2) - (round % 2)) : 1;
+            const each = Math.max(3, Math.round((budget * fill) / paragraphs));
+            const text = Array.from({ length: paragraphs }, () => running(language.words, each, (seed = (seed * 31 + 17) % 9973)));
+            slots[slot.name] = several ? text : (text[0] as string);
+          } else if (slot.kind === 'image') {
+            slots[slot.name] = { asset: slot.imageKind === 'photo' ? 'sample-photo' : slot.imageKind === 'icon' ? 'sample-icon' : 'sample-graphic' };
+          } else if (sample?.slots[slot.name] !== undefined) {
+            slots[slot.name] = sample.slots[slot.name] as SlotValue;
+          }
+        }
+        slides.push({ pattern: pattern.id, items: count, slots });
+      }
+    }
+    write(`rows-${language.tag}-${round + 1}`, { ...deck, language: language.tag, direction: language.direction, title: `Rows ${language.tag} ${fill}`, slides }, assets);
+  });
+}
+for (const language of rows ? [] : languages) {
   fills.forEach((fill, round) => {
     const { deck, assets } = sampleDeck(template);
     deck.language = language.tag;
@@ -94,7 +131,7 @@ for (const language of languages) {
 
 // The studio's own sample deck: every slot filled to its budget.
 const sample = sampleDeck(template);
-if (!small) write('sample', sample.deck, sample.assets);
+if (!small && !rows) write('sample', sample.deck, sample.assets);
 
 function write(name: string, deck: DeckSpec, assets: Record<string, Uint8Array>): void {
   const { pptx } = renderDeck(template, deck, { assets, layout: 'adaptive' });

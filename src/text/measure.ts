@@ -5,7 +5,8 @@ import type { Template } from '../render/render.ts';
 import { detectDirection } from '../render/text.ts';
 import { inspectTemplate } from '../template/inspect.ts';
 import type { ShapeInfo, TemplateInfo } from '../template/inspect.ts';
-import { COPY_ID_STEP, effectiveSlots, scalesWithText } from '../template/manifest.ts';
+import { rowTextIds } from '../render/repeat.ts';
+import { COPY_ID_STEP, effectiveSlots, itemCount, scalesWithText, widenFactor } from '../template/manifest.ts';
 import type { PatternDef, TextSlotDef } from '../template/manifest.ts';
 import { scriptClass, textWidth, themeScript } from './fonts.ts';
 import type { FontFace, FontMetrics, FontStyle, ScriptClass } from './fonts.ts';
@@ -91,6 +92,11 @@ const SLACK = 0.3;
 const SPARE = 0.25;
 /** PowerPoint sets lines 1.2 times the font size apart, whatever the font's own metrics say. */
 const LINE = 1.2;
+/**
+ * A slot's box of the shape's own size, to within this share of the slide, moves the shape
+ * without resizing it. A manifest states boxes to four decimal places.
+ */
+const MOVED = 0.0005;
 
 interface Shared {
   styles: TextStyles;
@@ -238,14 +244,24 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
   /**
    * The frame a slot's text is measured in. This is the one place that decides the box: every
    * check (validation, shrinking, the design checks) comes through here. `items` is the number
-   * of items on the slide, for a rule that sizes an item of a row by how many there are.
+   * of items on the slide: a row with `widen` makes its items wider when it holds fewer of them,
+   * and the text of such an item is measured in the box the renderer gives it.
    */
-  const frameOf = (pattern: PatternDef, slot: TextSlotDef, _items?: number): TextFrame | undefined => {
+  const frameOf = (pattern: PatternDef, slot: TextSlotDef, items?: number): TextFrame | undefined => {
     const shape = shapeOf(pattern.sourceSlide, slot.shapeId);
     if (!shape) return undefined;
     // The shape's own size is read exactly from the slide; a slot that moves its box states another.
     const box = slot.box;
     const size = box && box.w > 0 && box.h > 0 ? { width: box.w * styles.slideWidth, height: box.h * styles.slideHeight } : undefined;
+    const repeat = pattern.repeat;
+    if (!size && repeat && items !== undefined) {
+      const count = itemCount(pattern, items);
+      const texts = rowTextIds(pattern);
+      if (texts?.has(slot.shapeId) && widenFactor(repeat, count) > 1) {
+        const widened = styles.rowFrame(pattern.sourceSlide, slot.shapeId, slot.styleRun ?? 'first', { key: pattern.id, repeat, count, texts });
+        if (widened) return widened;
+      }
+    }
     return styles.frame(pattern.sourceSlide, shape.id, slot.styleRun ?? 'first', size);
   };
 
@@ -308,6 +324,8 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
     if (!slot) return undefined;
     const frame = frameOf(pattern, slot, options.items);
     if (!frame) return undefined;
+    // The box as the template draws it: the same frame unless the row widened this item.
+    const drawn = options.items === undefined ? frame : (frameOf(pattern, slot) ?? frame);
     const paragraphs = (Array.isArray(text) ? text : text.split(/\r?\n/)).map((paragraph) => paragraph.trim()).filter((paragraph) => paragraph !== '');
     if (paragraphs.length === 0) return undefined;
     const chosen = slot;
@@ -328,15 +346,21 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
       let roomWidth = 1;
       let sampleLines = 0;
       // A box drawn around its sample text holds at least what the sample takes. That does not
-      // carry over to a slot that moves the box or resets the size: it uses the shape differently.
-      if (chosen.box === undefined && chosen.fontSize === undefined) {
+      // carry over to a slot that resizes the box or resets the size: it uses the shape
+      // differently. A box that only moves the shape, as a mirrored pattern's does, keeps it.
+      const own = shapeOf(pattern.sourceSlide, chosen.shapeId)?.box;
+      const sameSize = chosen.box !== undefined && own !== undefined && Math.abs(chosen.box.w - own.w) <= MOVED && Math.abs(chosen.box.h - own.h) <= MOVED;
+      if ((chosen.box === undefined || sameSize) && chosen.fontSize === undefined) {
         const sample = frame.sample.map((paragraph) => paragraph.trim()).filter((paragraph) => paragraph !== '');
         if (sample.length > 0) {
           try {
-            const laid = lay(frame, sample, (style) => style.run.size, undefined, { approximate: false });
+            // An item that widens keeps its height, so the room below the first line, and how
+            // full the designer drew the box, are those of the box as drawn.
+            const laid = lay(drawn, sample, (style) => style.run.size, undefined, { approximate: false });
             room = Math.max(room, laid.height);
-            roomWidth = Math.max(roomWidth, laid.widest);
             sampleLines = laid.lines.reduce((sum, entry) => sum + entry.length, 0);
+            const wide = frame === drawn ? laid : lay(frame, sample, (style) => style.run.size, undefined, { approximate: false });
+            roomWidth = Math.max(roomWidth, wide.widest);
           } catch (error) {
             note(error);
           }

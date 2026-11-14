@@ -97,10 +97,12 @@ test('a card with a fraction of its neighbour\'s text makes the row uneven', () 
       ...Object.fromEntries(texts.flatMap((text, index) => [[`card${index + 1}Heading`, 'Heading'], [`card${index + 1}Text`, text], [`card${index + 1}Icon`, { asset: 'icon' }]])),
     },
   });
-  // The cards' text is 15 pt in a box 162 pt wide: four words to a line in the made-up font.
+  // The cards' text is 15 pt in a box 162 pt wide when the row holds the four cards it draws:
+  // four words to a line in the made-up font. The demo's row widens its cards when it holds
+  // fewer, so with three the box is 237.6 pt wide and holds six words to a line.
   const issues = checkDesign(template, deckOf(cards([words(20), 'word', words(16)])), { kinds: ['uneven'] });
   assert.deepEqual(kindsOf(issues), ['card2Text:uneven']);
-  assert.equal(issues[0]?.message, 'text takes 1 line where "card1Text" beside it takes 5, so the row will look uneven. Text of about 66 characters or more evens it out.');
+  assert.equal(issues[0]?.message, 'text takes 1 line where "card1Text" beside it takes 4, so the row will look uneven. Text of about 66 characters or more evens it out.');
   // Cards that are all short, or all long, are even.
   assert.deepEqual(checkDesign(template, deckOf(cards(['word', 'two words', 'word'])), { kinds: ['uneven'] }), []);
   assert.deepEqual(checkDesign(template, deckOf(cards([words(20), words(12), words(16)])), { kinds: ['uneven'] }), []);

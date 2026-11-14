@@ -82,6 +82,14 @@ in `node_modules/slotdeck/package.json`.
   pattern has no place for is reported, and so is a text that is over its new budget. The chat tools do not
   offer it yet. See "Another layout for the same slide" in [layout-freedom.md](layout-freedom.md).
 
+- **Measuring follows the layout.** With fonts, the text of a row that widens its items is measured in the
+  box the renderer gives it at the slide's number of items, so validation, shrinking and the design checks
+  agree with the slide: text that fits two wide cards is accepted there and reported in four narrow ones. On
+  the demo template all 22 texts in widened cards and figures broke where PowerPoint broke them, in English
+  and in Hebrew. `checkManifest` tries the larger budgets of such a row in the wider boxes, and
+  `sampleDeck(template, { fit: 'box', items: 'min' })` fills them. A mirrored pattern, whose boxes only move
+  their shapes, is checked for empty boxes against the template's own text like the pattern it mirrors.
+
 ### Changed
 
 - `renderDeck` returns `shrunk` next to `pptx` and `warnings`. It is an empty array unless the manifest has

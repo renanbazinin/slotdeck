@@ -1,7 +1,18 @@
 import { NS, childElement, childElements, descendants, path, removeNode } from '../pptx/xml.ts';
 import type { Element } from '../pptx/xml.ts';
 import { COPY_ID_STEP, rowLayout } from '../template/manifest.ts';
-import type { RepeatDef, SlideBox } from '../template/manifest.ts';
+import type { PatternDef, RepeatDef, SlideBox } from '../template/manifest.ts';
+
+/**
+ * For a row that may widen its items: the shapes of the row's text slots, which widen with them.
+ * `undefined` for a pattern whose row keeps the size of its items.
+ */
+export function rowTextIds(pattern: PatternDef): Set<string> | undefined {
+  const repeat = pattern.repeat;
+  if (!repeat?.widen) return undefined;
+  const names = new Set(repeat.shapes.flatMap((_, index) => repeat.slots.map((name) => name.replace('{n}', String(index + 1)))));
+  return new Set(pattern.slots.filter((slot) => slot.kind === 'text' && names.has(slot.name)).map((slot) => slot.shapeId));
+}
 
 /** The transform element that positions a shape within its parent. */
 export function shapeTransform(shape: Element): Element | undefined {

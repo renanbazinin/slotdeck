@@ -23,6 +23,7 @@ import {
   validateDeck,
 } from '../src/index.ts';
 import type { DeckSpec, FontFace, FontMetrics, JsonRequest, TemplateManifest } from '../src/index.ts';
+import { fitOptions } from '../src/deck/validate.ts';
 import { bodyTextScale, effectiveSlots, slotSources } from '../src/template/manifest.ts';
 import { textWidth } from '../src/text/fonts.ts';
 import { breakLines } from '../src/text/layout.ts';
@@ -342,7 +343,7 @@ const smallPptx = halved();
  * Measures every text slot of a recorded deck and compares with what PowerPoint did: how many
  * slots have its number of lines in every paragraph, and how many break every line where it did.
  */
-function compare(name: string, fonts: FontMetrics): { slots: number; sameCount: number; sameBreaks: number; heightsOff: number } {
+function compare(name: string, fonts: FontMetrics, withItems = true): { slots: number; sameCount: number; sameBreaks: number; heightsOff: number } {
   const entry = recorded.cases.find((item) => item.name === name);
   assert.ok(entry, `no recorded case "${name}"`);
   const { deck } = entry;
@@ -357,7 +358,9 @@ function compare(name: string, fonts: FontMetrics): { slots: number; sameCount: 
       const truth = entry.shapes[String(index + 1)]?.[slot.shapeId];
       if (slot.kind !== 'text' || !truth) continue;
       const value = slide.slots[sources.get(slot.name) ?? slot.name] ?? (slot.deckField ? deck.fields?.[slot.deckField] : undefined);
-      const fit = measurer.fit(pattern, slot, value as string | string[], { textScale: bodyTextScale(manifest, deck.textScale) });
+      // Measured as validation and the renderer measure: at the deck's text size and the slide's
+      // number of items. `withItems: false` leaves the number out, as if the row never widened.
+      const fit = measurer.fit(pattern, slot, value as string | string[], withItems ? fitOptions(manifest, deck, slide) : { textScale: bodyTextScale(manifest, deck.textScale) });
       assert.ok(fit, `${name} slide ${index + 1} ${slot.name} was not measured`);
       result.slots++;
       const counts = JSON.stringify(fit.paragraphs.map((lines) => lines.length)) === JSON.stringify(truth.lines.map((lines) => lines.length));
@@ -376,10 +379,12 @@ test("with the template's own fonts, English and Hebrew text break exactly where
   // budget to well over it: at the designed sizes, with larger text, and with every size halved
   // (body text of 6 to 10 pt, where PowerPoint's rounding of glyph widths decides many breaks).
   const fonts = fontkitMetrics(fontkit, officeFonts() ?? {});
-  assert.deepEqual(recorded.cases.map((item) => item.name), ['english', 'english-larger-text', 'english-small', 'hebrew', 'hebrew-larger-text', 'hebrew-small']);
+  // The "rows" decks hold every row and grid at every number of items it takes, filled to one and
+  // a half times the budget: where a row widens its items, their texts are set in wider boxes.
+  assert.deepEqual(recorded.cases.map((item) => item.name), ['english', 'english-larger-text', 'english-rows', 'english-small', 'hebrew', 'hebrew-larger-text', 'hebrew-rows', 'hebrew-small']);
   for (const { name } of recorded.cases) {
     const { slots, sameCount, sameBreaks, heightsOff } = compare(name, fonts);
-    assert.equal(slots, 70, name);
+    assert.equal(slots, name.endsWith('-rows') ? 80 : 70, name);
     assert.equal(sameCount, slots, `${name}: ${sameCount} of ${slots} slots have PowerPoint's line counts`);
     assert.equal(sameBreaks, slots, `${name}: ${sameBreaks} of ${slots} slots break every line where PowerPoint does`);
     assert.equal(heightsOff, 0, name);
@@ -396,6 +401,22 @@ test('with open fonts of the same metrics, English text takes the number of line
     assert.equal(sameCount, slots, `${name}: ${sameCount} of ${slots} slots have PowerPoint's line counts`);
     assert.ok(sameBreaks >= slots - 8, `${name}: ${sameBreaks} of ${slots} slots break every line where PowerPoint does`);
     assert.equal(heightsOff, 0, name);
+  }
+});
+
+test('the texts of a row that widens its items break where PowerPoint breaks them, and would not if the row were taken as drawn', () => {
+  // The recorded "rows" deck holds two, three and four cards and two to six figures. Where there
+  // are fewer than the template draws, the items are wider and their texts break later. Measured
+  // in the boxes as drawn, most of those 22 texts get another number of lines than PowerPoint gave them.
+  const office = officeFonts();
+  const fonts = fontkitMetrics(fontkit, office ?? openFonts());
+  for (const name of office ? ['english-rows', 'hebrew-rows'] : ['english-rows']) {
+    const widened = compare(name, fonts);
+    const asDrawn = compare(name, fonts, false);
+    assert.equal(widened.slots, 80, name);
+    // The open stand-ins put a word on the other side of a break in a few slots; the real fonts in none.
+    assert.ok(widened.sameCount >= (office ? 80 : 76), `${name}: ${widened.sameCount} of 80 slots have PowerPoint's line counts`);
+    assert.ok(asDrawn.sameCount <= widened.sameCount - 14, `${name}: ${asDrawn.sameCount} of 80 would, with the row taken as drawn`);
   }
 });
 

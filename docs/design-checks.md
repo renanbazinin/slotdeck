@@ -70,8 +70,10 @@ text that fits once it is set smaller is not reported.
 
 **`empty`.** The reference is the template itself: the lines its own sample text takes in the slot. A slot is
 looked at only when that is three lines or more, so a title or a one-line caption is never "empty". A slot that
-the manifest moved or resized (`box`, `fontSize`: a derived pattern) has no sample to compare with; its box is
-then taken to be meant half full. A slot fed by a deck field is not checked, because that text is the app's.
+the manifest resized (`box`, `fontSize`: a derived pattern) has no sample to compare with; its box is
+then taken to be meant half full. A `box` that only moves the shape, as in a mirrored pattern, keeps the
+comparison. In a row that widens its items, the reference is the item as drawn: a short text in a wide card
+takes fewer lines, so it is reported sooner, with the length that fills the wider card. A slot fed by a deck field is not checked, because that text is the app's.
 
 **`uneven`.** The slots of one kind across a row are compared: every card's text with every other card's text,
 every heading with every heading. Rows come from the pattern's `repeat` or its `sequences`. A row is looked at

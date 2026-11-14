@@ -120,7 +120,10 @@ kind of shape, names are unique, rows are consistent. The rules are listed in
 shows up there and not in the middle of a render.
 
 For a template loaded with fonts it also tries every text budget out and warns about one that lets text run
-over its box. See "The studio: checking and setting budgets" in [text-fit.md](text-fit.md).
+over its box. A row with `widen` gives its texts a larger budget when a slide has fewer items; that budget is
+tried in the wider box, for each number of items that widens the row, and a warning then says which
+(`on a slide with 2 of its 4 items`). See "The studio: checking and setting budgets" in
+[text-fit.md](text-fit.md).
 
 ## `sampleDeck(template, options?)`
 

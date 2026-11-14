@@ -7,6 +7,30 @@ import { readPresentation } from '../pptx/presentation.ts';
 import type { PresentationInfo } from '../pptx/presentation.ts';
 import { NS, childElement, childElements, descendants, parseXml, path, rootElement } from '../pptx/xml.ts';
 import type { Element } from '../pptx/xml.ts';
+import { applyRepeat } from '../render/repeat.ts';
+import type { RepeatDef } from '../template/manifest.ts';
+
+/** A row of items laid out for a number of them: what decides how wide the row's text boxes are. */
+export interface RowLayout {
+  /** Names the row among the patterns that use the slide, e.g. the pattern's id. */
+  key: string;
+  repeat: RepeatDef;
+  /** How many items the slide has. */
+  count: number;
+  /** The shapes of the row's text slots, as the renderer is told them. */
+  texts: ReadonlySet<string>;
+}
+
+/** Maps `p:cNvPr/@id` to the shape element that owns it. */
+function shapesById(root: Element): Map<string, Element> {
+  const shapes = new Map<string, Element>();
+  for (const props of descendants(root, NS.p, 'cNvPr')) {
+    const shape = props.parentNode?.parentNode;
+    const id = props.getAttribute('id');
+    if (id && shape && shape.nodeType === 1) shapes.set(id, shape as Element);
+  }
+  return shapes;
+}
 
 /** A typeface as a run states it, with the theme font it came from when it named one. */
 export interface Typeface {
@@ -113,6 +137,7 @@ export class TextStyles {
   private readonly masters = new Map<string, MasterPart>();
   private readonly layouts = new Map<string, { root: Element; master?: MasterPart }>();
   private readonly frames = new Map<string, TextFrame | undefined>();
+  private readonly rows = new Map<string, Map<string, Element> | undefined>();
 
   constructor(pkg: PptxPackage) {
     this.pkg = pkg;
@@ -139,19 +164,48 @@ export class TextStyles {
     return this.frames.get(key);
   }
 
+  /**
+   * The text frame of a shape once the slide's row of items is laid out for a number of them.
+   * The renderer's own step is run on a copy of the slide, so the box is the one a deck gets: in
+   * a row that widens its items when it holds fewer, the text boxes are wider. `undefined` when
+   * the row cannot be laid out or the shape is not there.
+   */
+  rowFrame(slideNumber: number, shapeId: string, styleRun: 'first' | 'last', row: RowLayout): TextFrame | undefined {
+    const rowKey = `row|${slideNumber}|${row.key}|${row.count}`;
+    const key = `${rowKey}|${shapeId}|${styleRun}`;
+    if (!this.frames.has(key)) {
+      const shape = this.row(slideNumber, rowKey, row)?.get(shapeId);
+      this.frames.set(key, shape ? this.read(slideNumber, shapeId, styleRun, undefined, shape) : undefined);
+    }
+    return this.frames.get(key);
+  }
+
+  /** The shapes of a slide after its row is laid out, on a copy that nothing else reads. */
+  private row(slideNumber: number, rowKey: string, row: RowLayout): Map<string, Element> | undefined {
+    if (this.rows.has(rowKey)) return this.rows.get(rowKey);
+    const ref = this.pres.slides[slideNumber - 1];
+    let shapes: Map<string, Element> | undefined;
+    if (ref && this.pkg.has(ref.part)) {
+      const root = rootElement(parseXml(this.pkg.readText(ref.part)));
+      try {
+        applyRepeat(shapesById(root), row.repeat, row.count, this.pres.slideWidth, row.texts);
+        shapes = shapesById(root);
+      } catch {
+        // A row that points at shapes the slide does not have is reported by `checkManifest`.
+        shapes = undefined;
+      }
+    }
+    this.rows.set(rowKey, shapes);
+    return shapes;
+  }
+
   private slide(number: number): SlidePart | undefined {
     if (this.slides.has(number)) return this.slides.get(number);
     const ref = this.pres.slides[number - 1];
     let part: SlidePart | undefined;
     if (ref && this.pkg.has(ref.part)) {
       const root = rootElement(parseXml(this.pkg.readText(ref.part)));
-      const shapes = new Map<string, Element>();
-      for (const props of descendants(root, NS.p, 'cNvPr')) {
-        const shape = props.parentNode?.parentNode;
-        const id = props.getAttribute('id');
-        if (id && shape && shape.nodeType === 1) shapes.set(id, shape as Element);
-      }
-      part = { root, shapes };
+      part = { root, shapes: shapesById(root) };
       const layoutRel = readRels(this.pkg, ref.part).find((rel) => isRelType(rel, 'slideLayout'));
       const layout = layoutRel ? this.layout(resolveTarget(ref.part, layoutRel.target)) : undefined;
       if (layout) {
@@ -189,9 +243,13 @@ export class TextStyles {
     return entry;
   }
 
-  private read(slideNumber: number, shapeId: string, styleRun: 'first' | 'last', box: { width: number; height: number } | undefined): TextFrame | undefined {
+  /**
+   * `laidOut` is the shape on a copy of the slide whose row was laid out again: its size and the
+   * groups around it are read from there, and everything else is the same as on the template.
+   */
+  private read(slideNumber: number, shapeId: string, styleRun: 'first' | 'last', box: { width: number; height: number } | undefined, laidOut?: Element): TextFrame | undefined {
     const slide = this.slide(slideNumber);
-    const shape = slide?.shapes.get(shapeId);
+    const shape = laidOut ?? slide?.shapes.get(shapeId);
     if (!slide || !shape || shape.localName !== 'sp') return undefined;
     const body = childElement(shape, NS.p, 'txBody');
     if (!body) return undefined;

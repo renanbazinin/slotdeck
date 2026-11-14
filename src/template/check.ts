@@ -2,7 +2,8 @@ import type { Template } from '../render/render.ts';
 import { measurerFor } from '../text/measure.ts';
 import { inspectTemplate } from './inspect.ts';
 import type { ShapeInfo, TemplateInfo } from './inspect.ts';
-import { textBudget } from './manifest.ts';
+import { effectiveSlots, textBudget, widenFactor } from './manifest.ts';
+import type { SlotDef } from './manifest.ts';
 import { filler } from './sample.ts';
 
 export interface ManifestIssue {
@@ -46,6 +47,24 @@ export function checkManifest(template: Template, inspected?: TemplateInfo): Man
     const names = new Set<string>();
     const usedShapes = new Map<string, string>();
 
+    // With fonts, a budget is tried out: the slot's own sample words, as many as the budget allows.
+    // `items` tries the budget a slot of a row has when the slide holds that many items.
+    const tryBudget = (slot: SlotDef, shape: ShapeInfo, items?: number) => {
+      if (!measure || slot.kind !== 'text' || shape.kind !== 'text' || slot.maxChars === undefined || slot.deckField || slot.empty === 'drop' || slot.empty === 'keep') return;
+      const scale = manifest.textScale ?? 1;
+      const budget = textBudget(slot, scale);
+      const words = (shape.paragraphs ?? []).join(' ').split(/\s+/).filter(Boolean);
+      const paragraphs = (slot.maxParagraphs ?? 1) > 1 ? (budget.maxParagraphs ?? 2) : 1;
+      const each = Math.max(1, Math.floor((budget.maxChars ?? 1) / paragraphs));
+      const text = Array.from({ length: paragraphs }, (_, index) => filler(words, each, index));
+      const fit = measure.fit(pattern, slot, text, items === undefined ? { textScale: scale } : { textScale: scale, items });
+      if (fit && !fit.fits) {
+        const what = fit.overflow > 0 ? `takes ${fit.lines} lines where ${fit.capacity} fit` : `is ${Math.round((fit.widthRatio - 1) * 100)}% wider than the box`;
+        const when = items === undefined ? '' : ` on a slide with ${items} of its ${pattern.repeat?.shapes.length ?? items} items`;
+        report('warning', `has a budget of ${budget.maxChars} characters${when}, but sample text of that length ${what}; about ${fit.fitsChars} characters fit`, slot.name);
+      }
+    };
+
     for (const slot of pattern.slots) {
       if (names.has(slot.name)) report('error', 'another slot of the pattern has the same name', slot.name);
       names.add(slot.name);
@@ -72,19 +91,7 @@ export function checkManifest(template: Template, inspected?: TemplateInfo): Man
       if (slot.kind === 'text' && slot.maxChars === undefined && !slot.deckField && !dropped) {
         report('warning', 'has no character budget, so nothing stops text that does not fit', slot.name);
       }
-      // With fonts, a budget is tried out: the slot's own sample words, as many as the budget allows.
-      if (measure && slot.kind === 'text' && shape.kind === 'text' && slot.maxChars !== undefined && !slot.deckField && slot.empty !== 'drop' && slot.empty !== 'keep') {
-        const scale = manifest.textScale ?? 1;
-        const budget = textBudget(slot, scale);
-        const words = (shape.paragraphs ?? []).join(' ').split(/\s+/).filter(Boolean);
-        const count = (slot.maxParagraphs ?? 1) > 1 ? (budget.maxParagraphs ?? 2) : 1;
-        const each = Math.max(1, Math.floor((budget.maxChars ?? 1) / count));
-        const fit = measure.fit(pattern, slot, Array.from({ length: count }, (_, index) => filler(words, each, index)), { textScale: scale });
-        if (fit && !fit.fits) {
-          const what = fit.overflow > 0 ? `takes ${fit.lines} lines where ${fit.capacity} fit` : `is ${Math.round((fit.widthRatio - 1) * 100)}% wider than the box`;
-          report('warning', `has a budget of ${budget.maxChars} characters, but sample text of that length ${what}; about ${fit.fitsChars} characters fit`, slot.name);
-        }
-      }
+      tryBudget(slot, shape);
     }
 
     const repeat = pattern.repeat;
@@ -110,6 +117,19 @@ export function checkManifest(template: Template, inspected?: TemplateInfo): Man
       if (min < 1 || min > max) report('error', `repeat range ${min} to ${max} is not valid`);
       if (repeat.columns !== undefined && max > drawn) report('warning', 'a grid cannot hold more items than it draws');
       if (repeat.widen !== undefined && !(typeof repeat.widen === 'number' && repeat.widen >= 1)) report('error', 'repeat.widen is a factor of 1 or more, such as 1.5');
+      // A row that widens gives its texts a larger budget when it holds fewer items. With fonts,
+      // that budget is tried out in the wider box, on the first item: the items of a row are alike.
+      if (measure && min >= 1 && min <= max) {
+        for (let count = min; count < drawn; count++) {
+          if (!(widenFactor(repeat, count) > 1)) continue;
+          const slots = effectiveSlots(pattern, count);
+          for (const name of repeat.slots) {
+            const slot = slots.find((entry) => entry.name === name.replace('{n}', '1'));
+            const shape = slot && shapes.get(slot.shapeId);
+            if (slot && shape) tryBudget(slot, shape, count);
+          }
+        }
+      }
     }
   }
   if (measure) {
