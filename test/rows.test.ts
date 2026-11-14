@@ -8,7 +8,7 @@ import { NS, childElement, descendants, parseXml, path, rootElement } from '../s
 import type { Element } from '../src/pptx/xml.ts';
 import type { ShapeInfo, SlideInfo } from '../src/template/inspect.ts';
 import type { RepeatDef } from '../src/template/manifest.ts';
-import { rowCapacity, rowComfort } from '../src/template/rows.ts';
+import { movedRowSlots, rowCapacity, rowComfort } from '../src/template/rows.ts';
 import { buildFixturePptx, card, cardsManifest, fixtureManifest, fixtureWithSlide } from './fixture.ts';
 
 /** A slide with a title and one text box per item, given as left edge and width in fractions of the slide. */
@@ -62,6 +62,9 @@ test('a row whose items differ in width, or sit closer than one is wide, takes w
   const touching = slideOf([[0.3, 0.1], [0.4, 0.1], [0.5, 0.1]]);
   assert.deepEqual(rowComfort(touching, rowOf(3)), { most: 3 });
   assert.ok(rowCapacity(touching, rowOf(3)) > 3);
+  // Positions are read to four decimals, so cards that touch can measure a step one ten-thousandth
+  // short of their width. They are still cards that touch, not cards that overlap.
+  assert.ok(rowCapacity(slideOf([[0.1278, 0.0917], [0.2194, 0.0917], [0.3111, 0.0917]]), rowOf(3)) > 3);
   // A last item a little wider than the others: the step from the first to the second leaves
   // only a quarter of the drawn space after a copy of it, so the promise of a third cannot be kept.
   const slightly = slideOf([[0.2187, 0.1094], [0.35, 0.1094], [0.4812, 0.1258]]);
@@ -215,6 +218,28 @@ test('setRepeat counts the fit when it is asked about the number or the span, an
   assert.deepEqual(four.rejected, []);
   const frames = cardFrames(renderDeck(loadTemplate(cardsAt(2000000, 3000000, 4000000), four.manifest), deckOf(4)).pptx);
   assert.deepEqual(frames.slice(1).map((frame, index) => frame.x - ((frames[index] as { x: number; w: number }).x + 1000000)), [0, 0, 0]);
+});
+
+test('taking a span away takes away the room it gave', () => {
+  // Six cards fit only with the row spread from 3% to 97%.
+  const template = loadTemplate(pptx, plain);
+  const wide = changeManifest(template, [{ op: 'setRepeat', pattern: 'cards', max: 6, span: { left: 0.03, right: 0.97 } }]);
+  assert.deepEqual(wide.rejected, []);
+  const back = changeManifest(loadTemplate(pptx, wide.manifest), [{ op: 'setRepeat', pattern: 'cards', span: null }]);
+  assert.deepEqual(back.rejected, [], 'a span can always be taken away');
+  // Four of these cards fit in the width the three are drawn in, when they sit close.
+  assert.match(back.applied[0]?.message ?? '', /takes 2 to 4\. Without the span no more than 4 fit side by side\./);
+  assert.deepEqual(back.manifest.patterns[0]?.repeat, { item: 'card', slots: ['card{n}Text'], shapes: [['10'], ['20'], ['30']], min: 2, max: 4 });
+  const frames = cardFrames(renderDeck(loadTemplate(pptx, back.manifest), deckOf(4)).pptx);
+  assert.ok(frames.slice(1).every((frame, index) => frame.x >= (frames[index] as { x: number; w: number }).x + 1000000), `four cards at ${frames.map((frame) => frame.x).join(', ')} do not overlap`);
+  // Asked to keep six without the span, it says no.
+  assert.match(changeManifest(loadTemplate(pptx, wide.manifest), [{ op: 'setRepeat', pattern: 'cards', span: null, max: 6 }]).rejected[0]?.reason ?? '', /6 cards do not fit side by side/);
+});
+
+test('a row whose items are shown where the slide does not draw them takes no more and no wider', () => {
+  const slots = [1, 2, 3].map((n) => ({ name: `card${n}Text`, kind: 'text' as const, shapeId: String(9 + n), ...(n === 3 ? { box: { x: 0.3, y: 0.4, w: 0.5, h: 0.3 } } : {}) }));
+  assert.deepEqual(movedRowSlots(slots, rowOf(3)), ['card3Text']);
+  assert.deepEqual(movedRowSlots(slots.slice(0, 2), rowOf(2)), []);
 });
 
 test('a manifest with a span on a row inside a group can still be changed, and the span taken away', () => {

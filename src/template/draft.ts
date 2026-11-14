@@ -93,6 +93,7 @@ export async function draftManifest(pptx: Uint8Array | PptxPackage, options: Dra
   const info = inspectTemplate(pkg);
   const total = info.slides.length;
   if (options.rows !== undefined && options.rows !== 'fit' && options.rows !== 'drawn') throw new Error(`rows is "fit" or "drawn", not ${JSON.stringify(options.rows)}`);
+  for (const variant of options.variants ?? []) if (variant !== 'mirror' && variant !== 'text-only') throw new Error(`a draft adds the variants "mirror" and "text-only", not ${JSON.stringify(variant)}`);
   if (options.widen !== undefined && !(typeof options.widen === 'number' && options.widen > 1 && options.widen <= 4)) throw new Error('widen is a factor above 1 and at most 4, such as 2 to let an item become twice as wide');
   // `room` is a ceiling on the answer in tokens: the answers are short, and a ceiling ends a model that runs away.
   const ask = async (prompt: string, schema: JsonSchema, room: number, slide?: number) => {
@@ -289,7 +290,7 @@ export async function draftManifest(pptx: Uint8Array | PptxPackage, options: Dra
         settledPictures.push(`${quoted(photos)} ${one ? 'was' : 'were'} labelled photo, but ${one ? 'its picture is' : 'their pictures are'} no more than 1.1 inch on a side: ${one ? 'an icon slot' : 'icon slots'}.`);
       } else if (icons.length > 0) {
         for (const slot of icons) slot.imageKind = 'photo';
-        settledPictures.push(`${quoted(icons)} ${icons.length === 1 ? 'was' : 'were'} labelled icon, but another picture of the same row does not measure as a pictogram: all of them are photo slots, so that every item is filled alike.`);
+        settledPictures.push(`${quoted(icons)} ${icons.length === 1 ? 'was' : 'were'} labelled icon, but not every picture of the row measures as a pictogram: all of them are photo slots, so that every item is filled alike.`);
       }
     }
     if (settledPictures.length > 0) slideNotes.set(number, `Slide ${number}: ${settledPictures.join(' ')}`);

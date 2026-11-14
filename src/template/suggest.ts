@@ -12,7 +12,8 @@ import type { Box, SlideInfo, TemplateInfo } from './inspect.ts';
 import { widenFactor } from './manifest.ts';
 import type { PatternDef, SlotDef, TemplateManifest } from './manifest.ts';
 import { isPictogram } from './measure.ts';
-import { detectRepeat, rowCapacity, rowComfort } from './rows.ts';
+import { detectRepeat, droppedShapes, rowCapacity, rowComfort } from './rows.ts';
+import { rowRoom } from './measure.ts';
 
 export const SUGGESTION_KINDS = ['icon', 'row', 'row-max', 'row-widen', 'variant'] as const;
 export type SuggestionKind = (typeof SUGGESTION_KINDS)[number];
@@ -63,8 +64,9 @@ const areaOf = (slot: SlotDef | undefined, slide: SlideInfo, shapeId: string): B
  */
 export function suggestChanges(template: Template, options: SuggestOptions = {}): ManifestSuggestion[] {
   const kinds = new Set<SuggestionKind>(options.kinds ?? SUGGESTION_KINDS);
+  for (const kind of kinds) if (!SUGGESTION_KINDS.includes(kind)) throw new Error(`"${String(kind)}" is not a kind of suggestion; the kinds are ${SUGGESTION_KINDS.join(', ')}`);
   const factor = options.widen ?? 2;
-  if (!(typeof factor === 'number' && factor > 1 && factor <= 4)) throw new Error('widen is a factor above 1 and at most 4, such as 2 to let an item become twice as wide');
+  if (kinds.has('row-widen') && !(typeof factor === 'number' && factor > 1 && factor <= 4)) throw new Error('widen is a factor above 1 and at most 4, such as 2 to let an item become twice as wide');
   const info = inspectTemplate(template.pkg);
   const manifest = template.manifest;
   const context: VariantContext = { pkg: template.pkg, info, manifest };
@@ -83,6 +85,7 @@ export function suggestChanges(template: Template, options: SuggestOptions = {})
     if (!slide) continue;
     const add = (suggestion: Omit<ManifestSuggestion, 'pattern' | 'slide'>) => found.push({ ...suggestion, pattern: pattern.id, slide: pattern.sourceSlide });
     const repeat = pattern.repeat;
+    const removed = droppedShapes(pattern.slots);
     // The row a pattern has, or the one its slot names describe and a `row` suggestion would make.
     const row = repeat ?? detectRepeat(pattern.slots.filter((slot) => !(slot.kind === 'text' && slot.deckField)), slide);
 
@@ -111,7 +114,7 @@ export function suggestChanges(template: Template, options: SuggestOptions = {})
         const count = detected.shapes.length;
         const ranges = (detected.max ?? count) > (detected.min ?? count);
         // A row that must hold exactly what it draws, with no room for more, changes nothing for a deck.
-        if (ranges || rowComfort(slide, detected).most > count) {
+        if (ranges || rowComfort(slide, detected, removed).most > count) {
           const kind = detected.columns ? 'grid' : 'row';
           add({
             kind: 'row',
@@ -128,8 +131,8 @@ export function suggestChanges(template: Template, options: SuggestOptions = {})
       const fewest = repeat.min ?? drawn;
       // A grid takes what it draws; one that takes fewer was set so by a person.
       if (kinds.has('row-max') && repeat.columns === undefined) {
-        const comfort = rowComfort(slide, repeat);
-        const physical = rowCapacity(slide, repeat);
+        const comfort = rowComfort(slide, repeat, removed);
+        const physical = rowCapacity(slide, repeat, removed);
         if (comfort.most > most) {
           // The number holds with the row spread into the room beside it, so the span goes with it.
           const spread = comfort.span ? ` For that the row spreads from ${pct(comfort.span.left)} to ${pct(comfort.span.right)} of the slide's width.` : '';
@@ -144,7 +147,9 @@ export function suggestChanges(template: Template, options: SuggestOptions = {})
         // Offered only when it would change a slide: some number of items the row takes leaves its fullest line short.
         let widens = false;
         for (let count = fewest; count <= most && !widens; count++) widens = widenFactor({ ...repeat, widen: factor }, count) > 1;
-        if (widens) {
+        // Not for a row with an arrow or a line among its items: wider items would be drawn across it.
+        const pinned = repeat.columns === undefined && drawn > 1 && rowRoom(slide, repeat.shapes, removed).pinned;
+        if (widens && !pinned) {
           const line = repeat.columns ?? drawn;
           add({
             kind: 'row-widen',
@@ -214,19 +219,20 @@ function measuresAsPictogram(slot: ImageSlot, slide: SlideInfo, info: TemplateIn
 
 /**
  * What a pattern does to its slide, compared with the pattern it would be a variant of: which
- * shapes it takes away or brings back, what kind of thing fills its pictures, and on which side
- * it has what the mirror image moves. Names, budgets, texts and exact boxes are left out, because
+ * shapes it takes away, what it fills that the source does not, and on which side it has what the
+ * mirror image moves. Names, budgets, texts and exact boxes are left out, because
  * ordinary tuning changes them; a variant that was given its own id and then tuned is still the
  * same variant. A pattern with a native chart where the source has a picture is another layout,
  * and so are its variants.
  */
 function layoutOf(pattern: PatternDef, source: PatternDef, mirror: PatternDef | undefined, slide: SlideInfo): string {
-  const dropped = (of: PatternDef) => new Set(of.slots.filter((slot) => slot.empty === 'drop').map((slot) => slot.shapeId));
-  const droppedBySource = dropped(source);
-  const droppedHere = dropped(pattern);
-  const removed = [...droppedHere].filter((id) => !droppedBySource.has(id)).sort();
-  const restored = [...droppedBySource].filter((id) => !droppedHere.has(id)).sort();
-  const fills = pattern.slots.filter((slot) => slot.kind !== 'text' && slot.empty !== 'drop' && slot.empty !== 'keep').map((slot) => `${slot.shapeId}:${slot.kind}`).sort();
+  const droppedBySource = droppedShapes(source.slots);
+  const removed = [...droppedShapes(pattern.slots)].filter((id) => !droppedBySource.has(id)).sort();
+  // What this pattern fills that the source does not fill with the same kind of thing: a picture
+  // the source takes away, a native chart where the source has a picture.
+  const filled = (of: PatternDef) => new Map(of.slots.filter((slot) => slot.kind !== 'text' && slot.empty !== 'drop' && slot.empty !== 'keep').map((slot) => [slot.shapeId, slot.kind]));
+  const filledBySource = filled(source);
+  const fills = [...filled(pattern)].filter(([id, kind]) => filledBySource.get(id) !== kind).map(([id, kind]) => `${id}:${kind}`).sort();
   const sides: string[] = [];
   for (const moved of mirror?.slots ?? []) {
     // The side is read from pictures and from what is moved as it is (a group, an ornament). A
@@ -240,5 +246,5 @@ function layoutOf(pattern: PatternDef, source: PatternDef, mirror: PatternDef | 
     const at = areaOf(own, slide, moved.shapeId);
     if (at) sides.push(`${moved.shapeId}:${Math.abs(middle(at) - middle(to)) < Math.abs(middle(at) - middle(from)) ? 'mirrored' : 'as drawn'}`);
   }
-  return JSON.stringify([removed, restored, fills, [...new Set(sides)].sort()]);
+  return JSON.stringify([removed, fills, [...new Set(sides)].sort()]);
 }

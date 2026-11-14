@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { SUGGESTION_KINDS, changeManifest, checkManifest, draftManifest, loadTemplate, renderDeck, sampleDeck, suggestChanges, validateDeck } from '../src/index.ts';
 import type { JsonRequest, LlmProvider, ManifestSuggestion, PatternDef, Template, TemplateManifest } from '../src/index.ts';
-import { buildFixturePptx, cardsManifest, fixtureManifest, fixtureWithSlide, gridManifest } from './fixture.ts';
+import { buildFixturePptx, card, cardsManifest, fixtureManifest, fixtureWithSlide, gridManifest } from './fixture.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const pptx = buildFixturePptx();
@@ -130,6 +130,10 @@ test('a draft can keep rows as drawn, or let their items widen', async () => {
   }
   // A value of `rows` that is neither of the two is a mistake to say, not a draft of the other kind.
   await assert.rejects(draftManifest(pptx, { llm: labelling().llm, slides: [4], rows: 'Fit' as unknown as 'fit' }), /rows is "fit" or "drawn", not "Fit"/);
+  await assert.rejects(draftManifest(pptx, { llm: labelling().llm, slides: [4], variants: ['without' as unknown as 'mirror'] }), /a draft adds the variants "mirror" and "text-only", not "without"/);
+  // The same for a kind of suggestion that does not exist. A factor is looked at only when widening is asked about.
+  assert.throws(() => suggestChanges(loadTemplate(pptx, cardsManifest), { kinds: ['rows' as unknown as 'row'] }), /"rows" is not a kind of suggestion; the kinds are icon, row, row-max, row-widen, variant/);
+  assert.doesNotThrow(() => suggestChanges(loadTemplate(pptx, cardsManifest), { kinds: ['row-max'], widen: 9 }));
 });
 
 test('suggestChanges lists what the slides allow that a manifest does not use, and each applies as it stands', () => {
@@ -228,6 +232,60 @@ test('suggestChanges offers each variant once, and none of a variant', () => {
   const again = kindsOf(suggestChanges(loadTemplate(demoPptx, named.manifest), { kinds: ['variant'] }));
   assert.ok(!again.includes('variant text-and-photo mirror'), again.join(', '));
   assert.ok(again.includes('variant text-and-photo without'), 'what it does not have is still offered');
+
+  // Nor is a variant offered again because the pattern it came from was given a decoration since.
+  const decorated = changeManifest(loadTemplate(demoPptx, demoManifest), [{ op: 'addSlot', pattern: 'text-and-photo', shape: '3', role: 'decoration' }]);
+  assert.deepEqual(decorated.rejected, []);
+  const after = kindsOf(suggestChanges(loadTemplate(demoPptx, decorated.manifest), { kinds: ['variant'] }));
+  assert.ok(!after.includes('variant text-and-photo text-only') && !after.includes('variant text-and-photo mirror'), after.join(', '));
+});
+
+test('a row with arrows among its items is drafted to hold what it draws', async () => {
+  // An arrow in each gap between the three cards. With two cards, or four, they would be drawn across the arrows.
+  const arrow = (id: number, x: number) => `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="Arrow"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="${x}" y="2600000"/><a:ext cx="600000" cy="200000"/></a:xfrm><a:prstGeom prst="rightArrow"><a:avLst/></a:prstGeom></p:spPr></p:sp>`;
+  const steps = fixtureWithSlide(4, (xml) => xml.replace('</p:spTree>', `${arrow(91, 3200000)}${arrow(92, 5200000)}</p:spTree>`));
+  const { manifest, notes, suggestions } = await draftManifest(steps, { llm: labelling(['icon', 'icon', 'icon']).llm, slides: [4] });
+  assert.deepEqual([patternOf(manifest, 'card-row').repeat?.min, patternOf(manifest, 'card-row').repeat?.max], [3, 3]);
+  assert.deepEqual(notes, []);
+  assert.deepEqual(kindsOf(suggestions), [], 'no more items, and no widening across the arrows');
+
+  // A manifest that takes the arrows off every slide has nothing in the way: the row is free again.
+  const without: TemplateManifest = {
+    ...manifest,
+    patterns: manifest.patterns.map((pattern) => ({
+      ...pattern,
+      slots: [...pattern.slots, { name: 'arrow1', kind: 'text', shapeId: '91', empty: 'drop' }, { name: 'arrow2', kind: 'text', shapeId: '92', empty: 'drop' }],
+      repeat: { ...(pattern.repeat as NonNullable<typeof pattern.repeat>), min: 2 },
+    })),
+  } as TemplateManifest;
+  assert.deepEqual(kindsOf(suggestChanges(loadTemplate(steps, without), { kinds: ['row-max', 'row-widen'] })), ['row-max card-row', 'row-widen card-row']);
+});
+
+test('a text-only variant never gives one item of a row a place of its own', () => {
+  // Three cards on the left and a photograph on the right. The cards are a row, which is laid out as one.
+  const photo = `<p:pic><p:nvPicPr><p:cNvPr id="60" name="Photo"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rId2"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="5700000" y="1300000"/><a:ext cx="3000000" cy="3000000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`;
+  const beside = fixtureWithSlide(4, (xml) =>
+    xml.replace(card(10, 6000000), card(10, 3300000)).replace(card(20, 4000000), card(20, 1900000)).replace(card(30, 2000000), card(30, 500000)).replace('</p:spTree>', `${photo}</p:spTree>`),
+  );
+  const cards = patternOf(cardsManifest, 'cards');
+  const withPhoto: TemplateManifest = {
+    ...cardsManifest,
+    patterns: [
+      {
+        ...cards,
+        slots: [...cards.slots.filter((slot) => slot.kind === 'text'), { name: 'photo', kind: 'image', imageKind: 'photo', shapeId: '60' }],
+        repeat: { item: 'card', slots: ['card{n}Text'], shapes: [['10'], ['20'], ['30']], min: 2, max: 3 },
+      },
+    ],
+  };
+  const template = loadTemplate(beside, withPhoto);
+  assert.deepEqual(errorsOf(template), []);
+  const made = changeManifest(template, [{ op: 'derivePattern', pattern: 'cards', variant: 'text-only' }]);
+  // Either the slide has other text to widen, or the variant is refused: in neither case does a card get a box.
+  for (const pattern of made.manifest.patterns) {
+    for (const slot of pattern.slots) if (/^card\d/.test(slot.name)) assert.equal('box' in slot ? slot.box : undefined, undefined, `${pattern.id}.${slot.name}`);
+  }
+  if (made.rejected.length > 0) assert.match(made.rejected[0]?.reason ?? '', /the text beside the picture is the row of cards, which the software lays out itself and cannot widen|no text beside the picture has room to widen/);
 });
 
 test('an icon suggestion is one change for a row, true of every item, and gone once taken', () => {
@@ -299,7 +357,7 @@ test('a draft settles photo or icon for a row as a whole, and keeps the row', as
   // The model follows the marker shape by shape: icon, icon, photo. Items of a row are filled alike.
   const evened = await draftManifest(cropped, { llm: labelling(['icon', 'icon', 'photo']).llm, slides: [4] });
   assert.deepEqual(pictures(evened.manifest), ['photo', 'photo', 'photo']);
-  assert.match(evened.notes[0] ?? '', /^Slide 4: "card1Photo", "card2Photo" were labelled icon, but another picture of the same row does not measure as a pictogram: all of them are photo slots/);
+  assert.match(evened.notes[0] ?? '', /^Slide 4: "card1Photo", "card2Photo" were labelled icon, but not every picture of the row measures as a pictogram: all of them are photo slots/);
   assert.equal(patternOf(evened.manifest, 'card-row').repeat?.slots.length, 2);
 
   // On the plain fixture, where all three are pictograms, a mixed answer becomes icons.

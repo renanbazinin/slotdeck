@@ -19,9 +19,10 @@ is already in use can be repaired without a model and without renaming anything.
   `SUGGESTION_KINDS` lists the kinds. See "suggestChanges" in [template-studio.md](template-studio.md).
 - **`rows` on `draftManifest`**: `'fit'`, the default, lets a drafted row take as many items as fit side by
   side at their drawn width while the space between them stays at a third of the drawn space or more, and sets
-  the row's `span` for it. `'drawn'` keeps rows at what the template draws.
+  the row's `span` for it. `'drawn'` keeps rows at what the template draws. Any other value is refused.
 - **`widen` on `draftManifest`** gives drafted rows and grids a `widen` factor, wherever some number of items
-  they take leaves a line short of what the template draws. Off by default.
+  they take leaves a line short of what the template draws. Off by default. A value that is not a number above
+  1 and at most 4 is refused.
 - **`notes` and `suggestions` on the result of `draftManifest`**: what the code settled by measurement, in
   sentences, and what the slides allow beyond the draft.
 - **A ceiling on each answer of a draft.** Every request of `draftManifest` now carries `maxOutputTokens`: for
@@ -38,12 +39,15 @@ is already in use can be repaired without a model and without renaming anything.
   deck that wanted five went to a table or a grid. It now takes what the slide has room for. Some rows still
   take what they draw: a grid; a row whose items touch, or differ in width by more than its spacing can absorb;
   and a row with a line, an arrow or a highlight among its items. Manifests that exist are not touched.
+- **A row with something among its items holds exactly what it draws.** Where an arrow, a line or a highlight
+  lies among the items of a row, fewer items would be laid out across it as well. Such a row is now drafted,
+  and found by `setRepeat`, with its fewest and most both at the number drawn; 0.2.0 gave it two to that
+  number. A rule under the whole row, or a panel behind all of it, is not among the items.
 - **A small picture is an icon.** A picture with no side over 1.1 inch that is not a JPEG and not cropped into
   a frame is marked `small: a pictogram` for the drafting model, and becomes an icon slot even when the model
   answers `photo`. For a row this is decided for all its items together, and the slot keeps the name the model
   gave it. A model that does not see the slide was observed to call the pictograms of a row of cards
   photographs; the layout then asked for a photograph per card and was not offered when pictures were off.
-  An unknown value of `rows`, or a `widen` that is not a number above 1 and at most 4, is refused.
 - **A draft names layouts by their structure.** The drafting model is told to name and describe a layout by
   what it holds, never by the subject of the filler and without a number of items, and to name repeated items
   `card`, `column`, `step` or `stat`. A layout described as "four team member profiles" was passed over by the
@@ -66,8 +70,13 @@ is already in use can be repaired without a model and without renaming anything.
   in width so much that copies of the last, set out by the step from the first to the second, would overlap. A
   `span` is refused for a row whose items sit inside a group, where the renderer never used one, and such a
   span already in a manifest is no longer counted. The fit is counted when a change is about the number of
-  items or the span, and a refusal never names fewer than the row draws. With a `span`, the message says how
-  far the row may spread.
+  items or the span, and a refusal names fewer than the row draws only for a span narrower than the row. With
+  a `span`, the message says how far the row may spread; `span: null` on a row that only fitted its most with
+  the span lowers the most to what fits, and says so. A row whose item slots carry a `box` is laid out from
+  where the slide draws them, so it is not found as a row and takes no more items or wider ones.
+- **A text-only variant leaves a row alone.** `derivePattern` with `text-only` widened each text beside the
+  picture by itself, also one item of a row, whose copies then lay on top of each other. It now widens only
+  text outside the row, and is refused where the row is all the text there is.
 
 ### Fixed
 
@@ -129,8 +138,9 @@ over more easily for other subjects. Give it a description of its structure with
   `Patterns, for new slides and for a slide that changes its layout`.
 - **Code that matches refusals**: `takes 2 to 2 cards, not 3` is now `takes exactly 2 cards, not 3`.
 - **`setRepeat` may now refuse** a `span` on a row inside a group, more items than drawn on a row whose items
-  differ much in width, and more items than fit inside a panel the row is drawn on. Show `rejected[i].reason`
-  as it is; `span: null` clears a span that no longer applies.
+  differ much in width, more items than fit inside a panel the row is drawn on, and more or wider items for a
+  row whose slots carry a `box`. Show `rejected[i].reason` as it is; `span: null` clears a span that no longer
+  applies. `derivePattern` with `text-only` may now be refused for a layout whose text is a row.
 - **Your own `LlmProvider`**: draft requests now carry `maxOutputTokens`. Pass it on as the output limit, with
   room for reasoning on top if your model counts reasoning against it, as the Gemini adapter does.
 

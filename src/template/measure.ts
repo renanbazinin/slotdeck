@@ -227,9 +227,10 @@ export interface RowRoom {
 /**
  * How far a row of items may spread on its slide: from the row as drawn outwards, until the
  * slide's margin, another shape that sits beside the row, or the edge of a shape the row is drawn
- * on.
+ * on. `removed` names shapes the pattern takes off every slide (slots with `empty: 'drop'`), which
+ * limit nothing.
  */
-export function rowRoom(slide: SlideInfo, itemShapes: string[][]): RowRoom {
+export function rowRoom(slide: SlideInfo, itemShapes: string[][], removed: ReadonlySet<string> = new Set()): RowRoom {
   const byId = new Map(slide.shapes.map((shape) => [shape.id, shape]));
   const inRow = new Set<string>();
   const mark = (id: string) => {
@@ -255,7 +256,8 @@ export function rowRoom(slide: SlideInfo, itemShapes: string[][]): RowRoom {
   let pinned = false;
   const areaEnd = area.x + area.w;
   for (const shape of slide.shapes) {
-    if (inRow.has(shape.id) || isFramePlaceholder(shape) || shape.kind === 'group') continue;
+    // A shape the pattern takes off every slide is not there to be drawn across or to stop the row.
+    if (inRow.has(shape.id) || removed.has(shape.id) || isFramePlaceholder(shape) || shape.kind === 'group') continue;
     const end = shape.box.x + shape.box.w;
     // The height the shape shares with the row. A line has no height: it counts when it lies
     // inside the row's height, not when it runs along the row's top or bottom edge.

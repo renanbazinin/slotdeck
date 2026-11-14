@@ -306,7 +306,9 @@ function textOnly(pattern: PatternDef, units: Unit[], context: VariantContext): 
   const far = side === 'left' ? (rightOf(area) >= 1 - EPS ? 1 - found.blockLeft : rightOf(area)) : area.x <= EPS ? 1 - found.blockRight : area.x;
   let columnLeft = side === 'left' ? found.blockLeft : far;
   let columnRight = side === 'left' ? far : found.blockRight;
-  const texts = block.filter((unit): unit is Unit & { own: TextSlotDef } => unit.own?.kind === 'text' && unit.own.empty !== 'keep' && unit.own.empty !== 'drop');
+  // The items of a row are laid out by the software as one row. Widening one of them would give
+  // it a place of its own, and items beyond the drawn ones are copies of the last.
+  const texts = block.filter((unit): unit is Unit & { own: TextSlotDef } => !unit.inRow && unit.own?.kind === 'text' && unit.own.empty !== 'keep' && unit.own.empty !== 'drop');
   // Lines that run the width of a slide are hard to read, so the column is no wider than a
   // comfortable line of the slot with the most text. It keeps the edge where reading starts,
   // which lines up with the other slides, and gives up room at the far edge.
@@ -338,6 +340,7 @@ function textOnly(pattern: PatternDef, units: Unit[], context: VariantContext): 
     widened.push(`${slot.name}${slot.maxChars !== undefined ? ` (${slot.maxChars} characters)` : ''}`);
   }
   if (widened.length === 0) {
+    if (block.some((unit) => unit.inRow && unit.own?.kind === 'text')) refuse(`the text beside the picture is the row of ${pattern.repeat?.item ?? 'item'}s, which the software lays out itself and cannot widen`);
     const inGroup = block.some((unit) => unit.inner.some((slot) => slot.kind === 'text'));
     refuse(inGroup ? 'the text beside the picture is inside a group, and a shape inside a group cannot take a box' : 'no text beside the picture has room to widen');
   }

@@ -118,7 +118,10 @@ Some rows take what they draw, whatever the room:
   the last, set out by the step from the first item to the second; where that step leaves less than a third of
   the drawn space after the widest item, the promise cannot be kept.
 - A row with a line, an arrow or a highlight among its items. It stays where it is, and further items would be
-  drawn across it.
+  drawn across it. So would fewer: such a row is drafted to hold exactly the number it draws, and is offered no
+  widening. A rule that runs the whole length of the row, or a panel behind all of it, is not among the items:
+  it is something the row is drawn on, and the row may take more inside it. A shape the pattern takes off every
+  slide (a slot with `empty: 'drop'`) is in nobody's way.
 
 ```ts
 // notes
@@ -287,7 +290,7 @@ worked out from the shapes of the slide. `VARIANTS` lists the variant names.
 | Variant | What it makes | Default id |
 | --- | --- | --- |
 | `mirror` | The picture and what sits beside it change sides. | `<pattern>-mirrored` |
-| `text-only` | The picture is left out, and the text beside it widens over the room it leaves. | `<pattern>-text-only` |
+| `text-only` | The picture is left out, and the text beside it widens over the room it leaves. The items of a row are never widened one by one; where the only text beside the picture is a row, the variant is refused. | `<pattern>-text-only` |
 | `without` | The optional text named in `slot` is left out, and what sits under it moves up. | `<pattern>-no-<slot>` |
 
 - `slot` is needed for `without` only, and must name an optional text slot (`"empty": "remove"`).
@@ -385,7 +388,12 @@ about the number of items or the span; a change to something else, such as `wide
 
 A `span` is refused when the drawn row does not fit in it, and for a row whose items sit inside a group: the
 renderer lays out between the limits of a span only a row whose items are on the slide. `span: null` takes a
-span away.
+span away, and with it the room it gave: a row that then takes more than fit has its most lowered to what
+fits, and the message says so.
+
+A row is laid out from where the slide draws its items. Where a slot of the items carries a `box`, and so is
+shown in another place, the items are not made a row, and a row that exists takes no more items and no wider
+ones; `setSlot` with `box: null` takes the box away.
 
 `widen` lets the items grow wider when a line holds fewer of them than the template draws, so that two or
 three cards fill a row drawn for four. It is the most an item may grow, as a factor on its drawn width,
@@ -564,7 +572,7 @@ apply as they stand.
 | `icon` | Photo slots whose pictures measure as pictograms (no side over 1.1 inch, not a JPEG, not cropped into a frame). For a row, and for items a `row` suggestion would make a row, only when every item's picture does. Slots that nothing fills (`empty: 'keep'` or `'drop'`) are left alone. | `setSlot` with `imageKind: 'icon'`. One change covers a row; where the row is not made yet, one for each slot. |
 | `row` | Slots that name several items alike (`card1Text`, `card2Text`) in a pattern with no row, so every slide draws them all. | `setRepeat`, which finds the row. |
 | `row-max` | A row with room for more items than it takes, at a third of the drawn spacing or more. Never a grid, a row with an arrow, a line or a highlight among its items, or a row whose items touch or differ in width by more than the spacing can absorb. | `setRepeat` with `max`, and `span` when the row has to spread for it. |
-| `row-widen` | A row or grid where some number of items it takes leaves a line short of what the template draws, and the items keep their drawn width. | `setRepeat` with `widen`. |
+| `row-widen` | A row or grid where some number of items it takes leaves a line short of what the template draws, and the items keep their drawn width. Never a row with an arrow, a line or a highlight among its items. | `setRepeat` with `widen`. |
 | `variant` | A mirrored, text-only or shortened layout the slide allows and the manifest does not have. `variant` says which, and `slot` the text a `without` leaves out. A variant is known by the id a derived pattern gets, or by what it does to the slide (which shapes it takes away, what fills its pictures, on which side they sit), so one that was renamed and tuned is not offered again. | `derivePattern`. |
 
 `SUGGESTION_KINDS` lists the kinds. `row` and `row-max` are facts of the slide and safe to take. `icon` is a
@@ -579,7 +587,9 @@ should look.
 
 Ask again after applying: one change can open another. A row found by `row` is then asked how many items it
 takes, and a variant derived from a pattern copies the row as it is at that moment, so take `row-max` before
-`variant`. A variant is offered once, for the first pattern of a slide; a pattern that is itself a variant gets
+`variant`. Each suggestion is tried by itself, so two that do not go together can be listed side by side, such
+as `icon` for a picture and the `text-only` variant that leaves it out; when both are sent, the later one may
+come back in `rejected` with its reason. An unknown kind in `kinds` throws. A variant is offered once, for the first pattern of a slide; a pattern that is itself a variant gets
 none.
 
 A studio screen can show each suggestion as a line of text with a button that sends its `changes`.

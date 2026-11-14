@@ -466,7 +466,9 @@ interface DraftResult {
 }
 ```
 
-Rejects when `widen` is not above 1 and at most 4. See [template-studio.md](template-studio.md).
+Rejects, before any model call, when `rows` is neither `'fit'` nor `'drawn'`, when `widen` is not a number
+above 1 and at most 4, and when `variants` names anything but `'mirror'` and `'text-only'`. See
+[template-studio.md](template-studio.md).
 
 ### `checkManifest`
 
@@ -516,8 +518,9 @@ interface ManifestSuggestion {
 ```
 
 Synchronous, no model, nothing changed. What a template's slides allow that its manifest does not use yet, each
-with the changes that make it. Only suggestions that `changeManifest` accepts as they stand are listed. See
-[template-studio.md](template-studio.md).
+with the changes that make it. Only suggestions that `changeManifest` accepts as they stand are listed. Throws
+for a kind that is not in `SUGGESTION_KINDS`, and, when `row-widen` is asked for, for a `widen` that is not a
+number above 1 and at most 4. See [template-studio.md](template-studio.md).
 
 ### `patternVariants`, `VARIANTS`
 

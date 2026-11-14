@@ -62,11 +62,27 @@ export function detectRepeat(slots: SlotDef[], slide: SlideInfo): RepeatDef | un
     const firstRow = tops.filter((top) => Math.abs(top - (tops[0] as number)) < 0.03).length;
     // Things stacked one under another (two paragraphs, say) are numbered alike but are not a row of items.
     if (firstRow < 2) continue;
-    const repeat: RepeatDef = { item: prefix.toLowerCase(), slots: first.map((suffix) => `${prefix}{n}${suffix}`), shapes, min: Math.min(2, count), max: count };
+    // A row with an arrow, a line or a highlight among its items holds what it draws: with fewer
+    // items the rest are laid out again, across what stays where it is.
+    const pinned = firstRow === count && rowRoom(slide, shapes, droppedShapes(slots)).pinned;
+    const repeat: RepeatDef = { item: prefix.toLowerCase(), slots: first.map((suffix) => `${prefix}{n}${suffix}`), shapes, min: pinned ? count : Math.min(2, count), max: count };
     if (firstRow < count) repeat.columns = firstRow;
     return repeat;
   }
   return undefined;
+}
+
+/** The shapes a pattern takes off every slide: they are not in the way of a row. */
+export const droppedShapes = (slots: SlotDef[]): Set<string> => new Set(slots.filter((slot) => slot.empty === 'drop').map((slot) => slot.shapeId));
+
+/**
+ * The slots of a row's items that are shown in another place than the slide draws them, because
+ * they carry a `box`. A row is laid out from where the slide draws its items, so such a row cannot
+ * be given more items or wider ones.
+ */
+export function movedRowSlots(slots: SlotDef[], repeat: RepeatDef): string[] {
+  const names = new Set(repeat.slots.flatMap((template) => repeat.shapes.map((_, index) => template.replace('{n}', String(index + 1)))));
+  return slots.filter((slot) => names.has(slot.name) && 'box' in slot && slot.box !== undefined && slot.box !== null).map((slot) => slot.name);
 }
 
 /**
@@ -91,18 +107,22 @@ export const rowSpan = (slide: SlideInfo, repeat: RepeatDef, area: Box): { left:
  * where the row is free to. Never fewer than it draws. A grid takes what it draws, because one
  * more would need another line.
  */
-export function rowCapacity(slide: SlideInfo, repeat: RepeatDef): number {
+export function rowCapacity(slide: SlideInfo, repeat: RepeatDef, removed: ReadonlySet<string> = new Set()): number {
   const drawn = repeat.shapes.length;
   if (repeat.columns !== undefined || drawn < 2) return drawn;
-  const room = rowRoom(slide, repeat.shapes);
+  const room = rowRoom(slide, repeat.shapes, removed);
   // Further items are copies of the last, set out by the step from the first item to the second.
   // Where that step is shorter than the widest item, as it can be in a row whose items differ in
   // width, they would lie on top of each other. And where an arrow or a line lies among the items,
   // they would be drawn across it. Such rows take what they draw.
-  if (room.pinned || room.pitch < room.itemWidth - 1e-4) return drawn;
+  // Positions are read to four decimals, so two values that are equal can differ by a little more than one of those.
+  if (room.pinned || room.pitch < room.itemWidth - OVERLAP) return drawn;
   const span = rowSpan(slide, repeat, room.area);
   return Math.max(drawn, rowFit(room.itemWidth, span.left, span.right), rowOnSlide(slide, repeat) ? rowFit(room.itemWidth, room.left, room.right) : 0);
 }
+
+/** By how much a step must fall short of an item's width before the next item counts as lying on it. */
+export const OVERLAP = 2e-4;
 
 /** How far the space between a row's items may tighten before the row stops looking as designed: to a third. */
 const TIGHTEST = 1 / 3;
@@ -114,10 +134,10 @@ const TIGHTEST = 1 / 3;
  * holds only with the row spread into the room beside it, the span it needs is returned with it,
  * and the count is made on that span, so that asking again after taking it gives the same answer.
  */
-export function rowComfort(slide: SlideInfo, repeat: RepeatDef): { most: number; span?: { left: number; right: number } } {
+export function rowComfort(slide: SlideInfo, repeat: RepeatDef, removed: ReadonlySet<string> = new Set()): { most: number; span?: { left: number; right: number } } {
   const drawn = repeat.shapes.length;
   if (repeat.columns !== undefined || drawn < 2) return { most: drawn };
-  const room = rowRoom(slide, repeat.shapes);
+  const room = rowRoom(slide, repeat.shapes, removed);
   if (room.pinned) return { most: drawn };
   const current = rowSpan(slide, repeat, room.area);
   const gap = Math.max(room.gap * TIGHTEST, room.itemWidth * 0.03);

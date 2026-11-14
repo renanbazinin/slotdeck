@@ -10,7 +10,7 @@ import type { PatternDef, TextSlotDef } from './manifest.ts';
 export interface SampleOptions {
   /** How full to make each text slot, as a share of its budget. Defaults to 0.95. */
   fill?: number;
-  /** For patterns with a row of items: `drawn` (default) uses the template's number, `max` the most allowed. */
+  /** For patterns with a row of items: `drawn` (default) uses the template's number, or the nearest the row takes; `max` the most allowed; `min` the fewest. */
   items?: 'drawn' | 'max' | 'min';
   /**
    * What "full" means for a text slot. `budget` (default) is the slot's character budget. `box` is

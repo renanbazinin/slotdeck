@@ -310,7 +310,6 @@ export function itemCount(pattern: PatternDef, items?: number): number {
   return items ?? pattern.repeat.shapes.length;
 }
 
-/** The range of item counts a pattern accepts, or `undefined` when it has no row to vary. */
 /**
  * The number of items to plan a row with when none is given: the number the template draws, or
  * the nearest the row takes. `undefined` for a pattern without a row.
@@ -320,6 +319,7 @@ export function defaultItems(pattern: PatternDef): number | undefined {
   return range ? Math.min(Math.max(range.drawn, range.min), range.max) : undefined;
 }
 
+/** The range of item counts a pattern accepts, or `undefined` when it has no row to vary. */
 export function itemRange(pattern: PatternDef): { min: number; max: number; drawn: number } | undefined {
   if (!pattern.repeat) return undefined;
   const drawn = pattern.repeat.shapes.length;
