@@ -95,6 +95,7 @@ Reasons a pattern is not offered:
 | warning: `points at the same shape as "x"` | Two slots on one shape: usually a mistake. |
 | warning: `a grid cannot hold more items than it draws` | Lower `max` to the number drawn. |
 | warning: `has a budget of 900 characters, but sample text of that length takes 14 lines where 9 fit; about 560 characters fit` | (Template loaded with fonts.) The budget lets text run over the box. Lower `maxChars` to about the length given, or use `measuredBudgets`. See [text-fit.md](text-fit.md). |
+| warning: `has a budget of 520 characters on a slide with 2 of its 4 items, but sample text of that length takes 10 lines where 7 fit; about 376 characters fit` | (Template loaded with fonts, row with `widen`.) With that number of items the row's items are wider and their texts have a larger budget, which still lets text run over the wider box. Lower the slot's `maxChars`: the budget at each number of items follows from it. See "Fewer items that fill the row" in [layout-freedom.md](layout-freedom.md). |
 | warning: `no font was supplied for Cambria bold; text set in it is checked by its character budget` | Add the font file to `fontkitMetrics`, or accept character budgets for those slots. |
 
 ## Refusals from `changeManifest`

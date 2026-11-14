@@ -3,7 +3,12 @@
 What changed in each version, newest first, with what to do when upgrading. The version you have installed is
 in `node_modules/slotdeck/package.json`.
 
-## Unreleased
+## 0.2.0
+
+Two groups of additions. The first is about seeing and checking a deck: text measured with the template's
+fonts, pictures of slides without PowerPoint, and design checks. The second is about more layouts from the
+same template: variants the studio derives by itself, rows that fill their line, and other layouts for a
+slide. Everything new is off until it is asked for.
 
 ### Added
 
@@ -101,8 +106,11 @@ in `node_modules/slotdeck/package.json`.
   ignored unless a deck gave the slot a value. `checkManifest` no longer reports that such a slot points at a
   shape of another kind, or that it has no character budget.
 
-### Upgrading
+### Upgrading from 0.1.2
 
+- A dependency range written for 0.1, such as `"slotdeck": "^0.1.2"`, does not take 0.2.0. Install it by
+  version: `npm install slotdeck@0.2.0`. The package itself has no new dependency; `fontkit` and the Pagus
+  packages are installed only by an app that wants measuring or previews.
 - Nothing has to change. With a manifest made before and a template loaded without fonts, every result is the
   same as in 0.1.2: character budgets, the same warnings, the same files. There is one exception: a manifest
   that already had a slot with both `"empty": "keep"` and a `box` now shows that shape at the box. Remove the
