@@ -295,6 +295,7 @@ be measured: it is not a text slot, its shape holds no text, or a typeface it ne
 | `paragraphs` | The lines of each paragraph, as they break. |
 | `widths` | The width of each of those lines in points, without the space that hangs at its end. |
 | `lineRoom` | The width a line of each paragraph may take, in points. |
+| `sampleLines` | Lines the template's own sample text takes in the slot; `0` for a slot that moves its box or resets its size. |
 | `approximate` | A typeface, a weight or a shape outline was stood in for, so the figures are close but not exact. |
 
 Options:
@@ -303,6 +304,7 @@ Options:
 | --- | --- |
 | `textScale` | The factor on body text the deck is rendered with: the manifest's `textScale` times the deck's. Defaults to `1`. |
 | `shrink` | `{ to, minSize? }`: allow the text to be set smaller, as `shrinkText` does. |
+| `items` | For a slot of a row of items: how many items the slide has. |
 
 `measure.missingFonts()` returns the typefaces the template's text slots need that were not supplied.
 

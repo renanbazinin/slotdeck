@@ -68,6 +68,12 @@ export type {
 } from './template/manifest.ts';
 export { TEXT_SIZES } from './template/manifest.ts';
 
+// Design checks, and a second look at a draft.
+export { checkDesign } from './deck/design.ts';
+export type { DesignIssue, DesignKind, DesignOptions } from './deck/design.ts';
+export { designReview, visionReview } from './plan/review.ts';
+export type { DeckReview, VisionReviewOptions } from './plan/review.ts';
+
 // Pictures of slides.
 export { previewExtension } from './preview/provider.ts';
 export type { PreviewProvider, PreviewRequest, SlidePreview } from './preview/provider.ts';

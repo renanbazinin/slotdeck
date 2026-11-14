@@ -225,6 +225,7 @@ interface PlanOptions {
   patterns?: string[];
   numberPatterns?: 'from-brief' | 'always' | 'never';
   maxRepairs?: number;
+  review?: DeckReview; // a second look at every draft; see "Design checks and reviews"
   onProgress?: (event: PlanProgress) => void;
   signal?: AbortSignal;
 }
@@ -338,6 +339,7 @@ interface PresentationToolsOptions {
   layout?: LayoutMode;
   fields?: Record<string, string>;
   numberPatterns?: 'from-brief' | 'always' | 'never';
+  review?: DeckReview; // a second look at every draft the tools write
   thumbnail?: (patternId: string) => string | undefined;
   preview?: PreviewProvider; // draws every presentation the tools create or change
   newId?: (kind: 'plan' | 'deck') => string;
@@ -590,6 +592,62 @@ interface SlideInfo { number: number; part: string; layout: string; shapes: Shap
 interface TemplateInfo { slideWidth: number; slideHeight: number; defaultFontSize: number; slides: SlideInfo[] }
 ```
 
+## Design checks and reviews
+
+Explained in [design-checks.md](design-checks.md). Both need a template loaded with fonts.
+
+### `checkDesign`
+
+```ts
+function checkDesign(template: Template, deck: DeckSpec, options?: DesignOptions): DesignIssue[];
+```
+
+Lists design problems that follow from measurement alone: text that runs over its box, boxes and cards left
+mostly empty, headings that end in a lone word. Synchronous, no model, no picture.
+
+### `designReview`
+
+```ts
+function designReview(template: Template, options?: DesignOptions): DeckReview;
+```
+
+The design checks as a review for the planner's `review` option. Reports `empty`, `uneven` and `orphan`.
+
+### `visionReview`
+
+```ts
+function visionReview(options: VisionReviewOptions): DeckReview;
+```
+
+A review by a model that looks at pictures of the draft's slides, drawn by a `PreviewProvider` that gives
+bitmap pictures. Not run against a live model; see the cautions in [design-checks.md](design-checks.md).
+
+### Types
+
+```ts
+type DesignKind = 'overflow' | 'empty' | 'uneven' | 'orphan';
+interface DesignIssue { severity: 'warning'; slide: number; slot: string; kind: DesignKind; message: string } // an Issue with a kind
+interface DesignOptions {
+  layout?: LayoutMode;
+  kinds?: DesignKind[];  // default: all four
+  emptyBelow?: number;   // default 1/3
+  headingSize?: number;  // points; default 20
+}
+
+// A second look at a draft deck: problems to send back to the writing model.
+type DeckReview = (deck: DeckSpec, context: { signal?: AbortSignal }) => Issue[] | Promise<Issue[]>;
+
+interface VisionReviewOptions {
+  template: Template;
+  llm: LlmProvider;         // a model that accepts pictures
+  preview: PreviewProvider; // must give PNG, JPEG, WebP or GIF
+  icons?: IconDef[];
+  assets?: AssetDef[];
+  layout?: LayoutMode;       // default 'adaptive'
+  slidesPerRequest?: number; // default 6
+}
+```
+
 ## Slide previews
 
 Explained in [preview.md](preview.md). slotdeck draws nothing itself: a `PreviewProvider` is a renderer you plug in.
@@ -732,6 +790,7 @@ interface TextMeasurer {
 interface FitOptions {
   textScale?: number;   // the factor on body text the deck is rendered with; default 1
   shrink?: ShrinkLimit; // allow the text to be set smaller when it does not fit
+  items?: number;       // for a slot of a row of items: how many items the slide has
 }
 interface ShrinkLimit { to: number; minSize?: number } // the shape of the manifest's shrinkText
 interface TextFit {
@@ -749,6 +808,7 @@ interface TextFit {
   paragraphs: string[][]; // the lines of each paragraph
   widths: number[][];     // the width of each of those lines, in points
   lineRoom: number[];     // the width a line of each paragraph may take, in points
+  sampleLines: number;    // lines the template's own sample text takes in the slot; 0 when there is none to compare with
   approximate: boolean;   // a typeface, weight or outline was stood in for
 }
 

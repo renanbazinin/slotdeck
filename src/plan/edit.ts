@@ -10,7 +10,7 @@ import type { Direction, PatternDef, TextSize } from '../template/manifest.ts';
 import { measurerFor } from '../text/measure.ts';
 import { budgetScale, buildCatalog, describeCatalog, planPattern, readItems } from './catalog.ts';
 import type { CatalogContext, ImageDensity } from './catalog.ts';
-import { PlanError, SLIDE_KIND_RULE, asker, directionOf, hasFigures, planRoom } from './plan.ts';
+import { PlanError, SLIDE_KIND_RULE, asker, directionOf, hasFigures, planRoom, reviewWith } from './plan.ts';
 import type { PlanOptions } from './plan.ts';
 import { cleanText, suppliesText, systemPrompt, writeSlides } from './write.ts';
 import type { WriteJob } from './write.ts';
@@ -394,6 +394,7 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
     assemble,
     manifest,
     measure,
+    review: reviewWith(options),
     layout,
     maxRepairs: options.maxRepairs ?? 2,
     onRepair: (attempt, issues) => options.onProgress?.({ stage: 'repair', attempt, issues }),

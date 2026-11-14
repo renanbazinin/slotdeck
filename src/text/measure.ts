@@ -26,6 +26,8 @@ export interface FitOptions {
   textScale?: number;
   /** Allow the text to be set smaller when it does not fit. */
   shrink?: ShrinkLimit;
+  /** For a slot of a row of items: how many items the slide has, which can decide how wide an item is. */
+  items?: number;
 }
 
 /** How a text sits in a slot. */
@@ -57,6 +59,11 @@ export interface TextFit {
   widths: number[][];
   /** The width a line of each paragraph may take, in points. */
   lineRoom: number[];
+  /**
+   * Lines the template's own sample text takes in this slot: how full the designer drew it.
+   * 0 when the slot has no sample to compare with (a slot that moves its box or resets its size).
+   */
+  sampleLines: number;
   /** A typeface or a weight was stood in for by another, so the figures are close but not exact. */
   approximate: boolean;
 }
@@ -228,7 +235,12 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
     return byId.get(id) ?? byId.get(String(Number(id) % COPY_ID_STEP));
   };
 
-  const frameOf = (pattern: PatternDef, slot: TextSlotDef): TextFrame | undefined => {
+  /**
+   * The frame a slot's text is measured in. This is the one place that decides the box: every
+   * check (validation, shrinking, the design checks) comes through here. `items` is the number
+   * of items on the slide, for a rule that sizes an item of a row by how many there are.
+   */
+  const frameOf = (pattern: PatternDef, slot: TextSlotDef, _items?: number): TextFrame | undefined => {
     const shape = shapeOf(pattern.sourceSlide, slot.shapeId);
     if (!shape) return undefined;
     // The shape's own size is read exactly from the slide; a slot that moves its box states another.
@@ -294,7 +306,7 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
       slot = slotRef;
     }
     if (!slot) return undefined;
-    const frame = frameOf(pattern, slot);
+    const frame = frameOf(pattern, slot, options.items);
     if (!frame) return undefined;
     const paragraphs = (Array.isArray(text) ? text : text.split(/\r?\n/)).map((paragraph) => paragraph.trim()).filter((paragraph) => paragraph !== '');
     if (paragraphs.length === 0) return undefined;
@@ -314,6 +326,7 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
       const boxHeight = (frame.vertical ? frame.width - frame.insets.left - frame.insets.right : frame.height - frame.insets.top - frame.insets.bottom) * frame.columns;
       let room = Math.max(0, boxHeight);
       let roomWidth = 1;
+      let sampleLines = 0;
       // A box drawn around its sample text holds at least what the sample takes. That does not
       // carry over to a slot that moves the box or resets the size: it uses the shape differently.
       if (chosen.box === undefined && chosen.fontSize === undefined) {
@@ -323,6 +336,7 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
             const laid = lay(frame, sample, (style) => style.run.size, undefined, { approximate: false });
             room = Math.max(room, laid.height);
             roomWidth = Math.max(roomWidth, laid.widest);
+            sampleLines = laid.lines.reduce((sum, entry) => sum + entry.length, 0);
           } catch (error) {
             note(error);
           }
@@ -358,6 +372,7 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
           paragraphs: laid.lines,
           widths: laid.widths,
           lineRoom: laid.lineRoom,
+          sampleLines,
           approximate: flags.approximate,
         };
       };

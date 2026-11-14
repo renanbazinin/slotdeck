@@ -1,4 +1,4 @@
-import { DeckValidationError, resolveSlot, validateDeck } from '../deck/validate.ts';
+import { DeckValidationError, fitOptions, resolveSlot, validateDeck } from '../deck/validate.ts';
 import type { Issue, LayoutMode } from '../deck/validate.ts';
 import type { ChartValue, DeckSpec } from '../deck/spec.ts';
 import {
@@ -188,7 +188,7 @@ export function renderDeck(template: Template, deck: DeckSpec, options: RenderOp
         if (Object.keys(change).length > 0) adjustText(shape, change);
         // Text that does not fit is set smaller, as far as the manifest allows; the measurer says how far.
         if (measure && manifest.shrinkText) {
-          const fit = measure.fit(pattern, slot, action.paragraphs, { textScale, shrink: manifest.shrinkText });
+          const fit = measure.fit(pattern, slot, action.paragraphs, fitOptions(manifest, deck, slide));
           if (fit && fit.scale < 1) {
             setTextSizes(shape, fit.sizes);
             shrunk.push({ slide: number, slot: sources.get(slot.name) ?? slot.name, size: fit.size, scale: Math.round(fit.scale * 1000) / 1000 });

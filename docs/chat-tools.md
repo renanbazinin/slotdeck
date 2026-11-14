@@ -38,6 +38,7 @@ const tools = presentationTools({
   layout: 'adaptive',                           // optional; default 'strict'
   fields: { organizationDepartment: 'Acme  |  Operations' }, // optional deck-level values every deck gets
   numberPatterns: 'from-brief',                 // optional
+  review,                                       // optional DeckReview: a second look at every draft (design-checks.md)
   thumbnail: (patternId) => `/static/thumbnails/${patternId}.png`, // optional address of a picture of each layout
   preview,                                      // optional PreviewProvider: draws every presentation the tools make
   newId: (kind) => `${kind}_${crypto.randomUUID()}`, // optional; default is a short random id

@@ -1,6 +1,6 @@
 import { bodyTextScale, effectiveSlots, itemRange, slotSources, tableAtScale, textBudget } from '../template/manifest.ts';
 import type { PatternDef, SlotDef, TemplateManifest } from '../template/manifest.ts';
-import type { TextFit, TextMeasurer } from '../text/measure.ts';
+import type { FitOptions, TextFit, TextMeasurer } from '../text/measure.ts';
 import { isChartValue, isImageRef, isTableValue, toParagraphs } from './spec.ts';
 import type { ChartValue, DeckSpec, ImageRef, SlideSpec, TableValue } from './spec.ts';
 
@@ -47,6 +47,18 @@ export interface ValidateOptions {
    * measure keeps the character check.
    */
   measure?: TextMeasurer;
+}
+
+/**
+ * How the text of a slide is measured: at the deck's text size, shrinkable as far as the manifest
+ * allows, in a row of as many items as the slide has. Validation, the renderer and the design
+ * checks all measure with these, so they cannot disagree.
+ */
+export function fitOptions(manifest: TemplateManifest, deck: Pick<DeckSpec, 'textScale'>, slide: Pick<SlideSpec, 'items'>): FitOptions {
+  const options: FitOptions = { textScale: bodyTextScale(manifest, deck.textScale) };
+  if (manifest.shrinkText) options.shrink = manifest.shrinkText;
+  if (slide.items !== undefined) options.items = slide.items;
+  return options;
 }
 
 /**
@@ -198,7 +210,7 @@ export function validateDeck(manifest: TemplateManifest, deck: DeckSpec, options
         const budget = textBudget(slot, scale);
         const chars = action.paragraphs.reduce((sum, paragraph) => sum + paragraph.length, 0);
         // With fonts the text is measured as it will be set, and the character budget steps aside.
-        const fit = options.measure?.fit(pattern, slot, action.paragraphs, manifest.shrinkText ? { textScale: scale, shrink: manifest.shrinkText } : { textScale: scale });
+        const fit = options.measure?.fit(pattern, slot, action.paragraphs, fitOptions(manifest, deck, slide));
         if (fit) {
           const message = overflowMessage(fit);
           if (message) issues.push({ severity: 'warning', slide: number, slot: source, message });

@@ -9,6 +9,7 @@ import { measurerFor } from '../text/measure.ts';
 import type { Direction, TextSize } from '../template/manifest.ts';
 import { budgetScale, buildCatalog, describeCatalog, isPlainText, itemsProperty, outlineSchema, planPattern, readItems } from './catalog.ts';
 import type { AssetDef, Catalog, CatalogContext, IconDef, ImageDensity, UsablePattern, WriteItem } from './catalog.ts';
+import type { DeckReview } from './review.ts';
 import { cleanText, suppliesText, systemPrompt, writeSlides } from './write.ts';
 
 /** What the person asked for. */
@@ -58,6 +59,13 @@ export interface PlanOptions {
   numberPatterns?: 'from-brief' | 'always' | 'never';
   /** How many times the model may be asked to fix a draft that breaks the template's limits. Defaults to 2. */
   maxRepairs?: number;
+  /**
+   * A second look at every draft: `designReview` for the code-only design checks, `visionReview`
+   * for a model that looks at pictures of the slides, or a function of your own. What it finds is
+   * sent back to the writing model in the repair rounds, and what remains is returned with the
+   * warnings. Nothing reviews a draft unless this is set.
+   */
+  review?: DeckReview;
   onProgress?: (event: PlanProgress) => void;
   signal?: AbortSignal;
 }
@@ -108,6 +116,12 @@ export function asker(llm: LlmProvider, system: string, signal: AbortSignal | un
     if (signal) request.signal = signal;
     return llm.generateJson(request);
   };
+}
+
+/** The caller's review, bound to the caller's abort signal. */
+export function reviewWith(options: Pick<PlanOptions, 'review' | 'signal'>): ((deck: DeckSpec) => Issue[] | Promise<Issue[]>) | undefined {
+  const { review, signal } = options;
+  return review ? (deck) => review(deck, signal ? { signal } : {}) : undefined;
 }
 
 /** Room for a plan: a title, and for each slide a pattern id and a sentence. Generous, since it is a ceiling. */
@@ -368,6 +382,7 @@ export async function writeDeck(template: Template, plan: DeckPlan, options: Pla
     },
     manifest: template.manifest,
     measure: measurerFor(template),
+    review: reviewWith(options),
     layout,
     maxRepairs: options.maxRepairs ?? 2,
     onRepair: (attempt, issues) => options.onProgress?.({ stage: 'repair', attempt, issues }),

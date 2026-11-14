@@ -50,6 +50,7 @@ It runs `planDeck`, then `resolveAssets`, then `renderDeck`.
 | `patterns` | string[] | all | Restrict the deck to these pattern ids. |
 | `numberPatterns` | `"from-brief"`, `"always"`, `"never"` | `from-brief` | When patterns marked `figures` may be used. `from-brief` offers them only if the brief contains digits. |
 | `maxRepairs` | number | 2 | How many times a draft that breaks the template's limits is sent back to the model. |
+| `review` | `DeckReview` | none | A second look at every draft: design checks, a model that looks at pictures of the slides, or a function of your own. What it finds goes back to the model in the repair rounds. See [design-checks.md](design-checks.md). |
 | `cache` | `Map<string, Uint8Array>` | none | Generated pictures by asset id. Pass the same map on later calls and pictures whose description did not change are reused. |
 | `imageConcurrency` | number | 3 | How many pictures to generate at once. |
 | `onProgress` | function | none | Called with `{ stage: 'outline' }`, `{ stage: 'write', slides }`, `{ stage: 'repair', attempt, issues }`, `{ stage: 'images', done, total }`, `{ stage: 'render' }`. |
@@ -88,7 +89,9 @@ const { pptx, deck, warnings } = await generateDeck(
 2. **Write** (one model call). The model fills a JSON schema built for exactly that sequence of slides, so it
    cannot invent patterns or slots.
 3. **Repair** (up to `maxRepairs` more calls). The draft is validated against the manifest. Errors and
-   over-budget text go back to the model with the list of problems.
+   over-budget text go back to the model with the list of problems. For a template loaded with fonts the
+   text is measured, and the problems are stated in lines ([text-fit.md](text-fit.md)). With a `review`, what
+   the review finds on a draft goes back in the same list ([design-checks.md](design-checks.md)).
 
 Which patterns are offered depends on what you supplied:
 

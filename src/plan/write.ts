@@ -152,6 +152,8 @@ export interface WriteArgs {
   manifest: TemplateManifest;
   /** Measures text with the template's fonts, so drafts are checked and repaired by the lines they take. */
   measure?: TextMeasurer | undefined;
+  /** A second look at each draft that renders: what it finds goes back to the model with the limits the draft broke. */
+  review?: ((deck: DeckSpec) => Issue[] | Promise<Issue[]>) | undefined;
   layout: LayoutMode;
   maxRepairs: number;
   onRepair?: (attempt: number, issues: number) => void;
@@ -188,7 +190,7 @@ export async function writeSlides(args: WriteArgs): Promise<{ deck: DeckSpec; is
   const schema = contentSchema(jobs, context);
   const numbers = new Set(jobs.map((job) => job.number));
 
-  const build = (answer: unknown): { deck: DeckSpec; issues: Issue[] } => {
+  const build = async (answer: unknown): Promise<{ deck: DeckSpec; issues: Issue[] }> => {
     const content = (typeof answer === 'object' && answer !== null ? answer : {}) as Record<string, unknown>;
     const written = new Map<number, SlideSpec>();
     for (const job of jobs) {
@@ -200,14 +202,17 @@ export async function writeSlides(args: WriteArgs): Promise<{ deck: DeckSpec; is
     const deck = args.assemble(written);
     const options: ValidateOptions = { layout: args.layout, assets: knownAssets(deck, context) };
     if (args.measure) options.measure = args.measure;
-    return { deck, issues: validateDeck(args.manifest, deck, options) };
+    const issues = validateDeck(args.manifest, deck, options);
+    // A draft with errors cannot be rendered, so there is nothing yet for a review to look at.
+    if (args.review && !issues.some((issue) => issue.severity === 'error')) issues.push(...(await args.review(deck)));
+    return { deck, issues };
   };
   // Only slides that were just written can be fixed by asking again.
   const repairable = (issues: Issue[]) => issues.filter((issue) => issue.slide !== undefined && numbers.has(issue.slide));
 
   const room = contentRoom(jobs, context);
   let answer = await args.ask(args.request, schema, room);
-  let draft = build(answer);
+  let draft = await build(answer);
   for (let attempt = 1; attempt <= args.maxRepairs; attempt++) {
     const problems = repairable(draft.issues);
     if (problems.length === 0) break;
@@ -219,7 +224,7 @@ export async function writeSlides(args: WriteArgs): Promise<{ deck: DeckSpec; is
       'Return the full content again with these problems fixed. Change nothing else.',
     ].join('\n\n');
     answer = await args.ask(repair, schema, room);
-    draft = build(answer);
+    draft = await build(answer);
   }
   return draft;
 }

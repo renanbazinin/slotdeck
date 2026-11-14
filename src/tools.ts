@@ -38,6 +38,8 @@ export interface PresentationToolsOptions {
   /** Deck-level values every deck gets, e.g. the unit shown in the header. */
   fields?: Record<string, string>;
   numberPatterns?: PlanOptions['numberPatterns'];
+  /** A second look at every draft the tools write, as for `planDeck`. Off unless set. */
+  review?: PlanOptions['review'];
   /** Address of a picture of a pattern's layout, for showing a plan visually. */
   thumbnail?: (patternId: string) => string | undefined;
   /**
@@ -181,6 +183,7 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
     if (options.icons) plan.icons = options.icons;
     if (options.assets) plan.assets = options.assets;
     if (options.numberPatterns) plan.numberPatterns = options.numberPatterns;
+    if (options.review) plan.review = options.review;
     if (options.onProgress) plan.onProgress = (event) => options.onProgress?.(event, tool);
     if (signal) plan.signal = signal;
     return plan;

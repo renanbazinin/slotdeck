@@ -318,6 +318,15 @@ set a little smaller, and `measuredBudgets` works out budgets from what the boxe
 every line broke at the same word as in PowerPoint in all 1,153 text slots checked, in English and Hebrew. See
 [`docs/text-fit.md`](docs/text-fit.md).
 
+### Design checks
+
+A deck can fit its boxes and still look wrong. With fonts loaded, `checkDesign(template, deck)` finds what
+measurement can see: a box left almost empty, a card far shorter than its neighbours, a heading that ends with
+one word on a line of its own. Each finding says what length of text would put it right, and
+`review: designReview(template)` sends the findings back to the writing model while a deck is planned. On the
+example deck it reports the two orphan words that PowerPoint's own picture shows. See
+[`docs/design-checks.md`](docs/design-checks.md).
+
 ### Previews
 
 slotdeck draws nothing itself, but it has a hook for a renderer that does: a `PreviewProvider` turns a pptx into

@@ -46,6 +46,8 @@ These do not stop rendering. `renderDeck` and the planner return them.
 | `text takes 7 lines at 18 pt; the box holds 5 (2 lines too many). Text of about 290 characters fits.` | (Template loaded with fonts.) The text was measured and runs over its box by that many lines. | Shorten the text to about the length given, or allow shrinking with `shrinkText`. See [text-fit.md](text-fit.md). |
 | `text takes 6 lines even at 15.5 pt; the box holds 5 ...` | The text was set as small as `shrinkText` allows and still does not fit. | Shorten the text. |
 | `text is 30% wider than its box at 12 pt, and the box does not wrap. ...` | (With fonts.) A one-line box whose text is too long. | Shorten the text. |
+| `text takes 1 line where the template's own text takes 5, so its box will look empty. ...` | (From `checkDesign` or a `review`.) The text fits but leaves its box almost empty. Also: `...so the row will look uneven`, and `the last of its 2 lines holds one word, ...`. | Lengthen or shorten the text as the message says. See [design-checks.md](design-checks.md). |
+| `seen in the picture of the slide: ...` | (From `visionReview`.) A model looked at a picture of the slide and reported this. It is only as reliable as the picture. | Check the slide; see the cautions in [design-checks.md](design-checks.md). |
 | `text has 5 paragraphs; the slot fits 4` | Over `maxParagraphs`. | Fewer paragraphs. |
 | `the table has 6 columns; the slot fits 5` (also rows) | Over the table's limits. The table may leave the slide. | A smaller table. |
 | `a cell is 40 characters; cells fit about 22` | A long cell makes its row taller. | Shorter cells. |

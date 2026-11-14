@@ -41,6 +41,7 @@ slotdeck makes new PowerPoint files from an existing PowerPoint template.
 | [languages.md](languages.md) | Make right-to-left decks from a left-to-right template, or the reverse |
 | [text-fit.md](text-fit.md) | Measure text with the template's fonts: overflow in lines, shrinking to fit, budgets from measurement |
 | [preview.md](preview.md) | Get a picture of each slide without PowerPoint, and know how close it is |
+| [design-checks.md](design-checks.md) | Find empty boxes, uneven cards and orphan words by measurement, and have drafts reviewed while a deck is written |
 | [template-studio.md](template-studio.md) | Draft a manifest with a model, check it, change it by hand or by instruction |
 | [api-reference.md](api-reference.md) | Look up any export: its signature and what it does |
 | [troubleshooting.md](troubleshooting.md) | Find the meaning of an error or warning, and the known limits |
@@ -63,6 +64,8 @@ slotdeck makes new PowerPoint files from an existing PowerPoint template.
 | Know whether a text fits its box, in lines | `loadTemplate` with `fonts`, or `textMeasurer` | none |
 | Set budgets from what the boxes hold | `measuredBudgets` | none |
 | Show a deck or a template's layouts as pictures | `previewDeck`, `patternPreviews` with a `PreviewProvider` | none |
+| List design problems of a deck | `checkDesign` | none |
+| Have drafts checked for design while a deck is written | `review: designReview(template)` on the planner | none of its own; each repair is one writing call |
 | Change a manifest by operations | `changeManifest` | none |
 | Change a manifest by instruction | `editManifest` | 1 or 2 |
 | List the shapes of a template | `inspectTemplate`, `studioView` | none |

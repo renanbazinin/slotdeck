@@ -37,6 +37,15 @@ in `node_modules/slotdeck/package.json`.
   `preview` option: the pictures of every presentation it makes go to the store under `preview/<id>/` and to
   the app in `ToolResult.previews`. No renderer tried reproduces PowerPoint exactly; what was found, for
   English, Hebrew, tables and native charts, is in [preview.md](preview.md).
+- **Design checks.** `checkDesign(template, deck)` lists problems of a deck that fits and still looks wrong,
+  from measurement alone: a box left almost empty, a card far shorter than its neighbours, a heading that ends
+  with one word on a line of its own. Every message says what length of text would put it right. See
+  [design-checks.md](design-checks.md).
+- **Reviews.** The planner takes a `review` option: a second look at every draft, whose findings go back to
+  the writing model in the repair rounds. `designReview(template)` is the design checks as a review.
+  `visionReview({ template, llm, preview })` shows a model pictures of the slides; it needs a preview provider
+  that gives bitmap pictures, and it has been tested with a scripted model only, not run against a live one.
+  Nothing reviews a draft unless `review` is set. `presentationTools` takes the same option.
 
 ### Changed
 
@@ -58,6 +67,8 @@ in `node_modules/slotdeck/package.json`.
   warning should also expect `lines`.
 - Previews are off unless you pass a `preview` provider. To turn them on with Pagus:
   `npm install @pagus-kit/core @pagus-kit/renderer` and `pagusPreviews(pagusCore, pagusRenderer)`.
+- Design checks and reviews are off unless you call `checkDesign` or pass `review`. A review can make the
+  planner use more writing calls, since a draft within its limits may now be sent back.
 - Budgets drafted without fonts are cautious. `measuredBudgets` usually suggests larger ones; setting them
   lets the planning model write more per slide.
 
