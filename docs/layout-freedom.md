@@ -248,7 +248,8 @@ The picture is left out and the text beside it widens.
   drawn on the picture is removed with it. Texts the deck writes are never removed.
 - Every text slot beside the picture grows towards the side the picture was on: up to the picture's far edge,
   or, for a picture that ran off the slide, up to the margin the text keeps on its own side. All of them end
-  on the same edge.
+  on the same edge. The items of a row or grid are the exception: the software lays a row out as one, so its
+  items are never widened one by one, and the row stays where it is.
 - The column is no wider than about 90 characters a line of the slot with the largest budget, because lines
   that run the width of a slide are hard to read. It keeps the edge where the template's reading starts (the
   left edge of a left-to-right template) and gives up room at the other.
@@ -287,6 +288,7 @@ say more.
 | A row of items would have to move. | The renderer lays a row out again for every item count, so a box cannot place it. |
 | A table would have to move. | A table slot has no `box`. |
 | The text to widen is inside a group. | `the text beside the picture is inside a group, and a shape inside a group cannot take a box` |
+| The only text beside the picture is a row of items. | `the text beside the picture is the row of cards, which the software lays out itself and cannot widen` |
 | The slot to leave out is not an optional text. | `"title" is required; only an optional text can be left out; "text-and-photo" has "subtitle"` |
 
 Render the sample deck after deriving a variant (`sampleDeck`, then `renderDeck`): it holds every pattern,

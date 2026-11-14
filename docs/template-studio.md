@@ -65,6 +65,9 @@ deck, 300 tokens plus 40 and the size in bytes of each repeated text, which the 
 ceiling ends a model that runs away inside a text field. A provider should pass it on as its output limit; the
 Gemini adapter does.
 
+Before any model call, a draft is refused for a `rows` that is neither `'fit'` nor `'drawn'`, a `widen` that is
+not a number above 1 and at most 4, and a `variants` entry other than `'mirror'` and `'text-only'`.
+
 What the code works out without the model:
 
 - Every shape's id, kind, position, size, font size and sample text.
@@ -121,7 +124,7 @@ Some rows take what they draw, whatever the room:
   drawn across it. So would fewer: such a row is drafted to hold exactly the number it draws, and is offered no
   widening. A rule that runs the whole length of the row, or a panel behind all of it, is not among the items:
   it is something the row is drawn on, and the row may take more inside it. A shape the pattern takes off every
-  slide (a slot with `empty: 'drop'`) is in nobody's way.
+  slide (a slot with `empty: 'drop'`) is in nobody's way, and neither is anything inside a group it takes off.
 
 ```ts
 // notes
@@ -160,7 +163,8 @@ items already fill a line gets none. Without the option, it comes back as a sugg
 
 With `variants`, the draft also gets the mirror image and the text-only version of every drafted pattern whose
 slide allows one (see `derivePattern` below). They are worked out by code after the model has labelled the
-slides, so they cost no model call. A pattern that allows no variant simply gets none.
+slides, so they cost no model call. A pattern that allows no variant simply gets none. A variant's row is
+settled for the room the variant has, which without the picture can be more than its pattern's.
 
 This is off by default, for three reasons. Every variant is one more layout to review in the sample deck.
 Whether a mirrored slide suits a design is for a person to say. And a variant is only as good as the labels it
@@ -382,9 +386,10 @@ they become a row.
 A row may take more items than it draws, as long as they fit side by side at their drawn width; a refusal says
 the most that do. `suggestChanges` proposes a number that keeps a third of the drawn spacing, which is fewer
 than the most that fit. A grid takes at most what it draws. More than drawn is also refused for a row whose
-items differ in width so much that the step from the first to the second is shorter than the widest: further
-items are copies of the last, set out by that step, and would overlap. The fit is counted when a change is
-about the number of items or the span; a change to something else, such as `widen`, is not held up by it.
+items are drawn overlapping, or differ in width so much that the step from the first to the second is shorter
+than the widest: further items are copies of the last, set out by that step, and would lie on top of each
+other. The fit is counted when a change gives `max` or a `span`, or finds the row; a change to something else,
+such as `min` or `widen`, is not held up by it.
 
 A `span` is refused when the drawn row does not fit in it, and for a row whose items sit inside a group: the
 renderer lays out between the limits of a span only a row whose items are on the slide. `span: null` takes a
@@ -582,8 +587,8 @@ should look.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `kinds` | all | Only these kinds. |
-| `widen` | `2` | The factor suggested by `row-widen`. |
+| `kinds` | all | Only these kinds. A kind that does not exist throws. |
+| `widen` | `2` | The factor suggested by `row-widen`: a number above 1 and at most 4. Anything else throws when `row-widen` is asked for. |
 
 Ask again after applying: one change can open another. A row found by `row` is then asked how many items it
 takes, and a variant derived from a pattern copies the row as it is at that moment, so take `row-max` before

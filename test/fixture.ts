@@ -213,6 +213,19 @@ export function fixtureWithSlide(number: number, change: (xml: string) => string
   return zipSync(files);
 }
 
+/**
+ * The fixture's card slide with its three cards as plain text boxes on the slide (#11, #21, #31,
+ * each 1,000,000 EMU wide at the given left edges) and whatever else is given. Grouped cards cannot
+ * take a box of their own; these can, which is what some cases need.
+ */
+export function fixtureWithTextCards(lefts: [number, number, number], more = ''): Uint8Array {
+  const box = (id: number, x: number) =>
+    `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="Card text"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>` +
+    `<p:spPr><a:xfrm><a:off x="${x}" y="2000000"/><a:ext cx="1000000" cy="1500000"/></a:xfrm></p:spPr>` +
+    `<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr sz="900"/><a:t>SAMPLE CARD</a:t></a:r></a:p></p:txBody></p:sp>`;
+  return fixtureWithSlide(4, (xml) => `${xml.slice(0, xml.indexOf('<p:grpSp>'))}${box(11, lefts[0])}${box(21, lefts[1])}${box(31, lefts[2])}${more}</p:spTree></p:cSld></p:sld>`);
+}
+
 export const fixtureManifest: TemplateManifest = {
   version: 1,
   name: 'fixture',

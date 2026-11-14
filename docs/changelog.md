@@ -66,14 +66,16 @@ is already in use can be repaired without a model and without renaming anything.
 - **A row that takes one number says so**: `pattern "x" takes exactly 2 cards, not 3`, from `validateDeck` and
   the planner, where it said `takes 2 to 2 cards`; `describeManifest` says `takes exactly 2` too.
 - **`setRepeat` is stricter about what cannot render.** The room it counts for a row stops at the edge of a
-  shape the row is drawn on, such as a panel. More items than drawn are refused for a row whose items differ
-  in width so much that copies of the last, set out by the step from the first to the second, would overlap. A
+  shape the row is drawn on, such as a panel. More items than drawn are refused for a row whose items are
+  drawn overlapping, or differ in width so much that copies of the last, set out by the step from the first to
+  the second, would lie on top of each other. A
   `span` is refused for a row whose items sit inside a group, where the renderer never used one, and such a
-  span already in a manifest is no longer counted. The fit is counted when a change is about the number of
-  items or the span, and a refusal names fewer than the row draws only for a span narrower than the row. With
+  span already in a manifest is no longer counted. The fit is counted when a change gives `max` or a `span`,
+  or finds the row, and a refusal names fewer than the row draws only for a span narrower than the row. With
   a `span`, the message says how far the row may spread; `span: null` on a row that only fitted its most with
   the span lowers the most to what fits, and says so. A row whose item slots carry a `box` is laid out from
-  where the slide draws them, so it is not found as a row and takes no more items or wider ones.
+  where the slide draws them, so it is not found as a row and takes no more items or wider ones; `setSlot` with
+  `box: null` on such a slot is now allowed, and takes the box away in every item.
 - **A text-only variant leaves a row alone.** `derivePattern` with `text-only` widened each text beside the
   picture by itself, also one item of a row, whose copies then lay on top of each other. It now widens only
   text outside the row, and is refused where the row is all the text there is.
@@ -137,10 +139,13 @@ over more easily for other subjects. Give it a description of its structure with
   `items: always ...` line; and the heading `Patterns for new slides` of `planEdit` is now
   `Patterns, for new slides and for a slide that changes its layout`.
 - **Code that matches refusals**: `takes 2 to 2 cards, not 3` is now `takes exactly 2 cards, not 3`.
-- **`setRepeat` may now refuse** a `span` on a row inside a group, more items than drawn on a row whose items
-  differ much in width, more items than fit inside a panel the row is drawn on, and more or wider items for a
+- **`setRepeat` may now refuse** a `span` on a row inside a group; more items than drawn on a row whose items
+  are drawn overlapping or differ much in width; more items than fit inside a panel the row is drawn on, or in
+  the drawn width of a row with an arrow, a line or a highlight among its items; and more or wider items for a
   row whose slots carry a `box`. Show `rejected[i].reason` as it is; `span: null` clears a span that no longer
   applies. `derivePattern` with `text-only` may now be refused for a layout whose text is a row.
+- **`draftManifest` now rejects** a `variants` entry other than `mirror` and `text-only`, which 0.2.0 passed
+  over. `without` needs a slot to be named and is made with `derivePattern`.
 - **Your own `LlmProvider`**: draft requests now carry `maxOutputTokens`. Pass it on as the output limit, with
   room for reasoning on top if your model counts reasoning against it, as the Gemini adapter does.
 

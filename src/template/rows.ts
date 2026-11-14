@@ -121,8 +121,12 @@ export function rowCapacity(slide: SlideInfo, repeat: RepeatDef, removed: Readon
   return Math.max(drawn, rowFit(room.itemWidth, span.left, span.right), rowOnSlide(slide, repeat) ? rowFit(room.itemWidth, room.left, room.right) : 0);
 }
 
-/** By how much a step must fall short of an item's width before the next item counts as lying on it. */
-export const OVERLAP = 2e-4;
+/**
+ * By how much a step must fall short of an item's width before the next item counts as lying on
+ * it. Positions are read to four decimals, and an item made of several shapes has its width from
+ * four of them, so equal values can differ by up to a quarter of a thousandth.
+ */
+export const OVERLAP = 3e-4;
 
 /** How far the space between a row's items may tighten before the row stops looking as designed: to a third. */
 const TIGHTEST = 1 / 3;

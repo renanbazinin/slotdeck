@@ -255,9 +255,14 @@ export function rowRoom(slide: SlideInfo, itemShapes: string[][], removed: Reado
   let right = Math.max(area.x + area.w, 1 - margin);
   let pinned = false;
   const areaEnd = area.x + area.w;
+  // A group the pattern takes off every slide goes with everything in it.
+  const gone = (id: string | undefined): boolean => {
+    for (let at = id; at; at = byId.get(at)?.groupId) if (removed.has(at)) return true;
+    return false;
+  };
   for (const shape of slide.shapes) {
     // A shape the pattern takes off every slide is not there to be drawn across or to stop the row.
-    if (inRow.has(shape.id) || removed.has(shape.id) || isFramePlaceholder(shape) || shape.kind === 'group') continue;
+    if (inRow.has(shape.id) || gone(shape.id) || isFramePlaceholder(shape) || shape.kind === 'group') continue;
     const end = shape.box.x + shape.box.w;
     // The height the shape shares with the row. A line has no height: it counts when it lies
     // inside the row's height, not when it runs along the row's top or bottom edge.

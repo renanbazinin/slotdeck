@@ -299,6 +299,26 @@ test('a row that takes one number of items says so, and a grid that never breaks
   assert.match(wrong.requests[1]?.prompt ?? '', /takes exactly 2 cards, not 3/);
 });
 
+test('the number a row always takes is allowed by the schema of a plan and of an edit', async () => {
+  // A row that always takes its three cards, beside a grid that takes one or two.
+  const cards = cardsManifest.patterns.find((pattern) => pattern.id === 'cards') as TemplateManifest['patterns'][number];
+  const grid = gridManifest.patterns.find((pattern) => pattern.id === 'grid') as TemplateManifest['patterns'][number];
+  const mixed: TemplateManifest = {
+    ...cardsManifest,
+    patterns: [...fixtureManifest.patterns, { ...cards, repeat: { ...(cards.repeat as NonNullable<typeof cards.repeat>), min: 3, max: 3 } }, { ...grid, repeat: { ...(grid.repeat as NonNullable<typeof grid.repeat>), min: 1, max: 2 } }],
+  };
+  const outline = scripted({ title: 'T', slides: [{ pattern: 'cards', purpose: 'Three things', items: 3 }] }, { s1: { title: 'T', card1Text: 'One', card2Text: 'Two', card3Text: 'Three' } });
+  const { deck } = await planDeck(loadTemplate(pptx, mixed), { prompt: 'Three things', language: 'en', imageDensity: 'none' }, { llm: outline.llm });
+  assert.match(outline.requests[0]?.prompt ?? '', /\n {2}items: always 3 cards side by side in one row, numbered N = 1, \.\.\., 3/);
+  const planned = (outline.requests[0]?.schema as { properties: { slides: { items: { properties: { items: { minimum: number; maximum: number } } } } } }).properties.slides.items.properties.items;
+  assert.deepEqual([planned.minimum, planned.maximum], [1, 3]);
+
+  const change = scripted(editPlan([{ from: 1, pattern: 'cards', change: '', images: false }]));
+  await planEdit(loadTemplate(pptx, mixed), deck, 'Nothing to change', { llm: change.llm });
+  const edited = (change.requests[0]?.schema as { properties: { slides: { items: { properties: { items: { maximum: number } } } } } }).properties.slides.items.properties.items;
+  assert.equal(edited.maximum, 3);
+});
+
 test('a request to change a plan or a deck carries the rule about columns too', async () => {
   const outline = scripted({ title: 'T', slides: [{ pattern: 'cards', purpose: 'Three things', items: 3 }] });
   const plan = await planOutline(template, { prompt: 'Three things', language: 'en', imageDensity: 'none' }, { llm: outline.llm });

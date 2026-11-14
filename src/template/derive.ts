@@ -340,9 +340,13 @@ function textOnly(pattern: PatternDef, units: Unit[], context: VariantContext): 
     widened.push(`${slot.name}${slot.maxChars !== undefined ? ` (${slot.maxChars} characters)` : ''}`);
   }
   if (widened.length === 0) {
-    if (block.some((unit) => unit.inRow && unit.own?.kind === 'text')) refuse(`the text beside the picture is the row of ${pattern.repeat?.item ?? 'item'}s, which the software lays out itself and cannot widen`);
-    const inGroup = block.some((unit) => unit.inner.some((slot) => slot.kind === 'text'));
-    refuse(inGroup ? 'the text beside the picture is inside a group, and a shape inside a group cannot take a box' : 'no text beside the picture has room to widen');
+    // Which sentence is true: the row is all the text there is, the text is inside a group, or there is simply no room.
+    const written = (slot: SlotDef | undefined) => slot?.kind === 'text' && slot.empty !== 'keep' && slot.empty !== 'drop';
+    const rowText = block.some((unit) => unit.inRow && (written(unit.own) || unit.inner.some(written)));
+    const otherText = block.some((unit) => !unit.inRow && written(unit.own));
+    const inGroup = block.some((unit) => !unit.inRow && unit.inner.some(written));
+    if (rowText && !otherText && !inGroup) refuse(`the text beside the picture is the row of ${pattern.repeat?.item ?? 'item'}s, which the software lays out itself and cannot widen`);
+    refuse(inGroup && !otherText ? 'the text beside the picture is inside a group, and a shape inside a group cannot take a box' : 'no text beside the picture has room to widen');
   }
   return {
     suffix: 'text-only',

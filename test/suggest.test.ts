@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { SUGGESTION_KINDS, changeManifest, checkManifest, draftManifest, loadTemplate, renderDeck, sampleDeck, suggestChanges, validateDeck } from '../src/index.ts';
 import type { JsonRequest, LlmProvider, ManifestSuggestion, PatternDef, Template, TemplateManifest } from '../src/index.ts';
-import { buildFixturePptx, card, cardsManifest, fixtureManifest, fixtureWithSlide, gridManifest } from './fixture.ts';
+import { buildFixturePptx, cardsManifest, fixtureManifest, fixtureWithSlide, fixtureWithTextCards, gridManifest } from './fixture.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const pptx = buildFixturePptx();
@@ -259,33 +259,38 @@ test('a row with arrows among its items is drafted to hold what it draws', async
     })),
   } as TemplateManifest;
   assert.deepEqual(kindsOf(suggestChanges(loadTemplate(steps, without), { kinds: ['row-max', 'row-widen'] })), ['row-max card-row', 'row-widen card-row']);
+
+  // A manifest that 0.2.0 drafted takes two to three of such a row. It is offered neither more nor wider.
+  const asBefore: TemplateManifest = { ...manifest, patterns: manifest.patterns.map((pattern) => ({ ...pattern, repeat: { ...(pattern.repeat as NonNullable<typeof pattern.repeat>), min: 2 } })) };
+  assert.deepEqual(suggestChanges(loadTemplate(steps, asBefore), { kinds: ['row-max', 'row-widen'] }), []);
 });
 
 test('a text-only variant never gives one item of a row a place of its own', () => {
-  // Three cards on the left and a photograph on the right. The cards are a row, which is laid out as one.
+  // Three cards on the left, as text boxes on the slide, and a photograph on the right.
   const photo = `<p:pic><p:nvPicPr><p:cNvPr id="60" name="Photo"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rId2"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="5700000" y="1300000"/><a:ext cx="3000000" cy="3000000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`;
-  const beside = fixtureWithSlide(4, (xml) =>
-    xml.replace(card(10, 6000000), card(10, 3300000)).replace(card(20, 4000000), card(20, 1900000)).replace(card(30, 2000000), card(30, 500000)).replace('</p:spTree>', `${photo}</p:spTree>`),
-  );
-  const cards = patternOf(cardsManifest, 'cards');
-  const withPhoto: TemplateManifest = {
-    ...cardsManifest,
-    patterns: [
-      {
-        ...cards,
-        slots: [...cards.slots.filter((slot) => slot.kind === 'text'), { name: 'photo', kind: 'image', imageKind: 'photo', shapeId: '60' }],
-        repeat: { item: 'card', slots: ['card{n}Text'], shapes: [['10'], ['20'], ['30']], min: 2, max: 3 },
-      },
-    ],
-  };
-  const template = loadTemplate(beside, withPhoto);
-  assert.deepEqual(errorsOf(template), []);
-  const made = changeManifest(template, [{ op: 'derivePattern', pattern: 'cards', variant: 'text-only' }]);
-  // Either the slide has other text to widen, or the variant is refused: in neither case does a card get a box.
-  for (const pattern of made.manifest.patterns) {
-    for (const slot of pattern.slots) if (/^card\d/.test(slot.name)) assert.equal('box' in slot ? slot.box : undefined, undefined, `${pattern.id}.${slot.name}`);
-  }
-  if (made.rejected.length > 0) assert.match(made.rejected[0]?.reason ?? '', /the text beside the picture is the row of cards, which the software lays out itself and cannot widen|no text beside the picture has room to widen/);
+  const body = `<p:sp><p:nvSpPr><p:cNvPr id="40" name="Body"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="500000" y="1300000"/><a:ext cx="3800000" cy="500000"/></a:xfrm></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr sz="1200"/><a:t>SAMPLE BODY TEXT</a:t></a:r></a:p></p:txBody></p:sp>`;
+  // The slide's title is left as designed here, so the cards are the only text the deck writes.
+  const slots: TemplateManifest['patterns'][number]['slots'] = [
+    ...[1, 2, 3].map((n): TemplateManifest['patterns'][number]['slots'][number] => ({ name: `card${n}Text`, kind: 'text', shapeId: `${n}1`, maxChars: 20 })),
+    { name: 'photo', kind: 'image', imageKind: 'photo', shapeId: '60' },
+  ];
+  const repeat = { item: 'card', slots: ['card{n}Text'], shapes: [['11'], ['21'], ['31']], min: 2, max: 3 };
+  const rowOnly: TemplateManifest = { ...fixtureManifest, patterns: [{ id: 'cards', sourceSlide: 4, description: 'Cards beside a photo.', slots, repeat }] };
+
+  // The row is all the text beside the picture: the software lays a row out as one, so there is nothing to widen.
+  const alone = loadTemplate(fixtureWithTextCards([500000, 1900000, 3300000], photo), rowOnly);
+  assert.deepEqual(errorsOf(alone), []);
+  const refused = changeManifest(alone, [{ op: 'derivePattern', pattern: 'cards', variant: 'text-only' }]);
+  assert.match(refused.rejected[0]?.reason ?? '', /the text beside the picture is the row of cards, which the software lays out itself and cannot widen/);
+  assert.ok(!kindsOf(suggestChanges(alone)).includes('variant cards text-only'));
+
+  // With a body text above the row, that text widens and the row is left alone.
+  const withBody: TemplateManifest = { ...rowOnly, patterns: [{ ...(rowOnly.patterns[0] as TemplateManifest['patterns'][number]), slots: [...slots, { name: 'body', kind: 'text', shapeId: '40', maxChars: 60 }] }] };
+  const made = changeManifest(loadTemplate(fixtureWithTextCards([500000, 1900000, 3300000], body + photo), withBody), [{ op: 'derivePattern', pattern: 'cards', variant: 'text-only' }]);
+  assert.deepEqual(made.rejected, []);
+  const variant = patternOf(made.manifest, 'cards-text-only');
+  assert.ok((variant.slots.find((slot) => slot.name === 'body') as { box?: unknown }).box, 'the body takes the room the picture leaves');
+  for (const slot of variant.slots) if (/^card\d/.test(slot.name)) assert.equal((slot as { box?: unknown }).box, undefined, `${slot.name} stays where the row puts it`);
 });
 
 test('an icon suggestion is one change for a row, true of every item, and gone once taken', () => {

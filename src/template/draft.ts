@@ -325,7 +325,8 @@ export async function draftManifest(pptx: Uint8Array | PptxPackage, options: Dra
 
   // How many items a row takes is a fact of the slide, so it is settled here and not left for review.
   const settle: SuggestionKind[] = [...((options.rows ?? 'fit') === 'fit' ? (['row-max'] as const) : []), ...(options.widen !== undefined ? (['row-widen'] as const) : [])];
-  if (settle.length > 0) {
+  const settleRows = () => {
+    if (settle.length === 0) return;
     const wanted = suggestChanges({ pkg, manifest }, { kinds: settle, ...(options.widen !== undefined ? { widen: options.widen } : {}) });
     // One change for each row, so that one sentence says what it takes.
     const perRow = new Map<string, ManifestChange>();
@@ -335,7 +336,8 @@ export async function draftManifest(pptx: Uint8Array | PptxPackage, options: Dra
     const settled = changeWith({ pkg, manifest }, [...perRow.values()], info);
     manifest = settled.manifest;
     notes.push(...settled.applied.map((change) => change.message));
-  }
+  };
+  settleRows();
 
   // Variants are worked out by code from the drafted patterns; no model is asked.
   const withVariants: PatternDef[] = [];
@@ -351,6 +353,8 @@ export async function draftManifest(pptx: Uint8Array | PptxPackage, options: Dra
     }
   }
   manifest = { ...manifest, patterns: withVariants };
+  // A variant copies its pattern's row, and may have other room for it: without the picture, a row can take more.
+  if (withVariants.length > ordered.length) settleRows();
   skipped.sort((a, b) => a.slide - b.slide);
   return { manifest, skipped, issues: checkManifest({ pkg, manifest }), notes, suggestions: suggestChanges({ pkg, manifest }) };
 }
