@@ -3,6 +3,49 @@
 What changed in each version, newest first, with what to do when upgrading. The version you have installed is
 in `node_modules/slotdeck/package.json`.
 
+## Unreleased
+
+### Added
+
+- **Variants the studio derives by itself.** A new `changeManifest` operation,
+  `{ op: 'derivePattern', pattern, variant }`, makes a second pattern from a pattern's slide and works out every
+  position and budget from the shapes of the slide. Variants: `mirror` (the picture and what sits beside it
+  change sides, including a photo that runs off the edge of the slide), `text-only` (the picture is left out
+  and the text widens over the room it leaves) and `without` (an optional text named in `slot` is left out and
+  what sits under it moves up). A variant the slide does not allow is refused with the reason. See "Variants
+  the code works out" in [layout-freedom.md](layout-freedom.md) and `derivePattern` in
+  [template-studio.md](template-studio.md).
+- **`editManifest` understands requests for a variant**, such as "add a mirrored version of the photo slides".
+  The model names the variant; it still never sets a position.
+- **`patternVariants(template, pattern)`** lists the variants a pattern allows, with the reason for each one it
+  does not, for a studio screen that offers them as buttons. `VARIANTS` is the list of variant names.
+- **`variants` on `draftManifest`** adds the mirror image and the text-only version of every drafted pattern
+  that allows one. Off by default: see "Variants in a draft" in [template-studio.md](template-studio.md).
+- **A slot can show a part of the design in another place.** A slot with `"empty": "keep"` and a `box` keeps
+  its shape's content and puts the shape at the box, and may point at any shape that is not inside a group,
+  a group as a whole included. `derivePattern` adds such slots (`moved1`, `moved2`, ...) for the shapes of a
+  variant that are not slots. See [manifest-format.md](manifest-format.md).
+- **The demo template has mirrored photo patterns**: `text-and-photo-mirrored`, `photo-stat-mirrored` and
+  `list-with-photo-mirrored`, made with the new operation.
+
+### Changed
+
+- **A slot with `"empty": "keep"` and a `box` now moves its shape.** Before, the `box` of such a slot was
+  ignored unless a deck gave the slot a value. `checkManifest` no longer reports that such a slot points at a
+  shape of another kind, or that it has no character budget.
+
+### Upgrading
+
+- Nothing has to change. Decks and manifests made before render as they did, with one exception: a manifest
+  that already had a slot with both `"empty": "keep"` and a `box` now shows that shape at the box. Remove the
+  `box` to keep the shape where the template drew it.
+- To get mirrored layouts from your own template, run
+  `changeManifest(template, [{ op: 'derivePattern', pattern: '<id>', variant: 'mirror' }])` for each pattern with
+  a picture beside its text, render `sampleDeck` to look at the result, and store the new manifest.
+  `patternVariants(template, '<id>')` says which patterns allow it.
+- A planner that is offered a pattern and its mirror image chooses between them by their descriptions. Give
+  each a description that says where the picture is.
+
 ## 0.1.2
 
 ### Added

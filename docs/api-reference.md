@@ -439,6 +439,17 @@ function changeManifest(template: Template, changes: ManifestChange[]): ChangeRe
 function editManifest(template: Template, instruction: string, options: ManifestEditOptions): Promise<ManifestEditResult>;
 ```
 
+### `patternVariants`, `VARIANTS`
+
+```ts
+function patternVariants(template: Template, pattern: string): VariantOption[];
+const VARIANTS: readonly ['mirror', 'text-only', 'without'];
+type PatternVariant = (typeof VARIANTS)[number];
+```
+
+The variants of a pattern that `changeManifest` can derive with `{ op: 'derivePattern' }`, each with whether
+the pattern's slide allows it. See [template-studio.md](template-studio.md).
+
 ### `describeManifest`, `describeSlot`
 
 ```ts
@@ -493,6 +504,7 @@ interface DraftOptions {
   name?: string;
   slideImage?: (slide: number) => SlidePicture | undefined | Promise<SlidePicture | undefined>;
   slides?: number[];
+  variants?: Array<'mirror' | 'text-only'>; // also add these variants of every pattern that allows them
   concurrency?: number;
   onProgress?: (event: { done: number; total: number; slide: number }) => void;
   signal?: AbortSignal;
@@ -506,6 +518,7 @@ type ManifestChange =
   | { op: 'setManifest'; name?: string; language?: string; direction?: Direction; alignOnDirectionChange?: AlignPolicy; textScale?: number | null }
   | { op: 'addPattern'; slide: number; id: string; description?: string }
   | { op: 'copyPattern'; pattern: string; id: string; description?: string }
+  | { op: 'derivePattern'; pattern: string; variant: PatternVariant; slot?: string; id?: string; description?: string }
   | { op: 'removePattern'; pattern: string }
   | { op: 'setPattern'; pattern: string; id?: string; description?: string; figures?: boolean }
   | { op: 'addSlot'; pattern: string; shape: string; role: Role; name?: string; optional?: boolean }
@@ -547,6 +560,7 @@ interface ChangeResult {
   rejected: Array<{ index: number; change: ManifestChange; reason: string }>;
   issues: ManifestIssue[];
 }
+interface VariantOption { variant: PatternVariant; slot?: string; available: boolean; note: string }
 interface ManifestEditOptions { llm: LlmProvider; signal?: AbortSignal }
 interface ManifestEditResult extends ChangeResult { note: string }
 

@@ -24,7 +24,7 @@ import { CHART_CONTENT_TYPE, CHART_REL_TYPE, WORKBOOK_CONTENT_TYPE, WORKBOOK_REL
 import { setPicture } from './picture.ts';
 import type { PictureFill } from './picture.ts';
 import { setTable } from './table.ts';
-import { applyRepeat, placeShape } from './repeat.ts';
+import { applyRepeat, moveShape, placeShape } from './repeat.ts';
 import { adjustText, setShapeText } from './text.ts';
 
 const SLIDE_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.slide+xml';
@@ -157,6 +157,9 @@ export function renderDeck(template: Template, deck: DeckSpec, options: RenderOp
 
       if (action.type === 'remove') {
         removeNode(shape);
+      } else if (action.type === 'keep') {
+        // A part of the design that a derived pattern shows in another place.
+        if ((slot.kind === 'text' || slot.kind === 'image') && slot.box) moveShape(shape, slot.box, pres.slideWidth, pres.slideHeight);
       } else if (action.type === 'text' && slot.kind === 'text') {
         const align = slot.alignOnDirectionChange ?? manifest.alignOnDirectionChange ?? 'flip';
         const text = { flipAlign: directionChanged && align === 'flip' };

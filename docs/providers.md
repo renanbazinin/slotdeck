@@ -108,7 +108,7 @@ Every top-level answer slotdeck asks for is a JSON object, so looking for the ou
 
 ### Choosing a model
 
-- The requests are small. Measured on the demo template (15 patterns): the outline request is a system prompt
+- The requests are small. Measured on the demo template when it had 15 patterns: the outline request is a system prompt
   of about 600 characters, a prompt of about 3,600 characters and a schema of about 700 characters. The writing
   request for a 15-slide deck is a prompt of about 1,500 characters and a schema of about 9,800 characters. Any
   current general-purpose model handles this.

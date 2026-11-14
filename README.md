@@ -218,7 +218,9 @@ data reaches a model, and a pptx can be rebuilt from the JSON and the pictures a
 new plan or deck under a new id; earlier versions stay.
 
 To show a plan as layout thumbnails, render the template once and name the pictures after the patterns
-(`scripts/pattern-thumbnails.ts`). `examples/plan-preview.ts` turns a plan into a self-contained page.
+(`scripts/pattern-thumbnails.ts`). A derived pattern, such as a mirror image, looks different from the slide it
+comes from: `scripts/template-deck.ts` writes a deck with one slide per pattern, filled with the template's own
+sample content, to take those pictures from. `examples/plan-preview.ts` turns a plan into a self-contained page.
 
 ### Other models
 
@@ -295,6 +297,11 @@ manifest allows and the code moves the shapes; the model never positions anythin
   given a font size (`fontSize`) and paragraph spacing, and any shape can be dropped. In the demo template
   `text-only` is the photo slide with its photo dropped and its text widened, and `chart-native` is the chart
   slide with a native chart in place of the picture.
+- **Variants the code works out.** For three common variants nobody types a box: the mirror image of a slide
+  with a picture, the same slide without its picture, and a slide without one of its optional lines. One
+  operation (`derivePattern`) makes each, moving the shapes and measuring the budgets again; the header, logo
+  and page number stay where they are. In the demo template `text-and-photo-mirrored`, `photo-stat-mirrored`
+  and `list-with-photo-mirrored` were made this way.
 
 ## Template studio
 
@@ -374,6 +381,7 @@ const view = studioView(template);
 | `removeSlot` | The shape goes back to being part of the design. |
 | `setRepeat`, `removeRepeat` | How many items a row or grid takes. Finds the row from numbered slot names when the pattern has none. |
 | `addPattern`, `copyPattern`, `setPattern`, `removePattern` | Which slides are patterns, their ids and descriptions, and variants of a pattern from the same slide. |
+| `derivePattern` | A variant of a pattern that the code lays out by itself: `mirror`, `text-only`, or `without` an optional text. Refused with the reason when the slide does not allow it. |
 | `setManifest` | The template's name, language, direction and alignment policy. |
 
 What the code adds to each change:
@@ -387,7 +395,8 @@ What the code adds to each change:
   is refused, and the rest of the list is still applied.
 
 `editManifest` makes one model call, and a second when some of its operations were refused, so the model can
-correct them. The model never sets a position: `box` and `span` exist only for changes made by hand.
+correct them. The model never sets a position: `box` and `span` exist only for changes made by hand, and a
+variant it asks for by name is laid out by the code.
 `describeManifest(template)` returns the text the model reads, for an app that wants to show the manifest to its
 own chat model.
 
@@ -402,6 +411,7 @@ own chat model.
    native-chart variant. It also asked for five cards in a row; that was refused, because four fit.
 3. A few changes by hand with `changeManifest`: the text-only variant, chart colours, mirrored alignment for
    right-to-left decks, and tighter budgets for figures and one-line captions.
+4. Three `derivePattern` operations for the mirror images of the slides with a photo.
 
 A draft is a starting point. What it does not contain, and a person adds while reviewing: budgets tuned by eye,
 derived patterns, wider rows, picture areas and chart colours. On a 36-slide corporate template (not included
@@ -487,8 +497,7 @@ powershell -File scripts/render-pptx.ps1 -Path out/patterns-en.pptx -OutDir out/
 - **What has been run.** The whole path was run against the Gemini Developer API with `gemini-3.8-flash` for
   text and `gemini-3.1-flash-image` for photos, in English and Hebrew. Vertex AI is supported by the adapter but
   has not been run live. Output was checked by rendering in PowerPoint on Windows; other viewers were not tested.
-- **Not built:** swapping the photo side, stacked or combined charts, speaker notes, and reading back changes
-  made in PowerPoint.
+- **Not built:** stacked or combined charts, speaker notes, and reading back changes made in PowerPoint.
 
 ## The demo template and pictures
 

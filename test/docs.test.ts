@@ -75,13 +75,14 @@ test('the complete deck example is a valid deck for the demo template', () => {
 test('the studio recipes work on the demo template as written', () => {
   const recipes = read('template-studio.md').split('### Recipes')[1]?.split('\n## ')[0] ?? '';
   const blocks = [...recipes.matchAll(/```ts\n([\s\S]*?)\n```/g)].map((match) => match[1] as string);
-  assert.equal(blocks.length, 6);
+  assert.equal(blocks.length, 8);
   const pptx = readFileSync(join(root, 'templates', 'demo.pptx'));
   const shipped = JSON.parse(readFileSync(join(root, 'templates', 'demo.manifest.json'), 'utf8')) as TemplateManifest;
-  // The recipes make the two derived patterns the demo manifest already has, so start without them.
+  // The recipes make derived patterns the demo manifest already has, so start without them.
   const start = changeManifest(loadTemplate(pptx, shipped), [
     { op: 'removePattern', pattern: 'chart-native' },
     { op: 'removePattern', pattern: 'text-only' },
+    { op: 'removePattern', pattern: 'photo-stat-mirrored' },
   ]).manifest;
   for (const block of blocks) {
     // A recipe is a change or a list of changes, written as a JavaScript literal.
@@ -94,7 +95,7 @@ test('the studio recipes work on the demo template as written', () => {
 
 test('operations, roles and tools are documented under their real names', () => {
   const studio = read('template-studio.md');
-  for (const op of ['setManifest', 'addPattern', 'copyPattern', 'removePattern', 'setPattern', 'addSlot', 'removeSlot', 'setSlot', 'setRepeat', 'removeRepeat']) {
+  for (const op of ['setManifest', 'addPattern', 'copyPattern', 'derivePattern', 'removePattern', 'setPattern', 'addSlot', 'removeSlot', 'setSlot', 'setRepeat', 'removeRepeat']) {
     assert.match(studio, new RegExp(`#### \`${op}\``), `${op} has no section in template-studio.md`);
   }
   for (const role of ROLES) assert.match(studio, new RegExp(`\`${role}\``), `role ${role} is not in template-studio.md`);

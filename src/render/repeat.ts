@@ -56,6 +56,24 @@ export function placeShape(shape: Element, box: SlideBox, slideWidth: number, sl
 }
 
 /**
+ * Places a shape that keeps its content, such as a group or an ornament. When the area is the
+ * shape's own size, only its position is set, so that nothing inside a group is rescaled by the
+ * rounding of the box.
+ */
+export function moveShape(shape: Element, box: SlideBox, slideWidth: number, slideHeight: number): void {
+  const xfrm = shapeTransform(shape);
+  const off = xfrm && childElement(xfrm, NS.a, 'off');
+  const ext = xfrm && childElement(xfrm, NS.a, 'ext');
+  const same = (value: string | null | undefined, wanted: number, whole: number) => Math.abs(Number(value ?? 0) - wanted) <= whole * 0.0002;
+  if ((shape.parentNode as Element | null)?.localName === 'spTree' && off && ext && same(ext.getAttribute('cx'), box.w * slideWidth, slideWidth) && same(ext.getAttribute('cy'), box.h * slideHeight, slideHeight)) {
+    off.setAttribute('x', String(Math.round(box.x * slideWidth)));
+    off.setAttribute('y', String(Math.round(box.y * slideHeight)));
+    return;
+  }
+  placeShape(shape, box, slideWidth, slideHeight);
+}
+
+/**
  * Gives a row or grid of items the requested number: removes the surplus or copies the last
  * item, then lays the items out again around the centre of the area they occupied. Rows keep
  * the template's spacing when there is room and tighten when there is not; a grid uses as few

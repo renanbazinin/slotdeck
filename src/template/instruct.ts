@@ -5,6 +5,7 @@ import type { JsonSchema, LlmProvider } from '../llm/provider.ts';
 import type { Template } from '../render/render.ts';
 import { changeManifest, describeSlot } from './change.ts';
 import type { ChangeResult, ManifestChange } from './change.ts';
+import { VARIANTS } from './derive.ts';
 import { inspectTemplate } from './inspect.ts';
 import type { TableTextStyle } from './manifest.ts';
 import { ROLES, describeShape, frameFacts } from './measure.ts';
@@ -20,7 +21,7 @@ export interface ManifestEditResult extends ChangeResult {
   note: string;
 }
 
-const OPS = ['setSlot', 'addSlot', 'removeSlot', 'setRepeat', 'removeRepeat', 'setPattern', 'copyPattern', 'removePattern', 'addPattern', 'setManifest'] as const;
+const OPS = ['setSlot', 'addSlot', 'removeSlot', 'setRepeat', 'removeRepeat', 'setPattern', 'copyPattern', 'derivePattern', 'removePattern', 'addPattern', 'setManifest'] as const;
 
 /** What an operation's values may set. A table's text styles are spelled out so that every value is one word or number. */
 const PROPERTIES = [
@@ -56,6 +57,7 @@ const PROPERTIES = [
   'direction',
   'alignOnDirectionChange',
   'textScale',
+  'variant',
 ] as const;
 
 const SYSTEM = [
@@ -73,7 +75,8 @@ const GUIDE = [
   '- setRepeat (pattern): how many items the row or grid of a pattern takes. Values: min, max.',
   '- removeRepeat (pattern): the items stop being a row whose number can change.',
   '- setPattern (pattern): Values: id (renames the pattern), description, figures ("true" offers it only when a brief has numbers).',
-  '- copyPattern (pattern): a second pattern from the same slide, to turn into a variant with further operations. Values: id of the new pattern, and optionally description.',
+  '- copyPattern (pattern): a second pattern from the same slide, to turn into a variant by hand with further operations. Values: id of the new pattern, and optionally description.',
+  '- derivePattern (pattern): a second pattern from the same slide that the software lays out itself. Values: variant, and optionally id and description. Variants: "mirror" (the picture and the text beside it change sides), "text-only" (the picture is left out and the text widens over the room it leaves), "without" (leaves out the optional text named in "slot"; what sits under it moves up). The software works out every position and budget, and refuses a variant the slide does not allow. In a description, say what the layout holds and where the picture is.',
   '- removePattern (pattern).',
   '- addPattern: make a slide without a pattern into one. Values: slide, id, and optionally description.',
   '- setManifest: settings of the whole template. Values: name, language, direction ("rtl" or "ltr"), alignOnDirectionChange ("flip" or "keep"), textScale (a factor on the body text of every deck, such as "1.3" when the template\'s body text is too small; "1" for the designed size).',
@@ -242,6 +245,8 @@ function toChange(raw: Record<string, unknown>): ManifestChange | undefined {
       return put({ op, pattern } as ManifestChange, { id: str('id'), description: str('description'), figures: bool('figures') });
     case 'copyPattern':
       return put({ op, pattern, id: str('id') ?? '' } as ManifestChange, { description: str('description') });
+    case 'derivePattern':
+      return put({ op, pattern, variant: choice('variant', VARIANTS) ?? values.get('variant') ?? '' } as ManifestChange, { slot: slot || undefined, id: str('id'), description: str('description') });
     case 'addPattern':
       return put({ op, slide: count('slide') ?? 0, id: str('id') ?? '' } as ManifestChange, { description: str('description') });
     case 'setManifest':

@@ -5,10 +5,10 @@ manifest with a model, checking it, seeing whether its budgets hold, and changin
 
 ```ts
 import {
-  draftManifest, checkManifest, sampleDeck, changeManifest, editManifest,
+  draftManifest, checkManifest, sampleDeck, changeManifest, editManifest, patternVariants, VARIANTS,
   studioView, describeManifest, describeSlot, inspectTemplate, ROLES, PptxPackage, loadTemplate, renderDeck,
 } from 'slotdeck';
-import type { ManifestChange, SlotPatch, ChangeResult, ManifestIssue, Role, StudioView } from 'slotdeck';
+import type { ManifestChange, SlotPatch, ChangeResult, ManifestIssue, PatternVariant, Role, StudioView, VariantOption } from 'slotdeck';
 ```
 
 ## The workflow
@@ -21,8 +21,8 @@ import type { ManifestChange, SlotPatch, ChangeResult, ManifestIssue, Role, Stud
 5. Repeat 2 to 4 until the sample looks right. Store the manifest as JSON next to the pptx.
 
 A draft is a starting point for review, not a finished manifest. What a draft does not contain, and a person
-adds: budgets tuned by eye, derived patterns (a text-only variant, a native chart), wider rows, picture areas,
-chart colours, and alignment choices for decks that read the other way.
+adds: budgets tuned by eye, derived patterns (a mirrored or text-only variant, a native chart), wider rows,
+picture areas, chart colours, and alignment choices for decks that read the other way.
 
 ## `draftManifest(pptx, options)`
 
@@ -32,6 +32,7 @@ const { manifest, skipped, issues } = await draftManifest(pptxBytes, {
   name: 'marketing',                             // optional name for the manifest; default 'template'
   slideImage: (slide) => thumbnails.get(slide),  // optional: { mimeType, data } of a picture of slide N (1-based); may be async
   slides: [1, 2, 5],                             // optional: only these slides; default all
+  variants: ['mirror', 'text-only'],             // optional: also add these variants of every pattern that allows them; default none
   concurrency: 4,                                // optional: slides sent to the model at once; default 4
   onProgress: ({ done, total, slide }) => {},    // optional
   signal,                                        // optional
@@ -70,6 +71,18 @@ Any PNG or JPEG of the slide works; 480 pixels wide is enough.
 
 To redo one slide after changing the pptx, call `draftManifest` with `slides: [n]` and add the pattern it
 returns to your manifest.
+
+### Variants in a draft
+
+With `variants`, the draft also gets the mirror image and the text-only version of every drafted pattern whose
+slide allows one (see `derivePattern` below). They are worked out by code after the model has labelled the
+slides, so they cost no model call. A pattern that allows no variant simply gets none.
+
+This is off by default, for three reasons. Every variant is one more layout to review in the sample deck.
+Whether a mirrored slide suits a design is for a person to say. And a variant is only as good as the labels it
+is derived from, which a draft has not had reviewed yet. The usual order is therefore: draft, review, then add
+the variants you want with `derivePattern`. Use `variants` when a studio should show everything a template can
+do in one pass. The `without` variant is never added by a draft, because it needs a slot to be named.
 
 ### Roles
 
@@ -167,7 +180,38 @@ instead to get a complete pattern.
 { op: 'copyPattern', pattern: string, id: string, description?: string }
 ```
 
-A second pattern from the same slide, to turn into a variant with further operations.
+A second pattern from the same slide, to turn into a variant by hand with further operations. For the mirror
+image, a text-only version or a version without an optional line, use `derivePattern`, which works out the
+positions.
+
+#### `derivePattern`
+
+```ts
+{ op: 'derivePattern', pattern: string, variant: 'mirror' | 'text-only' | 'without', slot?: string, id?: string, description?: string }
+```
+
+A second pattern from the same slide, laid out by the code. You name the variant; every position and budget is
+worked out from the shapes of the slide. `VARIANTS` lists the variant names.
+
+| Variant | What it makes | Default id |
+| --- | --- | --- |
+| `mirror` | The picture and what sits beside it change sides. | `<pattern>-mirrored` |
+| `text-only` | The picture is left out, and the text beside it widens over the room it leaves. | `<pattern>-text-only` |
+| `without` | The optional text named in `slot` is left out, and what sits under it moves up. | `<pattern>-no-<slot>` |
+
+- `slot` is needed for `without` only, and must name an optional text slot (`"empty": "remove"`).
+- `id` and `description` replace the defaults. The default description is the source's with a sentence added,
+  such as `Mirrored: here the picture is on the left and the text on the right. Alternate it with "photo-stat" for variety.`
+  Write your own when the source's description names a side ("a photo on the right"), so that the planner
+  reads one clear statement.
+- The new pattern is placed right after its source. The source is not changed.
+- A variant can be derived from a variant: the mirror image, then that without its subtitle.
+- A variant the slide does not allow is refused with the reason, such as
+  `"cover" has no photo, graphic or chart of its own, so there is nothing to change sides with`.
+
+How each variant is worked out, what it leaves alone and when it is refused is described under "Variants the
+code works out" in [layout-freedom.md](layout-freedom.md). `patternVariants` (below) says in advance which
+variants a pattern allows.
 
 #### `removePattern`
 
@@ -259,6 +303,8 @@ The items stop being a row whose number can change.
   with the most that do: `5 cards do not fit side by side: each is 21% of the slide wide and the row has 93%. The most is 4`.
 - **Row items stay alike.** A `setSlot` on one item's slot (`card1Icon`) is made to that slot of every item.
   Slots of a row cannot be renamed, moved or removed one by one; remove the row first.
+- **Variants are laid out.** `derivePattern` moves and resizes the shapes of a variant by itself, measures
+  the budgets of every text that changed size, and writes a description the planner can choose the variant by.
 - **Nothing is left broken.** After each change the manifest is checked against the pptx. A change that
   introduces a new error is refused.
 
@@ -283,14 +329,26 @@ A native chart in place of a sample chart picture, as a second pattern:
 ]
 ```
 
-A text-only slide from a slide with a photo:
+The mirror image of a slide with a photo, for variety in a deck with several such slides:
+
+```ts
+{ op: 'derivePattern', pattern: 'photo-stat', variant: 'mirror', description: 'One key figure with a title and a short explanation on the left, and a photo on the right.' }
+```
+
+A text-only slide from a slide with a photo, then larger text with room for three paragraphs (the budget
+follows the new size):
 
 ```ts
 [
-  { op: 'copyPattern', pattern: 'text-and-photo', id: 'text-only' },
-  { op: 'addSlot', pattern: 'text-only', shape: '2', role: 'decoration' },              // the photo
-  { op: 'setSlot', pattern: 'text-only', slot: 'body', box: { x: 0.04, y: 0.49, w: 0.72, h: 0.39 }, fontSize: 20, maxParagraphs: 3 },
+  { op: 'derivePattern', pattern: 'text-and-photo', variant: 'text-only', id: 'text-only' },
+  { op: 'setSlot', pattern: 'text-only', slot: 'body', fontSize: 20, maxParagraphs: 3, paragraphGap: 12 },
 ]
+```
+
+The same slide for decks that have no subtitle, with the body moved up into its place:
+
+```ts
+{ op: 'derivePattern', pattern: 'text-and-photo', variant: 'without', slot: 'subtitle' }
 ```
 
 Smaller table text and fewer columns (the cell budget is measured for you):
@@ -329,7 +387,10 @@ by hand. One model call, and a second when some operations were refused, so the 
 
 - Instructions can be in any language.
 - A person may refer to a slide by number or to a pattern by id.
-- The model cannot set positions: `box` and `span` exist only for changes made by hand.
+- The model cannot set positions: `box` and `span` exist only for changes made by hand. It can ask for a
+  variant by name ("add a mirrored version of the photo slides", "a version of slide 2 without the picture"),
+  which becomes a `derivePattern` operation: the model names the variant, and the code works out where
+  everything goes.
 - An operation the model got wrong shows up in `rejected` with the reason; nothing of it is applied.
 
 `describeManifest(template)` returns the text the model reads: every pattern with its slots and limits, and the
@@ -361,6 +422,23 @@ that are slots, and on a click offers the shape's `roles` (sending `addSlot`) or
 `setSlot`). Nothing is stored in the view: call it again after every change.
 
 `describeSlot(slot)` gives a slot in a few words, such as `text, up to 40 characters, required`.
+
+## `patternVariants(template, pattern)`
+
+```ts
+const options = patternVariants(template, 'text-and-photo');
+// [
+//   { variant: 'mirror',    available: true, note: 'the mirror image of "text-and-photo", with the picture on the left and what sat beside it on the right. ...' },
+//   { variant: 'text-only', available: true, note: '"text-and-photo" without its picture "photo". Widened over the freed area, with budgets to match: ...' },
+//   { variant: 'without', slot: 'subtitle', available: true, note: '"text-and-photo" without "subtitle": body moves up and has more room (431 characters).' },
+// ]
+```
+
+No model, and nothing is changed. It lists the variants `derivePattern` could make from a pattern: the mirror
+image, the text-only version, and one `without` for each optional text slot. An entry with `available: false`
+carries the reason in `note`; an available one says there what the variant would do. A studio screen can show
+the available ones as buttons that send `{ op: 'derivePattern', pattern, variant, slot }`. It throws when the
+template has no pattern of that id.
 
 ## `inspectTemplate(pkg)`
 

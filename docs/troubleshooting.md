@@ -168,7 +168,9 @@ Plain `Error`s from `renderDeck`. They mean the manifest and the pptx disagree, 
 - **Animations** on template slides were not tested. A slide whose animated shape is removed may make PowerPoint
   offer to repair the file; use templates without animations, or keep animated shapes out of optional slots.
 - **Not read back:** changes made to a rendered file in PowerPoint. The deck JSON is the source of truth.
-- **Not possible:** swapping the side of a photo; positioning a shape from a deck.
+- **Not possible:** positioning a shape from a deck; mirroring a slide because of a deck's reading direction
+  (a mirrored layout is a separate pattern: see "Variants the code works out" in
+  [layout-freedom.md](layout-freedom.md)).
 - **What was tested.** Output was checked by rendering in PowerPoint on Windows. Other programs that open pptx
   files were not tested. The Gemini adapters were run against the Gemini Developer API; the Vertex AI endpoint
   is supported but was not run live.

@@ -2,8 +2,11 @@
 // directly; `editManifest` has a model turn an instruction into the same operations. Either way
 // each change is checked against the pptx before it is kept, so a manifest cannot be broken here.
 import type { Template } from '../render/render.ts';
+import type { PptxPackage } from '../pptx/package.ts';
 import { checkManifest } from './check.ts';
 import type { ManifestIssue } from './check.ts';
+import { VARIANTS, deriveVariant } from './derive.ts';
+import type { PatternVariant } from './derive.ts';
 import { detectRepeat } from './draft.ts';
 import { inspectTemplate } from './inspect.ts';
 import type { ShapeInfo, SlideInfo, TemplateInfo } from './inspect.ts';
@@ -63,6 +66,11 @@ export type ManifestChange =
   | { op: 'addPattern'; slide: number; id: string; description?: string }
   /** A second pattern from the same slide, to be changed into a variant. */
   | { op: 'copyPattern'; pattern: string; id: string; description?: string }
+  /**
+   * A second pattern from the same slide, laid out by the software: the `mirror` image, the
+   * `text-only` version, or the pattern `without` the optional text named in `slot`.
+   */
+  | { op: 'derivePattern'; pattern: string; variant: PatternVariant; slot?: string; id?: string; description?: string }
   | { op: 'removePattern'; pattern: string }
   | { op: 'setPattern'; pattern: string; id?: string; description?: string; figures?: boolean }
   /** Makes a shape a slot, with limits measured from the shape. Replaces the shape's slot when it has one. */
@@ -118,7 +126,7 @@ export function changeManifest(template: Template, changes: ManifestChange[]): C
   changes.forEach((change, index) => {
     const next = structuredClone(manifest);
     try {
-      const message = apply(next, change, info);
+      const message = apply(next, change, info, template.pkg);
       const before = new Set(errors(manifest));
       const fresh = errors(next).filter((error) => !before.has(error));
       if (fresh.length > 0) reject(fresh.join('; '));
@@ -132,7 +140,7 @@ export function changeManifest(template: Template, changes: ManifestChange[]): C
   return { manifest, applied, rejected, issues: checkManifest({ pkg: template.pkg, manifest }, info) };
 }
 
-function apply(manifest: TemplateManifest, change: ManifestChange, info: TemplateInfo): string {
+function apply(manifest: TemplateManifest, change: ManifestChange, info: TemplateInfo, pkg: PptxPackage): string {
   const patternOf = (id: string): PatternDef => manifest.patterns.find((pattern) => pattern.id === id) ?? reject(`there is no pattern "${id}"`);
   const slideOf = (pattern: PatternDef): SlideInfo => info.slides[pattern.sourceSlide - 1] ?? reject(`pattern "${pattern.id}" points at slide ${pattern.sourceSlide}, which the template does not have`);
   const freeId = (raw: string): string => {
@@ -208,6 +216,19 @@ function apply(manifest: TemplateManifest, change: ManifestChange, info: Templat
       return `"${copy.id}" is a new pattern, a copy of "${source.id}".`;
     }
 
+    case 'derivePattern': {
+      const source = patternOf(change.pattern);
+      if (!VARIANTS.includes(change.variant)) reject(`"${String(change.variant)}" is not a variant; the variants are ${VARIANTS.join(', ')}`);
+      const request = change.slot ? { variant: change.variant, slot: change.slot } : { variant: change.variant };
+      const made = deriveVariant(source, request, { pkg, info, manifest });
+      if ('refused' in made) return reject(made.refused);
+      const copy = made.pattern;
+      copy.id = freeId(change.id?.trim() || `${source.id}-${made.suffix}`);
+      copy.description = change.description?.trim() || made.description;
+      manifest.patterns.splice(manifest.patterns.indexOf(source) + 1, 0, copy);
+      return `"${copy.id}" is a new pattern from slide ${copy.sourceSlide}: ${made.summary}`;
+    }
+
     case 'removePattern': {
       const pattern = patternOf(change.pattern);
       if (manifest.patterns.length === 1) reject('a template needs at least one pattern');
@@ -244,7 +265,7 @@ function apply(manifest: TemplateManifest, change: ManifestChange, info: Templat
       const existing = pattern.slots.find((slot) => slot.shapeId === shape.id);
       if (change.role === 'fixed') {
         if (!existing) reject(`shape #${shape.id} is not a slot, so it already stays as designed`);
-        return apply(manifest, { op: 'removeSlot', pattern: pattern.id, slot: (existing as SlotDef).name }, info);
+        return apply(manifest, { op: 'removeSlot', pattern: pattern.id, slot: (existing as SlotDef).name }, info, pkg);
       }
       if (existing && inRow(pattern, existing.name)) reject(`"${existing.name}" is part of the row of ${pattern.repeat?.item ?? 'item'}s; remove the row first`);
       const others = new Set(pattern.slots.filter((slot) => slot !== existing).map((slot) => slot.name));
@@ -443,6 +464,7 @@ function describeKind(shape: ShapeInfo): string {
 export function describeSlot(slot: SlotDef): string {
   const policy = slot.empty ?? 'error';
   if (policy === 'drop') return 'a decoration that is always removed';
+  if (policy === 'keep' && 'box' in slot && slot.box && slot.kind === 'text' && slot.maxChars === undefined) return 'part of the design, kept as it is in another place';
   const parts: string[] = [];
   if (slot.kind === 'text') {
     parts.push(slot.deckField ? `text from the deck's "${slot.deckField}"` : 'text');

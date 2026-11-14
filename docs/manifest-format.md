@@ -92,6 +92,17 @@ operations (`changeManifest`) or by instruction (`editManifest`), and verify it 
 
 Slots with `empty` of `keep` or `drop` are never offered to the planning model.
 
+A slot with `"empty": "keep"` and a `box` shows a part of the design in another place: the shape keeps its
+content and is put at the box. Such a slot may point at any shape that is not inside a group (a drawn shape,
+a line, a text, a group as a whole), with `"kind": "text"`, or `"kind": "image"` for a picture. When the box is
+the shape's own size, only its position changes, so nothing inside a group is rescaled. The `derivePattern`
+operation adds these slots, named `moved1`, `moved2`, ..., for shapes that a variant moves and that are not
+slots themselves:
+
+```json
+{ "name": "moved1", "kind": "text", "shapeId": "14", "empty": "keep", "box": { "x": 0.52, "y": 0.3, "w": 0.4, "h": 0.05 } }
+```
+
 ## Text slot (`kind: "text"`)
 
 | Field | Type | Meaning |
@@ -176,7 +187,8 @@ of item 4's slots, named with the next number.
 - Every `sourceSlide` exists in the pptx.
 - Every `shapeId` is a shape on that slide, and is the right kind of shape for the slot (a text slot points at
   a shape with text, an image slot at a picture, a table slot at a table). A slot with `"empty": "drop"` may
-  point at any shape, because the shape is only ever removed.
+  point at any shape, because the shape is only ever removed; so may a slot with `"empty": "keep"` and a `box`,
+  because the shape is only ever moved.
 - Pattern ids are unique. Slot names are unique within a pattern.
 - A `box` is not set on a shape inside a group. A chart slot's shape is not inside a group.
 - For a `repeat`: a slot exists for every name template and every drawn item; every shape id exists; all items

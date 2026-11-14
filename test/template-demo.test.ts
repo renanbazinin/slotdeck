@@ -21,9 +21,11 @@ const slideTexts = (pptx: Uint8Array, number: number): string[] =>
 test('the demo manifest matches the demo template', () => {
   assert.deepEqual(checkManifest(template), []);
   assert.deepEqual([manifest.language, manifest.direction, manifest.alignOnDirectionChange], ['en', 'ltr', 'flip']);
-  assert.equal(manifest.patterns.length, 15);
-  // Every slide of the template is in use, two of them for a second, derived pattern.
-  assert.deepEqual(studioView(template).slides.map((slide) => slide.patterns.length), [1, 2, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1]);
+  assert.equal(manifest.patterns.length, 18);
+  // Every slide of the template is in use. Five serve derived patterns too: a text-only slide, a
+  // native chart, and the mirror image of each of the three slides with a photo.
+  assert.deepEqual(studioView(template).slides.map((slide) => slide.patterns.length), [1, 3, 2, 2, 1, 1, 1, 1, 2, 1, 1, 1, 1]);
+  assert.deepEqual(manifest.patterns.filter((pattern) => pattern.id.endsWith('-mirrored')).map((pattern) => pattern.id), ['text-and-photo-mirrored', 'photo-stat-mirrored', 'list-with-photo-mirrored']);
 });
 
 test('a sample deck with full rows renders from the demo template', () => {
@@ -31,7 +33,7 @@ test('a sample deck with full rows renders from the demo template', () => {
   assert.deepEqual(validateDeck(manifest, deck, { assets: Object.keys(assets), layout: 'adaptive' }), []);
   const { pptx, warnings } = renderDeck(template, deck, { assets, layout: 'adaptive' });
   assert.deepEqual(warnings, []);
-  assert.equal(Object.keys(unzipSync(pptx)).filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name)).length, 15);
+  assert.equal(Object.keys(unzipSync(pptx)).filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name)).length, 18);
 });
 
 test('the example decks fit the demo template without a warning', () => {
@@ -50,7 +52,7 @@ test('the example decks fit the demo template without a warning', () => {
 
 test('a right-to-left deck on the left-to-right template mirrors its text and keeps the frame', () => {
   const deck = JSON.parse(readFileSync(join(root, 'examples', 'decks', 'patterns.he.deck.json'), 'utf8')) as DeckSpec;
-  const assets = Object.fromEntries(['photo-tall', ...icons].map((id) => [id, picture]));
+  const assets = Object.fromEntries(['photo-tall', 'photo-square', ...icons].map((id) => [id, picture]));
   const xml = strFromU8(unzipSync(renderDeck(template, deck, { assets, layout: 'adaptive' }).pptx)['ppt/slides/slide2.xml'] as Uint8Array);
   const paragraphOf = (text: string): string => {
     const end = xml.indexOf(text);

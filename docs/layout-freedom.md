@@ -125,12 +125,116 @@ Example: a text-only pattern derived from a photo pattern.
 }
 ```
 
-With `changeManifest` this is three operations (`copyPattern`, `addSlot` with role `decoration`, `setSlot` with
-a `box`), and the budgets are worked out for you: see [template-studio.md](template-studio.md).
+By hand, with `changeManifest`, this is three operations (`copyPattern`, `addSlot` with role `decoration`,
+`setSlot` with a `box`), and the budgets are worked out for you: see [template-studio.md](template-studio.md).
+For the three common variants below, the boxes are worked out as well.
+
+### Variants the code works out
+
+Three kinds of derived pattern need no box typed in. One `changeManifest` operation makes each, and
+`editManifest` lets a model ask for one by name:
+
+```ts
+changeManifest(template, [
+  { op: 'derivePattern', pattern: 'text-and-photo', variant: 'mirror' },      // text-and-photo-mirrored
+  { op: 'derivePattern', pattern: 'text-and-photo', variant: 'text-only' },   // text-and-photo-text-only
+  { op: 'derivePattern', pattern: 'text-and-photo', variant: 'without', slot: 'subtitle' }, // text-and-photo-no-subtitle
+]);
+```
+
+Each makes a new pattern next to its source. A deck uses it by its id like any other pattern, and the planner
+chooses it by its description; nothing changes in the deck format. `patternVariants(template, id)` says which
+variants a pattern allows before you ask.
+
+**How the shapes of a slide are sorted.** The code looks at the shapes that sit directly on the slide (a group
+counts as one shape) and puts each in one of these:
+
+| What | Which shapes | In a variant |
+| --- | --- | --- |
+| Locked | The logo, rules and other elements that repeat across the template's slides; page-number, date and footer placeholders; texts that are deck fields. | Never moved. |
+| The picture | The pattern's one photo, graphic or chart slot. Icons, pictures inside a row of items and pictures kept as decoration do not count. | Changes sides, or is left out. |
+| Beside the picture | Every shape that shares no width with the picture: titles, texts, panels. | Moves as one block, so edges the shapes share stay shared. |
+| With the picture | Shapes in the picture's own column: a sticker on it, a caption under it. | Goes where the picture goes. |
+| Around both | A title above the picture and its text, a caption under both, a background behind both. | Stays. |
+
+#### `mirror`
+
+The picture and the block beside it change sides.
+
+- They change places inside the room the two share, so the slide keeps its margins. A picture that runs off
+  one edge of the slide runs off the other edge instead, and the block keeps the margin it had.
+- Nothing changes size, so no budget changes. The block is moved, not flipped: text boxes that shared a left
+  edge still share one.
+- Locked shapes stay. When the picture would cover one near the top or the bottom of the slide (a full-height
+  photo landing on the logo), the picture is cut back to start a little under it, or end a little above it,
+  and the photo is cropped to the new frame.
+- Shapes that are not slots, and groups, are moved too. The operation adds a slot for each, named `moved1`,
+  `moved2`, ..., with `"empty": "keep"` and a `box`: the shape keeps its content and is shown at the box.
+- A mirrored pattern is a layout of its own that a deck or the planner picks. A deck's reading direction still
+  never moves a shape: a right-to-left deck made from `photo-stat` has its photo where the template drew it.
+
+In the demo template, `text-and-photo-mirrored`, `photo-stat-mirrored` and `list-with-photo-mirrored` were made
+this way.
+
+#### `text-only`
+
+The picture is left out and the text beside it widens.
+
+- The picture's slot stays under its name with `"empty": "drop"`, so its shape is always removed. Decoration
+  drawn on the picture is removed with it. Texts the deck writes are never removed.
+- Every text slot beside the picture grows towards the side the picture was on: up to the picture's far edge,
+  or, for a picture that ran off the slide, up to the margin the text keeps on its own side. All of them end
+  on the same edge.
+- The column is no wider than about 90 characters a line of the slot with the largest budget, because lines
+  that run the width of a slide are hard to read. It keeps the edge where the template's reading starts (the
+  left edge of a left-to-right template) and gives up room at the other.
+- A text stops short of any other shape that is in its way.
+- The budget of each widened text is measured again for its new width.
+- To enlarge the text of the new pattern, follow with `setSlot` and a `fontSize`; the budget follows.
+
+#### `without`
+
+One optional text is left out for good, and the room it took is used.
+
+- `slot` names the text. It must be optional (`"empty": "remove"`). In the variant it has `"empty": "drop"`.
+- The shapes under it in its column move up, so that the first of them starts where the text started.
+- The lowest text among them keeps its lower edge, so it becomes taller and its budget grows. This is done
+  only when its text starts at the top of its box; a text that is centred or sits at the bottom of its box is
+  moved and keeps its size, so that the text does not shift inside it.
+- When nothing sits under the text, the text above it is extended down to where the text ended, on the same
+  condition.
+- When there is nothing to move or extend, the variant is the same slide with the slot gone.
+
+Why make one when the slot is optional anyway: in `strict` layout an optional slot has to be filled, and in
+`adaptive` layout leaving it empty leaves its room empty. The variant closes the gap and lets the text under it
+say more.
+
+#### When a variant is refused
+
+`derivePattern` refuses, with the reason, when the slide does not allow the variant:
+
+| Reason | Example |
+| --- | --- |
+| The pattern has no picture of its own. | `"cover" has no photo, graphic or chart of its own, so there is nothing to change sides with` |
+| It has more than one. | `"gallery" has 2 pictures (photo1, photo2); this needs a slide with one picture beside its text` |
+| Nothing sits beside the picture. | A wide diagram under a title: `nothing sits beside the picture "diagramGraphic", ...` |
+| The picture has content on both of its sides. | A picture in the middle of the slide. |
+| A shape that keeps its place is where something would go. | `shape #9 ("Source: annual report"), which keeps its place, is where shape #7 would go` |
+| A row of items would have to move. | The renderer lays a row out again for every item count, so a box cannot place it. |
+| A table would have to move. | A table slot has no `box`. |
+| The text to widen is inside a group. | `the text beside the picture is inside a group, and a shape inside a group cannot take a box` |
+| The slot to leave out is not an optional text. | `"title" is required; only an optional text can be left out; "text-and-photo" has "subtitle"` |
+
+Render the sample deck after deriving a variant (`sampleDeck`, then `renderDeck`): it holds every pattern,
+variants included, filled to its budgets.
 
 ## What is not possible
 
 - Moving a shape to an arbitrary place from a deck. Positions come only from the template and the manifest.
-- Swapping the side of a photo.
+- Mirroring a slide because of a deck's reading direction. A mirrored layout is a separate pattern
+  (`derivePattern` with `mirror`) that a deck names or the planner chooses.
+- Deriving a variant that would move a row or grid of items, or a table.
+- A mirror or text-only variant of a slide with several pictures, or with a picture between two texts.
+- A `box` for a shape inside a group. A variant moves a group as a whole and never resizes what is in it.
 - A grid with more items than the template slide draws.
 - New kinds of slides that the template has no sample for.
