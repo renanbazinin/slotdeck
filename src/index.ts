@@ -43,6 +43,8 @@ export { sampleDeck } from './template/sample.ts';
 export type { SampleOptions } from './template/sample.ts';
 export { changeManifest, describeSlot } from './template/change.ts';
 export type { ChangeResult, ManifestChange, SlotPatch } from './template/change.ts';
+export { SUGGESTION_KINDS, suggestChanges } from './template/suggest.ts';
+export type { ManifestSuggestion, SuggestOptions, SuggestionKind } from './template/suggest.ts';
 export { VARIANTS, patternVariants } from './template/derive.ts';
 export type { PatternVariant, VariantOption } from './template/derive.ts';
 export { describeManifest, editManifest } from './template/instruct.ts';

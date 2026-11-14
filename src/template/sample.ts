@@ -4,13 +4,13 @@ import { solidPng } from '../util/png.ts';
 import { measurerFor } from '../text/measure.ts';
 import type { TextMeasurer } from '../text/measure.ts';
 import { inspectTemplate } from './inspect.ts';
-import { COPY_ID_STEP, effectiveSlots, itemRange, tableAtScale, textBudget } from './manifest.ts';
+import { COPY_ID_STEP, defaultItems, effectiveSlots, itemRange, tableAtScale, textBudget } from './manifest.ts';
 import type { PatternDef, TextSlotDef } from './manifest.ts';
 
 export interface SampleOptions {
   /** How full to make each text slot, as a share of its budget. Defaults to 0.95. */
   fill?: number;
-  /** For patterns with a row of items: `drawn` (default) uses the template's number, `max` the most allowed. */
+  /** For patterns with a row of items: `drawn` (default) uses the template's number, or the nearest the row takes; `max` the most allowed; `min` the fewest. */
   items?: 'drawn' | 'max' | 'min';
   /**
    * What "full" means for a text slot. `budget` (default) is the slot's character budget. `box` is
@@ -41,7 +41,8 @@ export function sampleDeck(template: Template, options: SampleOptions = {}): { d
   const slides = manifest.patterns.map((pattern): SlideSpec => {
     const shapes = new Map((info.slides[pattern.sourceSlide - 1]?.shapes ?? []).map((shape) => [shape.id, shape]));
     const range = itemRange(pattern);
-    const items = range ? (options.items === 'max' ? range.max : options.items === 'min' ? range.min : range.drawn) : undefined;
+    // By default the number the template draws, or the nearest the row takes, so that the sample is a deck the manifest allows.
+    const items = range ? (options.items === 'max' ? range.max : options.items === 'min' ? range.min : defaultItems(pattern)) : undefined;
     const slots: Record<string, SlotValue> = {};
 
     for (const slot of effectiveSlots(pattern, items)) {

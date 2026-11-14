@@ -1,6 +1,6 @@
 import type { LayoutMode } from '../deck/validate.ts';
 import type { JsonSchema } from '../llm/provider.ts';
-import { effectiveSlots, itemRange, tableAtScale, textBudget } from '../template/manifest.ts';
+import { defaultItems, effectiveSlots, itemRange, rowLayout, tableAtScale, textBudget } from '../template/manifest.ts';
 import type { ChartSlotDef, ImageSlotDef, PatternDef, SlotDef, TableSlotDef, TemplateManifest, TextSlotDef } from '../template/manifest.ts';
 
 /** An icon the app offers; the planning model picks from these by id. */
@@ -207,7 +207,22 @@ export function describeCatalog(catalog: Catalog, textScale = 1): string {
         .join('; ');
       // A row that widens its items gives each of fewer items more room; the limits shown are those of the drawn number.
       const roomier = repeat?.widen && repeat.widen > 1 && range && range.min < (repeat.columns ?? range.drawn) ? ` With fewer on a line than ${repeat.columns ?? range.drawn}, each ${repeat.item} is wider and holds more text.` : '';
-      const count = repeat && range && range.max > range.min ? `\n  items: ${range.min} to ${range.max} ${repeat.item}s, numbered N = 1, 2, ...${roomier}` : '';
+      // How the items sit is said too: a wish for columns side by side is met by a row, not by a
+      // grid that breaks them over lines. A grid that never takes more than one line holds is a row.
+      const placed =
+        !repeat || repeat.columns === undefined || !range || range.max <= repeat.columns
+          ? 'side by side in one row'
+          : range.max === range.min
+            ? `in lines of ${Math.max(...rowLayout(repeat, range.min))}`
+            : `in lines of up to ${repeat.columns}`;
+      // A row that takes one number of items says so too: its description gives no number.
+      const count = !repeat || !range
+        ? ''
+        : range.max > range.min
+          ? `\n  items: ${range.min} to ${range.max} ${repeat.item}s ${placed}, numbered N = 1, 2, ...${roomier}`
+          : range.min > 1
+            ? `\n  items: always ${range.min} ${repeat.item}s ${placed}, numbered N = 1, ..., ${range.min}`
+            : `\n  items: always 1 ${repeat.item}, numbered N = 1`;
       // Said in so many words, so that a wish for text-only slides can be met without guessing from the slots.
       const plain = isPlainText(pattern.def) ? ' Plain text.' : '';
       return `- ${pattern.def.id}: ${pattern.def.description}${plain}\n  slots: ${slots}${count}`;
@@ -355,8 +370,9 @@ export function outlineSchema(catalog: Catalog, count: { min: number; max: numbe
 
 /** The `items` property of an outline entry, when some pattern on offer has a row of items to vary. */
 export function itemsProperty(catalog: Catalog): Record<string, JsonSchema> {
-  const ranges = catalog.patterns.map((pattern) => itemRange(pattern.def)).filter((range) => range !== undefined && range.max > range.min);
-  if (ranges.length === 0) return {};
+  const ranges = catalog.patterns.map((pattern) => itemRange(pattern.def)).filter((range) => range !== undefined);
+  if (!ranges.some((range) => (range as { min: number; max: number }).max > (range as { min: number }).min)) return {};
+  // A row that takes one number is counted in too: the list names that number, so it must be allowed.
   return {
     items: {
       type: 'integer',
@@ -372,9 +388,10 @@ export function readItems(pattern: PatternDef, value: unknown): { items?: number
   const range = itemRange(pattern);
   if (!range) return {};
   const items = Number(value);
-  if (value === undefined || value === null || !Number.isInteger(items)) return { items: range.drawn };
+  // With no number given, the number drawn, or the nearest the row takes.
+  if (value === undefined || value === null || !Number.isInteger(items)) return { items: defaultItems(pattern) as number };
   if (items < range.min || items > range.max) {
-    return { problem: `pattern "${pattern.id}" takes ${range.min} to ${range.max} ${pattern.repeat?.item ?? 'item'}s, not ${items}` };
+    return { problem: `pattern "${pattern.id}" takes ${range.min === range.max ? `exactly ${range.min}` : `${range.min} to ${range.max}`} ${pattern.repeat?.item ?? 'item'}s, not ${items}` };
   }
   return { items };
 }

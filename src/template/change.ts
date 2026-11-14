@@ -7,7 +7,7 @@ import { checkManifest } from './check.ts';
 import type { ManifestIssue } from './check.ts';
 import { VARIANTS, deriveVariant } from './derive.ts';
 import type { PatternVariant } from './derive.ts';
-import { detectRepeat } from './draft.ts';
+import { OVERLAP, detectRepeat, droppedShapes, movedRowSlots, rowFit, rowOnSlide, rowSpan } from './rows.ts';
 import { inspectTemplate } from './inspect.ts';
 import type { ShapeInfo, SlideInfo, TemplateInfo } from './inspect.ts';
 import type { AlignPolicy, Direction, EmptyPolicy, ImageKind, PatternDef, SlideBox, SlotDef, TableTextStyle, TemplateManifest } from './manifest.ts';
@@ -117,7 +117,11 @@ const policyWord = (policy: EmptyPolicy) => ({ error: 'required', remove: 'optio
  * manifest pointing at something the pptx does not have, is rejected with a reason and skipped.
  */
 export function changeManifest(template: Template, changes: ManifestChange[]): ChangeResult {
-  const info = inspectTemplate(template.pkg);
+  return changeWith(template, changes, inspectTemplate(template.pkg));
+}
+
+/** {@link changeManifest} for a caller that has already read the pptx's shapes. */
+export function changeWith(template: Template, changes: ManifestChange[], info: TemplateInfo): ChangeResult {
   const errors = (manifest: TemplateManifest) =>
     checkManifest({ pkg: template.pkg, manifest }, info)
       .filter((issue) => issue.severity === 'error')
@@ -311,7 +315,8 @@ function apply(manifest: TemplateManifest, change: ManifestChange, info: Templat
       if (typeof patch.fontSize === 'number' && !(patch.fontSize >= 4 && patch.fontSize <= 200)) reject('a font size is between 4 and 200 points');
 
       const row = inRow(pattern, slot.name);
-      if (row && (patch.name !== undefined || patch.deckField !== undefined || patch.box !== undefined)) {
+      // Taking a box away moves nothing: it puts the slot back where the slide draws it, in every item.
+      if (row && (patch.name !== undefined || patch.deckField !== undefined || (patch.box !== undefined && patch.box !== null))) {
         reject(`"${slot.name}" is part of the row of ${pattern.repeat?.item ?? 'item'}s, so it cannot be renamed, moved or tied to a deck field; remove the row first`);
       }
       // Items of a row must match, so a change to one item's slot is made to that slot of every item.
@@ -350,33 +355,71 @@ function apply(manifest: TemplateManifest, change: ManifestChange, info: Templat
         const detected =
           detectRepeat(pattern.slots.filter((slot) => !(slot.kind === 'text' && slot.deckField)), slide) ??
           reject(`"${pattern.id}" has no row of like items. Name the slots of each item alike with a number (card1Heading, card1Text, card2Heading, card2Text) and they become a row`);
+        // A row is laid out from where the slide draws its items. A slot with a box is shown elsewhere.
+        const moved = movedRowSlots(pattern.slots, detected);
+        if (moved.length > 0) reject(`${moved.map((name) => `"${name}"`).join(', ')} ${moved.length === 1 ? 'is' : 'are'} shown in another place than the slide draws ${moved.length === 1 ? 'it' : 'them'}, and a row is laid out from where the slide draws its items. Take the box away (setSlot with box: null) and they become a row`);
         pattern.repeat = detected;
         found = true;
       }
       const repeat = pattern.repeat as NonNullable<PatternDef['repeat']>;
       const drawn = repeat.shapes.length;
+      const hadSpan = repeat.span !== undefined;
+      {
+        // The same holds for a row that is there already: it keeps what it has, and takes no more items or wider ones.
+        const moved = movedRowSlots(pattern.slots, repeat);
+        const more = (change.max !== undefined && change.max > drawn) || (typeof change.widen === 'number' && change.widen > 1);
+        if (moved.length > 0 && more) reject(`${moved.map((name) => `"${name}"`).join(', ')} ${moved.length === 1 ? 'is' : 'are'} shown in another place than the slide draws ${moved.length === 1 ? 'it' : 'them'}, so the row cannot take more ${repeat.item}s or wider ones: they are laid out from where the slide draws them. Take the box away (setSlot with box: null) first`);
+      }
+      let spanned = '';
       if (change.item !== undefined) repeat.item = change.item.trim().toLowerCase() || reject('the item needs a name, such as "card"');
       if (change.span === null) delete repeat.span;
       else if (change.span !== undefined) {
         if (!(change.span.left >= 0 && change.span.right <= 1 && change.span.left < change.span.right)) reject('a span runs from left to right, both between 0 and 1');
+        // Only a row whose items sit on the slide is laid out between the limits of a span.
+        if (!rowOnSlide(slide, repeat)) reject(`the ${repeat.item}s sit inside a group, so they stay where the group draws them and a span would change nothing`);
         repeat.span = { left: change.span.left, right: change.span.right };
+        spanned = ` The row may now spread from ${Math.round(change.span.left * 100)}% to ${Math.round(change.span.right * 100)}% of the slide's width.`;
       }
       const min = change.min ?? repeat.min ?? drawn;
-      const max = change.max ?? repeat.max ?? drawn;
+      let max = change.max ?? repeat.max ?? drawn;
       for (const value of [min, max]) if (!Number.isInteger(value) || value < 1) reject('the fewest and most items are whole numbers of 1 or more');
       if (min > max) reject(`the fewest (${min}) cannot be more than the most (${max})`);
 
-      let widened = '';
+      let widened = spanned;
       if (repeat.columns !== undefined) {
         if (max > drawn) reject(`a grid holds at most the ${drawn} ${repeat.item}s it draws; ${max} would need a new line of them`);
       } else {
         // A row may hold more than it draws, as long as the items fit side by side in the room there is.
-        const room = rowRoom(slide, repeat.shapes);
-        const onSlide = repeat.shapes.flat().every((id) => slide.shapes.find((shape) => shape.id === id)?.groupId === undefined);
-        const fits = (left: number, right: number) => Math.max(1, Math.floor((right - left - room.itemWidth) / (room.itemWidth * 1.03) + 1 + 1e-6));
-        const span = repeat.span ?? { left: room.area.x, right: room.area.x + room.area.w };
-        if (max > fits(span.left, span.right)) {
-          const most = change.span === undefined && onSlide ? fits(room.left, room.right) : fits(span.left, span.right);
+        const room = rowRoom(slide, repeat.shapes, droppedShapes(pattern.slots));
+        const onSlide = rowOnSlide(slide, repeat);
+        const fits = (left: number, right: number) => rowFit(room.itemWidth, left, right);
+        const span = rowSpan(slide, repeat, room.area);
+        // Items beyond the drawn ones are copies of the last, set out by the step from the first
+        // item to the second. Where that step is shorter than the widest item they would overlap.
+        const stepShort = room.pitch < room.itemWidth - OVERLAP;
+        if (change.max !== undefined && max > drawn && stepShort) {
+          reject(`further ${repeat.item}s are set out by the step from the first to the second, which is shorter than the widest ${repeat.item} is wide: more than the ${drawn} drawn would lie on top of each other`);
+        }
+        // Taking a span away takes away the room it gave. The row then takes what fits without it.
+        if (change.span === null && hadSpan && onSlide && change.max === undefined && max > drawn && (stepShort || max > fits(span.left, span.right))) {
+          // A row whose step is shorter than its widest item takes no more than it draws.
+          const most = stepShort ? drawn : Math.max(drawn, fits(span.left, span.right));
+          if (min > most) reject(`without the span ${most} ${repeat.item}s fit side by side, fewer than the fewest the row takes (${min}); give a lower fewest in the same change`);
+          max = most;
+          spanned = ` Without the span no more than ${most} fit side by side.`;
+          widened = spanned;
+        }
+        // What the template draws fits in the width it is drawn in, however close its items sit.
+        // A span narrower than that is not the row as drawn, and has to pass the fit like any other.
+        const covers = span.right - span.left >= room.area.w - 0.001;
+        const asDrawn = max <= drawn && covers;
+        // The fit is counted when the change is about the number of items or the span. A change
+        // to something else, such as `widen`, or one that takes a span away, is not held up by a
+        // number an earlier version accepted.
+        const asks = change.max !== undefined || (change.span !== undefined && change.span !== null) || found;
+        if (asks && !asDrawn && max > fits(span.left, span.right)) {
+          // The room beside a row always holds the row itself, and so do limits as wide as the row.
+          const most = change.span === undefined && onSlide ? Math.max(drawn, fits(room.left, room.right)) : covers ? Math.max(drawn, fits(span.left, span.right)) : fits(span.left, span.right);
           if (max > most) {
             reject(`${max} ${repeat.item}s do not fit side by side: each is ${Math.round(room.itemWidth * 100)}% of the slide wide and the row has ${Math.round(((change.span === undefined && onSlide ? room.right - room.left : span.right - span.left)) * 100)}%. The most is ${most}`);
           }

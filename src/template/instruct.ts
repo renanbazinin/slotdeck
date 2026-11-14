@@ -141,7 +141,7 @@ export function describeManifest(template: Template): string {
     const repeat = pattern.repeat;
     if (repeat) {
       const drawn = repeat.shapes.length;
-      lines.push(`  ${repeat.columns ? `grid of ${drawn} ${repeat.item}s, ${repeat.columns} to a line` : `row of ${drawn} ${repeat.item}s`} (${repeat.slots.join(', ')}); takes ${repeat.min ?? drawn} to ${repeat.max ?? drawn}${repeat.widen && repeat.widen > 1 ? `; fewer on a line grow up to ${repeat.widen} times as wide` : ''}`);
+      lines.push(`  ${repeat.columns ? `grid of ${drawn} ${repeat.item}s, ${repeat.columns} to a line` : `row of ${drawn} ${repeat.item}s`} (${repeat.slots.join(', ')}); takes ${(repeat.min ?? drawn) === (repeat.max ?? drawn) ? `exactly ${repeat.min ?? drawn}` : `${repeat.min ?? drawn} to ${repeat.max ?? drawn}`}${repeat.widen && repeat.widen > 1 ? `; fewer on a line grow up to ${repeat.widen} times as wide` : ''}`);
     }
     lines.push('  slots:');
     for (const slot of pattern.slots) {

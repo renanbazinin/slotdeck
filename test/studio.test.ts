@@ -155,8 +155,9 @@ test('draftManifest turns model labels and measured facts into a manifest', asyn
   assert.deepEqual(row?.slots.find((slot) => slot.name === 'card1Text'), { name: 'card1Text', kind: 'text', shapeId: '11', size: 9, maxChars: 40 });
   assert.deepEqual(row?.slots.find((slot) => slot.name === 'card1Icon'), { name: 'card1Icon', kind: 'image', imageKind: 'icon', shapeId: '12' });
   assert.equal(row?.slots.find((slot) => slot.name === 'firstLabel')?.empty, 'drop', 'a decoration is dropped when the content changes');
-  // Numbered names become a row, with each item's outermost shape.
-  assert.deepEqual(row?.repeat, { item: 'card', slots: ['card{n}Text', 'card{n}Icon'], shapes: [['10'], ['20'], ['30']], min: 2, max: 3 });
+  // Numbered names become a row, with each item's outermost shape. It takes as many cards as the
+  // slide has room for, not only the three it draws (test/suggest.test.ts has the reasoning).
+  assert.deepEqual(row?.repeat, { item: 'card', slots: ['card{n}Text', 'card{n}Icon'], shapes: [['10'], ['20'], ['30']], min: 2, max: 6, span: { left: 0.03, right: 0.97 } });
 
   const grid = manifest.patterns[2];
   assert.equal(grid?.figures, true);

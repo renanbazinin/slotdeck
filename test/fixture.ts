@@ -2,7 +2,7 @@
 // paragraphs, a cropped picture, a picture inside a scaled group, a slide-number field,
 // speaker notes, revision history and named sections. It is only read by slotdeck itself;
 // the master and layout are stubs, so PowerPoint would not open it.
-import { strToU8, zipSync } from 'fflate';
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { placeholderPhoto } from '../examples/placeholder.ts';
 import type { TemplateManifest } from '../src/index.ts';
 
@@ -93,7 +93,7 @@ const slide3 =
 
 // A row of three cards, first in reading order at the right. Each card is a group holding a text
 // box and a picture; the first card also has a text box that sits outside its group.
-const card = (id: number, x: number, y = 2000000) =>
+export const card = (id: number, x: number, y = 2000000) =>
   `<p:grpSp><p:nvGrpSpPr><p:cNvPr id="${id}" name="Card"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>` +
   `<p:grpSpPr><a:xfrm><a:off x="${x}" y="${y}"/><a:ext cx="1000000" cy="1500000"/><a:chOff x="${x}" y="${y}"/><a:chExt cx="1000000" cy="1500000"/></a:xfrm></p:grpSpPr>` +
   `<p:sp><p:nvSpPr><p:cNvPr id="${id + 1}" name="Card text"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>` +
@@ -203,6 +203,27 @@ export function buildFixturePptx(): Uint8Array {
     'ppt/media/image1.png': placeholderPhoto(8, 8, [0, 0, 0], [255, 255, 255]),
   };
   return zipSync(Object.fromEntries(Object.entries(files).map(([name, data]) => [name, typeof data === 'string' ? strToU8(data) : data])));
+}
+
+/** The fixture with the XML of one of its slides changed, for a case the fixture does not draw. */
+export function fixtureWithSlide(number: number, change: (xml: string) => string): Uint8Array {
+  const files = unzipSync(buildFixturePptx());
+  const name = `ppt/slides/slide${number}.xml`;
+  files[name] = strToU8(change(strFromU8(files[name] as Uint8Array)));
+  return zipSync(files);
+}
+
+/**
+ * The fixture's card slide with its three cards as plain text boxes on the slide (#11, #21, #31,
+ * each 1,000,000 EMU wide at the given left edges) and whatever else is given. Grouped cards cannot
+ * take a box of their own; these can, which is what some cases need.
+ */
+export function fixtureWithTextCards(lefts: [number, number, number], more = ''): Uint8Array {
+  const box = (id: number, x: number) =>
+    `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="Card text"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>` +
+    `<p:spPr><a:xfrm><a:off x="${x}" y="2000000"/><a:ext cx="1000000" cy="1500000"/></a:xfrm></p:spPr>` +
+    `<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr sz="900"/><a:t>SAMPLE CARD</a:t></a:r></a:p></p:txBody></p:sp>`;
+  return fixtureWithSlide(4, (xml) => `${xml.slice(0, xml.indexOf('<p:grpSp>'))}${box(11, lefts[0])}${box(21, lefts[1])}${box(31, lefts[2])}${more}</p:spTree></p:cSld></p:sld>`);
 }
 
 export const fixtureManifest: TemplateManifest = {

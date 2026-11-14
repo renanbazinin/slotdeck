@@ -117,6 +117,22 @@ export function slotFromShape(shape: ShapeInfo, info: TemplateInfo, role: Role, 
   return slot;
 }
 
+/** The longest side a pictogram has, in inches. A photograph in a layout is drawn larger than this. */
+const PICTOGRAM_SIDE = 1.1;
+
+/**
+ * Whether a picture is a pictogram by what can be measured: no side longer than 1.1 inch, not a
+ * JPEG (the format of photographs), and not cropped into a frame as a portrait is. A layout that
+ * asks for a photograph in a place this small gets an icon instead.
+ */
+export function isPictogram(shape: ShapeInfo, info: TemplateInfo): boolean {
+  if (shape.kind !== 'picture' || !shape.image) return false;
+  const inches = (fraction: number, of: number) => (fraction * of) / 914400;
+  if (inches(shape.box.w, info.slideWidth) > PICTOGRAM_SIDE || inches(shape.box.h, info.slideHeight) > PICTOGRAM_SIDE) return false;
+  if (/\.jpe?g$/i.test(shape.image.part) || shape.image.cropped) return false;
+  return shape.image.geometry === 'rect' || shape.image.geometry === 'custom';
+}
+
 /** Whether a shape of a role's kind carries text. */
 export function isTextRole(role: Role): boolean {
   return TEXT_ROLES.has(role);
@@ -187,11 +203,34 @@ export function unionBox(boxes: Box[]): Box {
   return { x, y, w: Math.max(...boxes.map((box) => box.x + box.w)) - x, h: Math.max(...boxes.map((box) => box.y + box.h)) - y };
 }
 
+/** What {@link rowRoom} finds about a row on its slide. All lengths are fractions of the slide width. */
+export interface RowRoom {
+  /** The row as drawn. */
+  area: Box;
+  /** The width of the widest item. */
+  itemWidth: number;
+  /** From the first item to the second: the step the renderer sets further items out by. */
+  pitch: number;
+  /** The space the template draws between neighbouring items, on average. Never below zero. */
+  gap: number;
+  /** How far the row may spread. */
+  left: number;
+  right: number;
+  /**
+   * A shape that stays where it is lies among the items: an arrow between two of them, a line
+   * through them, a highlight behind some of them. More items would be drawn across it, so the
+   * row holds what it draws.
+   */
+  pinned: boolean;
+}
+
 /**
  * How far a row of items may spread on its slide: from the row as drawn outwards, until the
- * slide's margin or another shape that sits beside the row. Fractions of the slide width.
+ * slide's margin, another shape that sits beside the row, or the edge of a shape the row is drawn
+ * on. `removed` names shapes the pattern takes off every slide (slots with `empty: 'drop'`), which
+ * limit nothing.
  */
-export function rowRoom(slide: SlideInfo, itemShapes: string[][]): { area: Box; itemWidth: number; left: number; right: number } {
+export function rowRoom(slide: SlideInfo, itemShapes: string[][], removed: ReadonlySet<string> = new Set()): RowRoom {
   const byId = new Map(slide.shapes.map((shape) => [shape.id, shape]));
   const inRow = new Set<string>();
   const mark = (id: string) => {
@@ -211,14 +250,63 @@ export function rowRoom(slide: SlideInfo, itemShapes: string[][]): { area: Box; 
   const content = slide.shapes.filter((shape) => !isFramePlaceholder(shape) && shape.kind !== 'group' && shape.box.w < 0.9 && shape.box.x >= 0 && shape.box.x + shape.box.w <= 1);
   const margin = Math.max(0.03, Math.min(0.08, ...content.map((shape) => Math.min(shape.box.x, 1 - shape.box.x - shape.box.w)).filter((edge) => edge > 0.005)));
   const gap = 0.02;
+  const edge = 0.005;
   let left = Math.min(area.x, margin);
   let right = Math.max(area.x + area.w, 1 - margin);
+  let pinned = false;
+  const areaEnd = area.x + area.w;
+  // A group the pattern takes off every slide goes with everything in it.
+  const gone = (id: string | undefined): boolean => {
+    for (let at = id; at; at = byId.get(at)?.groupId) if (removed.has(at)) return true;
+    return false;
+  };
   for (const shape of slide.shapes) {
-    if (inRow.has(shape.id) || isFramePlaceholder(shape) || shape.kind === 'group' || shape.box.w >= 0.9) continue;
-    const overlaps = shape.box.y < area.y + area.h && shape.box.y + shape.box.h > area.y;
-    if (!overlaps) continue;
-    if (shape.box.x + shape.box.w <= area.x + 0.005) left = Math.max(left, Math.min(area.x, shape.box.x + shape.box.w + gap));
-    else if (shape.box.x >= area.x + area.w - 0.005) right = Math.min(right, Math.max(area.x + area.w, shape.box.x - gap));
+    // A shape the pattern takes off every slide is not there to be drawn across or to stop the row.
+    if (inRow.has(shape.id) || gone(shape.id) || isFramePlaceholder(shape) || shape.kind === 'group') continue;
+    const end = shape.box.x + shape.box.w;
+    // The height the shape shares with the row. A line has no height: it counts when it lies
+    // inside the row's height, not when it runs along the row's top or bottom edge.
+    const shared = Math.min(shape.box.y + shape.box.h, area.y + area.h) - Math.max(shape.box.y, area.y);
+    if (shape.box.h > 0 ? shared <= 0 : !(shape.box.y > area.y + edge && shape.box.y < area.y + area.h - edge)) continue;
+    if (end <= area.x + edge) {
+      if (shape.box.w < 0.9) left = Math.max(left, Math.min(area.x, end + gap));
+      continue;
+    }
+    if (shape.box.x >= areaEnd - edge) {
+      if (shape.box.w < 0.9) right = Math.min(right, Math.max(areaEnd, shape.box.x - gap));
+      continue;
+    }
+    // From here the shape shares width with the row. A background from edge to edge of the slide
+    // limits nothing, and neither does a shape that only brushes the row's height, such as a
+    // heading whose box dips into it.
+    if (shape.box.x <= edge && end >= 1 - edge) continue;
+    if (shape.box.h > 0 && shared < Math.min(shape.box.h, area.h) * 0.5) continue;
+    const coversStart = shape.box.x <= area.x + edge;
+    const coversEnd = end >= areaEnd - edge;
+    const overlap = Math.min(end, areaEnd) - Math.max(shape.box.x, area.x);
+    if (coversStart && coversEnd) {
+      // The row is drawn on it, as on a tinted panel: the row stays a little inside its edges.
+      left = Math.max(left, Math.min(area.x, shape.box.x + gap));
+      right = Math.min(right, Math.max(areaEnd, end - gap));
+    } else if (coversEnd && overlap < itemWidth * 0.5) {
+      // A neighbour whose box reaches a little into the row's last item: as good as beside it.
+      right = Math.min(right, areaEnd);
+    } else if (coversStart && overlap < itemWidth * 0.5) {
+      left = Math.max(left, area.x);
+    } else {
+      // It lies among the items and stays where it is.
+      pinned = true;
+      left = area.x;
+      right = areaEnd;
+    }
   }
-  return { area, itemWidth, left, right };
+  if (pinned) {
+    left = area.x;
+    right = areaEnd;
+  }
+  const ordered = boxes.slice().sort((one, other) => one.x - other.x);
+  const gaps = ordered.slice(1).map((box, index) => box.x - ((ordered[index] as Box).x + (ordered[index] as Box).w));
+  const between = gaps.length > 0 ? Math.max(0, gaps.reduce((sum, value) => sum + value, 0) / gaps.length) : 0;
+  const pitch = boxes.length > 1 ? Math.abs((boxes[1] as Box).x - (boxes[0] as Box).x) : itemWidth;
+  return { area, itemWidth, pitch, gap: between, left, right, pinned };
 }

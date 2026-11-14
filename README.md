@@ -401,8 +401,9 @@ const sample = renderDeck(template, deck, { assets }).pptx;
 **`draftManifest`** splits the work so that the model cannot break the manifest. The code measures: every
 shape's id, kind, position, font size and sample text; what sits in the same place on many slides (logo, page
 number: left alone); texts that repeat across slides (deck fields); the reading direction; a character budget
-for each text box from its size and font; a table's columns, rows and cell size; and rows or grids of like
-items, from numbered slot names. The model answers two things for each slide: whether it is a reusable layout
+for each text box from its size and font; a table's columns, rows and cell size; rows or grids of like
+items, from numbered slot names, with how many items each row has room for; and which small pictures are icons.
+The model answers two things for each slide: whether it is a reusable layout
 at all, and what role each shape plays (`title`, `text`, `list`, `number`, `photo`, `icon`, `graphic`, `table`,
 `decoration`, or `fixed`). A label for a shape that is not on the slide is discarded, and the result is run
 through `checkManifest` before it is returned.

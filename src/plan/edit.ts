@@ -10,7 +10,7 @@ import type { Direction, PatternDef, TextSize } from '../template/manifest.ts';
 import { measurerFor } from '../text/measure.ts';
 import { budgetScale, buildCatalog, describeCatalog, planPattern, readItems } from './catalog.ts';
 import type { CatalogContext, ImageDensity } from './catalog.ts';
-import { PlanError, SLIDE_KIND_RULE, asker, directionOf, hasFigures, planRoom, reviewWith } from './plan.ts';
+import { PlanError, SLIDE_KIND_RULE, asker, columnsRule, directionOf, hasFigures, planRoom, reviewWith } from './plan.ts';
 import type { PlanOptions } from './plan.ts';
 import { cleanText, suppliesText, systemPrompt, writeSlides } from './write.ts';
 import type { WriteJob } from './write.ts';
@@ -184,11 +184,13 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
       '- from: the number of the existing slide a slide is based on, or 0 for a new slide. Leave a slide out to delete it.',
       '- pattern: keep the pattern of an existing slide unless the request calls for a different layout.',
       `  ${SLIDE_KIND_RULE}`,
+      // The phrases the rule quotes are in the list of patterns, so it is given only with that list.
+      ...(offer.patterns.length > 0 ? [`  ${columnsRule('request')}`] : []),
       '- change: what to write or change on that slide. Leave it empty for every slide the request does not touch.',
       '- images: true only when the pictures or icons of that slide should change.',
       '- items: for a pattern with a row of items, the number the slide has after the change.',
     ].join('\n'),
-    offer.patterns.length > 0 ? `Patterns for new slides ("?" marks an optional slot):\n${describeCatalog(offer, budgetScale(context))}` : '',
+    offer.patterns.length > 0 ? `Patterns, for new slides and for a slide that changes its layout ("?" marks an optional slot):\n${describeCatalog(offer, budgetScale(context))}` : '',
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -208,9 +210,14 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
       if (definition?.repeat) {
         // A slide that keeps its layout keeps its number of items unless the plan says otherwise.
         const source = entry.from > 0 ? deck.slides[entry.from - 1] : undefined;
-        const count = readItems(definition, given.items ?? (source?.pattern === entry.pattern ? source.items : undefined));
-        if (count.problem) countProblems.push(`slide ${index + 1}: ${count.problem}`);
-        if (count.items !== undefined) entry.items = count.items;
+        const keeps = source?.pattern === entry.pattern;
+        // A slide that keeps its layout and states no number, in the plan or on the slide, shows
+        // what the template draws. It is given no number here, so that it is copied as it is.
+        if (!(keeps && (given.items === undefined || given.items === null) && source?.items === undefined)) {
+          const count = readItems(definition, given.items ?? (keeps ? source?.items : undefined));
+          if (count.problem) countProblems.push(`slide ${index + 1}: ${count.problem}`);
+          if (count.items !== undefined) entry.items = count.items;
+        }
       }
       return entry;
     });
@@ -239,7 +246,9 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
     return plan;
   };
 
-  const mostItems = Math.max(0, ...patternIds.map((id) => itemRange(definitions.get(id) as PatternDef)).map((range) => (range && range.max > range.min ? range.max : 0)));
+  // Rows that take one number are counted in when some row varies: the list names their number, so it must be allowed.
+  const itemRanges = patternIds.map((id) => itemRange(definitions.get(id) as PatternDef));
+  const mostItems = itemRanges.some((range) => range && range.max > range.min) ? Math.max(0, ...itemRanges.map((range) => range?.max ?? 0)) : 0;
   const planSchema = editPlanSchema(patternIds, deck.slides.length, fieldNames, mostItems);
   // The edit plan says a little more for each slide than an outline does, and may add slides.
   const room = planRoom(deck.slides.length + 10) * 1.5;

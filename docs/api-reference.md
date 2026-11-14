@@ -443,7 +443,32 @@ interface GeminiImageOptions {
 
 ```ts
 function draftManifest(pptx: Uint8Array | PptxPackage, options: DraftOptions): Promise<DraftResult>;
+
+interface DraftOptions {
+  llm: LlmProvider;
+  name?: string;
+  slideImage?: (slide: number) => SlidePicture | undefined | Promise<SlidePicture | undefined>;
+  slides?: number[];
+  variants?: Array<'mirror' | 'text-only'>;   // also add these variants of every pattern that allows them
+  rows?: 'fit' | 'drawn';   // default 'fit': a row takes as many items as the slide has room for
+  widen?: number;           // above 1, at most 4; default off. Set where it can change a slide
+  concurrency?: number;
+  onProgress?: (event: { done: number; total: number; slide: number }) => void;
+  signal?: AbortSignal;
+}
+
+interface DraftResult {
+  manifest: TemplateManifest;
+  skipped: Array<{ slide: number; reason: string }>;
+  issues: ManifestIssue[];
+  notes: string[];                    // what the code settled by measurement
+  suggestions: ManifestSuggestion[];  // what the slides allow beyond the draft
+}
 ```
+
+Rejects, before any model call, when `rows` is neither `'fit'` nor `'drawn'`, when `widen` is not a number
+above 1 and at most 4, and when `variants` names anything but `'mirror'` and `'text-only'`. See
+[template-studio.md](template-studio.md).
 
 ### `checkManifest`
 
@@ -468,6 +493,34 @@ function changeManifest(template: Template, changes: ManifestChange[]): ChangeRe
 ```ts
 function editManifest(template: Template, instruction: string, options: ManifestEditOptions): Promise<ManifestEditResult>;
 ```
+
+### `suggestChanges`, `SUGGESTION_KINDS`
+
+```ts
+function suggestChanges(template: Template, options?: SuggestOptions): ManifestSuggestion[];
+const SUGGESTION_KINDS: readonly ['icon', 'row', 'row-max', 'row-widen', 'variant'];
+type SuggestionKind = (typeof SUGGESTION_KINDS)[number];
+
+interface SuggestOptions {
+  kinds?: readonly SuggestionKind[];  // default: all
+  widen?: number;                     // the factor `row-widen` suggests; default 2
+}
+
+interface ManifestSuggestion {
+  kind: SuggestionKind;
+  pattern: string;            // the pattern it is about
+  slide: number;              // that pattern's slide, from 1
+  variant?: PatternVariant;   // for `variant`
+  slot?: string;              // for `variant` `without`: the text left out
+  message: string;            // what is so now, and what the change would do
+  changes: ManifestChange[];  // pass to changeManifest
+}
+```
+
+Synchronous, no model, nothing changed. What a template's slides allow that its manifest does not use yet, each
+with the changes that make it. Only suggestions that `changeManifest` accepts as they stand are listed. Throws
+for a kind that is not in `SUGGESTION_KINDS`, and, when `row-widen` is asked for, for a `widen` that is not a
+number above 1 and at most 4. See [template-studio.md](template-studio.md).
 
 ### `patternVariants`, `VARIANTS`
 
@@ -529,17 +582,6 @@ picture out of a template (`template.pkg.read('ppt/media/image1.png')`).
 
 ```ts
 interface SlidePicture { mimeType: string; data: Uint8Array }
-interface DraftOptions {
-  llm: LlmProvider;
-  name?: string;
-  slideImage?: (slide: number) => SlidePicture | undefined | Promise<SlidePicture | undefined>;
-  slides?: number[];
-  variants?: Array<'mirror' | 'text-only'>; // also add these variants of every pattern that allows them
-  concurrency?: number;
-  onProgress?: (event: { done: number; total: number; slide: number }) => void;
-  signal?: AbortSignal;
-}
-interface DraftResult { manifest: TemplateManifest; skipped: Array<{ slide: number; reason: string }>; issues: ManifestIssue[] }
 
 interface ManifestIssue { severity: 'error' | 'warning'; pattern?: string; slot?: string; message: string }
 interface SampleOptions { fill?: number; items?: 'drawn' | 'max' | 'min'; fit?: 'budget' | 'box' }
