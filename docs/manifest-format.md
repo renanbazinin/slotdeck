@@ -67,6 +67,7 @@ operations (`changeManifest`) or by instruction (`editManifest`), and verify it 
 | `language` | string | no | BCP 47 tag of the template's sample text. Decks default to it. |
 | `alignOnDirectionChange` | `"flip"` or `"keep"` | no | What happens to left and right paragraph alignment in a deck that reads the other way. `flip` (default) mirrors it. `keep` leaves it as designed. A text slot can override this. |
 | `textScale` | number | no | Enlarges the body text of every deck made from this template, as a factor on the designed size: `1.3` turns 9 pt into about 12 pt. For a template whose body text is too small to read comfortably. Budgets shrink to match. See "Larger text" in [layout-freedom.md](layout-freedom.md). |
+| `shrinkText` | `{ to, minSize? }` | no | Lets text that does not fit its box be set smaller: down to `to` of its size (`0.85` is 85%) and never under `minSize` points. Acts only for a template loaded with fonts. See "Shrinking text to fit" in [text-fit.md](text-fit.md). |
 
 ## `PatternDef`
 
@@ -91,6 +92,17 @@ operations (`changeManifest`) or by instruction (`editManifest`), and verify it 
 | `empty` | `"error"`, `"remove"`, `"keep"` or `"drop"` | no | What happens without a value. Default `error` (required). See [concepts.md](concepts.md). |
 
 Slots with `empty` of `keep` or `drop` are never offered to the planning model.
+
+A slot with `"empty": "keep"` and a `box` shows a part of the design in another place: the shape keeps its
+content and is put at the box. Such a slot may point at any shape that is not inside a group (a drawn shape,
+a line, a text, a group as a whole), with `"kind": "text"`, or `"kind": "image"` for a picture. When the box is
+the shape's own size, only its position changes, so nothing inside a group is rescaled. The `derivePattern`
+operation adds these slots, named `moved1`, `moved2`, ..., for shapes that a variant moves and that are not
+slots themselves:
+
+```json
+{ "name": "moved1", "kind": "text", "shapeId": "14", "empty": "keep", "box": { "x": 0.52, "y": 0.3, "w": 0.4, "h": 0.05 } }
+```
 
 ## Text slot (`kind: "text"`)
 
@@ -151,7 +163,8 @@ The shape must not be inside a group.
   "min": 2,
   "max": 4,
   "span": { "left": 0.04, "right": 0.96 },
-  "columns": 3
+  "columns": 3,
+  "widen": 1.5
 }
 ```
 
@@ -163,6 +176,7 @@ The shape must not be inside a group.
 | `min`, `max` | integer | no | Fewest and most items a deck may ask for. Both default to the number drawn. |
 | `span` | `{ left, right }` | no | Left and right limits of the row, as fractions of the slide width. Defaults to the row as drawn. Needed when `max` is more than the drawn items can fit in the drawn width. Only applies to shapes placed directly on the slide. |
 | `columns` | integer | no | For a grid: how many items one line holds on the template slide. Leave it out for a single row. A grid cannot hold more items than it draws. |
+| `widen` | number | no | Lets items grow wider when a line holds fewer of them than the template draws, so that they fill the row and do not stand in the middle of it. The value is the most an item may grow, as a factor on its drawn width: `1.5` lets a card become half as wide again. Backgrounds and text boxes widen; pictures keep their size. The budgets of the row's texts grow to match. Left out, items keep their drawn size. |
 
 How the items are laid out for a given count is described in [layout-freedom.md](layout-freedom.md).
 
@@ -176,11 +190,13 @@ of item 4's slots, named with the next number.
 - Every `sourceSlide` exists in the pptx.
 - Every `shapeId` is a shape on that slide, and is the right kind of shape for the slot (a text slot points at
   a shape with text, an image slot at a picture, a table slot at a table). A slot with `"empty": "drop"` may
-  point at any shape, because the shape is only ever removed.
+  point at any shape, because the shape is only ever removed; so may a slot with `"empty": "keep"` and a `box`,
+  because the shape is only ever moved.
 - Pattern ids are unique. Slot names are unique within a pattern.
 - A `box` is not set on a shape inside a group. A chart slot's shape is not inside a group.
 - For a `repeat`: a slot exists for every name template and every drawn item; every shape id exists; all items
-  sit directly on the slide or all in the same group; `min` is at least 1 and not more than `max`.
+  sit directly on the slide or all in the same group; `min` is at least 1 and not more than `max`; `widen`,
+  when set, is a number of 1 or more.
 
 It also warns about text slots without `maxChars` and about two slots that point at the same shape.
 

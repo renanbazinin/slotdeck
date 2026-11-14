@@ -37,8 +37,11 @@ slotdeck makes new PowerPoint files from an existing PowerPoint template.
 | [generating.md](generating.md) | Make a deck from a brief, or change one by instruction, with a language model |
 | [chat-tools.md](chat-tools.md) | Give a chat model the four presentation tools and store what they produce |
 | [providers.md](providers.md) | Connect your own language model or image source, including an internal gateway |
-| [layout-freedom.md](layout-freedom.md) | Vary the number of cards, enlarge text, and derive several patterns from one slide |
+| [layout-freedom.md](layout-freedom.md) | Vary the number of cards, enlarge text, derive several patterns from one slide, and find other layouts for a slide |
 | [languages.md](languages.md) | Make right-to-left decks from a left-to-right template, or the reverse |
+| [text-fit.md](text-fit.md) | Measure text with the template's fonts: overflow in lines, shrinking to fit, budgets from measurement |
+| [preview.md](preview.md) | Get a picture of each slide without PowerPoint, and know how close it is |
+| [design-checks.md](design-checks.md) | Find empty boxes, uneven cards and orphan words by measurement, and have drafts reviewed while a deck is written |
 | [template-studio.md](template-studio.md) | Draft a manifest with a model, check it, change it by hand or by instruction |
 | [api-reference.md](api-reference.md) | Look up any export: its signature and what it does |
 | [troubleshooting.md](troubleshooting.md) | Find the meaning of an error or warning, and the known limits |
@@ -50,6 +53,7 @@ slotdeck makes new PowerPoint files from an existing PowerPoint template.
 | --- | --- | --- |
 | Turn deck JSON into a pptx | `renderDeck` | none |
 | Check deck JSON before rendering | `validateDeck` | none |
+| See which other layouts a slide's content fits | `slideAlternatives` | none |
 | Brief in, pptx out | `generateDeck` | text: 2 plus repairs; images: one per photo |
 | Brief in, deck JSON out | `planDeck` | 2 plus repairs |
 | Show a plan first, write later | `planOutline`, `editPlan`, `writeDeck` | 1 each, `writeDeck` plus repairs |
@@ -58,19 +62,25 @@ slotdeck makes new PowerPoint files from an existing PowerPoint template.
 | Describe a new template | `draftManifest` | 1 per slide, plus 1 |
 | Verify a manifest against its pptx | `checkManifest` | none |
 | See whether a manifest's budgets hold | `sampleDeck` then `renderDeck` | none |
+| Know whether a text fits its box, in lines | `loadTemplate` with `fonts`, or `textMeasurer` | none |
+| Set budgets from what the boxes hold | `measuredBudgets` | none |
+| Show a deck or a template's layouts as pictures | `previewDeck`, `patternPreviews` with a `PreviewProvider` | none |
+| List design problems of a deck | `checkDesign` | none |
+| Have drafts checked for design while a deck is written | `review: designReview(template)` on the planner | none of its own; each repair is one writing call |
 | Change a manifest by operations | `changeManifest` | none |
+| Add a mirrored or text-only variant of a pattern | `changeManifest` with `derivePattern`; `patternVariants` lists what is possible | none |
 | Change a manifest by instruction | `editManifest` | 1 or 2 |
 | List the shapes of a template | `inspectTemplate`, `studioView` | none |
 
 ## Facts worth knowing before writing code
 
 - The package is ESM only (`import`, not `require`) and needs Node 22.18 or later.
-- Entry points: `slotdeck` (everything that runs anywhere) and `slotdeck/node` (`directoryStore`, which uses
-  the file system).
+- Entry points: `slotdeck` (everything that runs anywhere) and `slotdeck/node` (`directoryStore` and
+  `fontFiles`, which use the file system).
 - All binary data is `Uint8Array`. In Node a `Buffer` is a `Uint8Array`, so `fs.readFileSync(path)` can be
   passed directly.
-- Functions that call a model are `async`. `renderDeck`, `validateDeck`, `checkManifest`, `sampleDeck`,
-  `changeManifest`, `inspectTemplate` and `studioView` are synchronous.
+- Functions that call a model are `async`. `renderDeck`, `validateDeck`, `slideAlternatives`, `checkManifest`,
+  `sampleDeck`, `changeManifest`, `patternVariants`, `inspectTemplate` and `studioView` are synchronous.
 - A deck never contains binary data. Pictures are referenced by an **asset id** and passed to the renderer as
   a map from id to bytes.
 - Nothing is written to disk and nothing is sent anywhere by slotdeck itself, except what your own provider

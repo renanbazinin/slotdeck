@@ -8,11 +8,14 @@
 //   --real-images      generate photos with the image model (paid); the default draws stand-ins
 //
 // Everything is kept under out/store: plans and decks as small JSON, pictures on their own,
-// rendered files apart. out/plan-preview.html shows the plan as layout thumbnails.
+// rendered files apart, and a picture of every slide under preview/ (SVG, drawn by the Pagus
+// library: open one in a browser). out/plan-preview.html shows the plan as layout thumbnails.
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
-import { TOOL_NAMES, presentationTools } from '../src/index.ts';
+import * as pagusCore from '@pagus-kit/core';
+import * as pagusRenderer from '@pagus-kit/renderer';
+import { TOOL_NAMES, pagusPreviews, presentationTools } from '../src/index.ts';
 import { directoryStore } from '../src/node.ts';
 import { planPreviewHtml } from './plan-preview.ts';
 import { demoTemplate, icons, providers, root } from './shared.ts';
@@ -36,6 +39,7 @@ const tools = presentationTools({
   store: directoryStore(join(outDir, 'store')),
   fields: { organizationDepartment: values.lang === 'he' ? 'slotdeck  |  הדגמה' : 'slotdeck  |  Demo' },
   thumbnail: (pattern) => `/thumbnails/demo/${pattern}.png`,
+  preview: pagusPreviews(pagusCore, pagusRenderer),
   onProgress: (event, tool) => {
     if (event.stage === 'images') console.log(`    [${tool}] images ${event.done}/${event.total}`);
     else console.log(`    [${tool}] ${event.stage}`);

@@ -5,6 +5,7 @@ import type { JsonSchema, LlmProvider } from '../llm/provider.ts';
 import type { Template } from '../render/render.ts';
 import { changeManifest, describeSlot } from './change.ts';
 import type { ChangeResult, ManifestChange } from './change.ts';
+import { VARIANTS } from './derive.ts';
 import { inspectTemplate } from './inspect.ts';
 import type { TableTextStyle } from './manifest.ts';
 import { ROLES, describeShape, frameFacts } from './measure.ts';
@@ -20,7 +21,7 @@ export interface ManifestEditResult extends ChangeResult {
   note: string;
 }
 
-const OPS = ['setSlot', 'addSlot', 'removeSlot', 'setRepeat', 'removeRepeat', 'setPattern', 'copyPattern', 'removePattern', 'addPattern', 'setManifest'] as const;
+const OPS = ['setSlot', 'addSlot', 'removeSlot', 'setRepeat', 'removeRepeat', 'setPattern', 'copyPattern', 'derivePattern', 'removePattern', 'addPattern', 'setManifest'] as const;
 
 /** What an operation's values may set. A table's text styles are spelled out so that every value is one word or number. */
 const PROPERTIES = [
@@ -56,6 +57,8 @@ const PROPERTIES = [
   'direction',
   'alignOnDirectionChange',
   'textScale',
+  'variant',
+  'widen',
 ] as const;
 
 const SYSTEM = [
@@ -70,10 +73,11 @@ const GUIDE = [
   '- setSlot (pattern, slot): change a slot. Values: empty ("error" makes it required, "remove" optional, "keep" always leaves the template\'s own content, "drop" always removes the shape); maxChars, maxParagraphs (limits of a text); fontSize (a text size in points); deckField (ties a text to one value for the whole deck); name (renames the slot); imageKind ("photo", "icon" or "graphic"). For a table: maxColumns, maxRows, maxCellChars, headerSize, headerBold, headerColor (hex), headerFont, bodySize, bodyBold, bodyColor, bodyFont. For a chart: maxCategories, maxSeries.',
   '- addSlot (pattern, shape): make a shape of the slide a slot, or give the shape of an existing slot another role. Values: role, and optionally name and optional ("true"). Roles: title, subtitle, text, list (one paragraph per item), number (a large figure), caption, photo, icon, graphic (a supplied chart or diagram picture), chart (a native editable chart in place of a picture), table, decoration (removed from every slide made with the pattern), fixed (stays exactly as designed).',
   '- removeSlot (pattern, slot): the shape stays as the template shows it.',
-  '- setRepeat (pattern): how many items the row or grid of a pattern takes. Values: min, max.',
+  '- setRepeat (pattern): how many items the row or grid of a pattern takes. Values: min, max, and widen (a factor such as "1.5": with fewer items than the slide draws, each item may grow up to that many times as wide, so the row is filled and does not float in the middle; "1" keeps the drawn width).',
   '- removeRepeat (pattern): the items stop being a row whose number can change.',
   '- setPattern (pattern): Values: id (renames the pattern), description, figures ("true" offers it only when a brief has numbers).',
-  '- copyPattern (pattern): a second pattern from the same slide, to turn into a variant with further operations. Values: id of the new pattern, and optionally description.',
+  '- copyPattern (pattern): a second pattern from the same slide, to turn into a variant by hand with further operations. Values: id of the new pattern, and optionally description.',
+  '- derivePattern (pattern): a second pattern from the same slide that the software lays out itself. Values: variant, and optionally id and description. Variants: "mirror" (the picture and the text beside it change sides), "text-only" (the picture is left out and the text widens over the room it leaves), "without" (leaves out the optional text named in "slot"; what sits under it moves up). The software works out every position and budget, and refuses a variant the slide does not allow. In a description, say what the layout holds and where the picture is.',
   '- removePattern (pattern).',
   '- addPattern: make a slide without a pattern into one. Values: slide, id, and optionally description.',
   '- setManifest: settings of the whole template. Values: name, language, direction ("rtl" or "ltr"), alignOnDirectionChange ("flip" or "keep"), textScale (a factor on the body text of every deck, such as "1.3" when the template\'s body text is too small; "1" for the designed size).',
@@ -137,7 +141,7 @@ export function describeManifest(template: Template): string {
     const repeat = pattern.repeat;
     if (repeat) {
       const drawn = repeat.shapes.length;
-      lines.push(`  ${repeat.columns ? `grid of ${drawn} ${repeat.item}s, ${repeat.columns} to a line` : `row of ${drawn} ${repeat.item}s`} (${repeat.slots.join(', ')}); takes ${repeat.min ?? drawn} to ${repeat.max ?? drawn}`);
+      lines.push(`  ${repeat.columns ? `grid of ${drawn} ${repeat.item}s, ${repeat.columns} to a line` : `row of ${drawn} ${repeat.item}s`} (${repeat.slots.join(', ')}); takes ${repeat.min ?? drawn} to ${repeat.max ?? drawn}${repeat.widen && repeat.widen > 1 ? `; fewer on a line grow up to ${repeat.widen} times as wide` : ''}`);
     }
     lines.push('  slots:');
     for (const slot of pattern.slots) {
@@ -234,7 +238,7 @@ function toChange(raw: Record<string, unknown>): ManifestChange | undefined {
     case 'removeSlot':
       return { op, pattern, slot };
     case 'setRepeat':
-      return put({ op, pattern } as ManifestChange, { min: count('min'), max: count('max') });
+      return put({ op, pattern } as ManifestChange, { min: count('min'), max: count('max'), widen: num('widen') });
     case 'removeRepeat':
     case 'removePattern':
       return { op, pattern };
@@ -242,6 +246,8 @@ function toChange(raw: Record<string, unknown>): ManifestChange | undefined {
       return put({ op, pattern } as ManifestChange, { id: str('id'), description: str('description'), figures: bool('figures') });
     case 'copyPattern':
       return put({ op, pattern, id: str('id') ?? '' } as ManifestChange, { description: str('description') });
+    case 'derivePattern':
+      return put({ op, pattern, variant: choice('variant', VARIANTS) ?? values.get('variant') ?? '' } as ManifestChange, { slot: slot || undefined, id: str('id'), description: str('description') });
     case 'addPattern':
       return put({ op, slide: count('slide') ?? 0, id: str('id') ?? '' } as ManifestChange, { description: str('description') });
     case 'setManifest':

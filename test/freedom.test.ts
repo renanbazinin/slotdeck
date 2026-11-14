@@ -1,12 +1,31 @@
-// Layout freedom that stays inside the template: a row with fewer or more items, larger body
-// text, and patterns derived from a slide by moving and resizing a text box.
+// Layout freedom that stays inside the template: a row with fewer or more items, items that
+// widen to fill their row, larger body text, and patterns derived from a slide by moving and
+// resizing a text box.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { placeholderPhoto } from '../examples/placeholder.ts';
-import { PptxPackage, TOOL_NAMES, extractAssets, loadTemplate, memoryStore, planDeck, planEdit, presentationTools, renderDeck, validateDeck } from '../src/index.ts';
+import {
+  PptxPackage,
+  TOOL_NAMES,
+  changeManifest,
+  checkManifest,
+  describeManifest,
+  editManifest,
+  extractAssets,
+  loadTemplate,
+  memoryStore,
+  planDeck,
+  planEdit,
+  presentationTools,
+  renderDeck,
+  sampleDeck,
+  validateDeck,
+} from '../src/index.ts';
 import type { DeckSpec, JsonRequest, LlmProvider, SlideSpec, TemplateManifest } from '../src/index.ts';
 import { readRels, resolveTarget } from '../src/pptx/package.ts';
 import { NS, childElement, childElements, descendants, parseXml, path, rootElement } from '../src/pptx/xml.ts';
+import { indexShapes } from '../src/render/render.ts';
+import { applyRepeat } from '../src/render/repeat.ts';
 import type { Element } from '../src/pptx/xml.ts';
 import { effectiveSlots, rowLayout, slotSources, textBudget } from '../src/template/manifest.ts';
 import { buildFixturePptx, cardsManifest, fixtureManifest, gridManifest } from './fixture.ts';
@@ -333,4 +352,159 @@ test('a grid with fewer items re-forms around the centre of the area it had', ()
   });
   const english = render(3, 'ltr');
   assert.deepEqual(['21', '11', '31'].map((id) => textOf(english, id)), ['Card 1', 'Card 2', 'Card 3'], 'first card top-left, third below');
+});
+
+// --- rows that widen their items ----------------------------------------------------------
+
+const wideManifest: TemplateManifest = {
+  ...cardsManifest,
+  patterns: cardsManifest.patterns.map((pattern) => (pattern.repeat ? { ...pattern, repeat: { ...pattern.repeat, widen: 2 } } : pattern)),
+};
+const wideTemplate = loadTemplate(pptx, wideManifest);
+const wideCards = wideManifest.patterns.at(-1) as TemplateManifest['patterns'][number];
+
+function slideWith(used: typeof template, deck: Partial<DeckSpec> & { slides: SlideSpec[] }): { root: Element; pptx: Uint8Array } {
+  const rendered = renderDeck(used, { version: 1, ...deck });
+  return { root: rootElement(parseXml(PptxPackage.load(rendered.pptx).readText('ppt/slides/slide1.xml'))), pptx: rendered.pptx };
+}
+
+/** x and width of a shape, in the units of whatever it sits in; for a group also the width of its own units. */
+function across(root: Element, id: string): number[] | undefined {
+  const shape = shapeById(root, id);
+  if (!shape) return undefined;
+  const xfrm = (shape.localName === 'grpSp' ? path(shape, [NS.p, 'grpSpPr'], [NS.a, 'xfrm']) : path(shape, [NS.p, 'spPr'], [NS.a, 'xfrm'])) as Element;
+  const inner = childElement(xfrm, NS.a, 'chExt');
+  return [childElement(xfrm, NS.a, 'off')?.getAttribute('x'), childElement(xfrm, NS.a, 'ext')?.getAttribute('cx'), ...(inner ? [inner.getAttribute('cx')] : [])].map(Number);
+}
+
+test('with widen, a row of fewer items grows to fill its line, and pictures keep their size', () => {
+  const { root } = slideWith(wideTemplate, { slides: [cardSlide(2)] });
+  // Three cards of 1000000 were drawn 1000000 apart. Two may each be twice as wide; the gap stays.
+  assert.deepEqual(across(root, '10'), [5000000, 2000000, 2000000], 'the first card, at the right, is twice as wide and so are its own units');
+  assert.deepEqual(across(root, '20'), [2000000, 2000000, 2000000]);
+  assert.equal(shapeById(root, '30'), undefined);
+  // Inside a card, the text box grows with it. The picture is not stretched: it stays 400000 wide, in the middle.
+  assert.deepEqual(across(root, '11'), [6000000, 2000000]);
+  assert.deepEqual(across(root, '12'), [6800000, 400000]);
+  assert.equal(path(shapeById(root, '12') as Element, [NS.p, 'spPr'], [NS.a, 'xfrm'], [NS.a, 'ext'])?.getAttribute('cy'), '400000');
+  // A text box that belongs to the card but sits outside its group grows and moves with it.
+  assert.deepEqual(across(root, '13'), [5100000, 1800000]);
+  assert.equal(textOf(root, '11'), 'Card 1');
+
+  // One card: as wide as the limit allows, in the middle of the row.
+  assert.deepEqual(across(slideWith(wideTemplate, { slides: [cardSlide(1)] }).root, '10'), [3500000, 2000000, 2000000]);
+
+  // A deck that reads the other way gets the same shapes, with its first card at the left.
+  const english = slideWith(wideTemplate, { direction: 'ltr', slides: [cardSlide(2)] }).root;
+  assert.deepEqual([across(english, '10'), across(english, '20')], [across(root, '10'), across(root, '20')]);
+  assert.deepEqual([textOf(english, '21'), textOf(english, '11')], ['Card 1', 'Card 2']);
+});
+
+test('the number of items alone decides: at the drawn number and above, and without the setting, nothing changes', () => {
+  for (const items of [3, 4, 5]) {
+    assert.deepEqual(slideWith(wideTemplate, { slides: [cardSlide(items)] }).pptx, slideWith(template, { slides: [cardSlide(items)] }).pptx, `${items} cards`);
+  }
+  // Long text does not widen anything, and short text does not narrow it.
+  const long = slideWith(wideTemplate, { slides: [cardSlide(2, { card1Text: 'A much longer text than the others have' })] }).root;
+  assert.deepEqual(across(long, '10'), [5000000, 2000000, 2000000]);
+  // A factor of 1 is the same as no setting.
+  const one = loadTemplate(pptx, { ...wideManifest, patterns: wideManifest.patterns.map((pattern) => (pattern.repeat ? { ...pattern, repeat: { ...pattern.repeat, widen: 1 } } : pattern)) });
+  assert.deepEqual(slideWith(one, { slides: [cardSlide(2)] }).pptx, slideWith(template, { slides: [cardSlide(2)] }).pptx);
+});
+
+test('budgets of widened items follow their width, in validation and in what the model is shown', async () => {
+  const budget = (items?: number) => {
+    const slot = effectiveSlots(wideCards, items).find((candidate) => candidate.name === 'card1Text');
+    return slot?.kind === 'text' ? slot.maxChars : undefined;
+  };
+  // Three drawn: two are at least 1.5 times as wide, one is twice (the limit), three or more are as drawn.
+  assert.deepEqual([budget(1), budget(2), budget(3), budget(5), budget()], [40, 30, 20, 20, 20]);
+  assert.equal(effectiveSlots(wideCards, 3)[1], wideCards.slots[1], 'a row that does not widen hands out the slots of the manifest themselves');
+  assert.deepEqual(wideCards.slots.find((slot) => slot.name === 'card1Text'), cards.slots.find((slot) => slot.name === 'card1Text'), 'the manifest is not changed');
+
+  const slide = cardSlide(2, { card1Text: 'Twenty-eight characters long' });
+  assert.deepEqual(validateDeck(wideManifest, { version: 1, slides: [slide] }), []);
+  assert.match(validateDeck(cardsManifest, { version: 1, slides: [slide] })[0]?.message ?? '', /text is 28 characters; the slot fits about 20/);
+  assert.match(validateDeck(wideManifest, { version: 1, slides: [cardSlide(3, { card1Text: 'Twenty-eight characters long' })] })[0]?.message ?? '', /fits about 20/);
+  // Larger text still shrinks the budget, on top.
+  assert.match(validateDeck(wideManifest, { version: 1, textScale: 1.25, slides: [slide] })[0]?.message ?? '', /text is 28 characters; the slot fits about 19/);
+
+  const { llm, requests } = scripted({ title: 'T', slides: [{ pattern: 'cards', purpose: 'Two things', items: 2 }] }, { s1: { title: 'Two', card1Text: 'One', card2Text: 'Two' } });
+  await planDeck(wideTemplate, { prompt: 'Two things', language: 'en', imageDensity: 'none' }, { llm });
+  assert.match(requests[0]?.prompt ?? '', /cardNText \(at most 20 characters\)\n {2}items: 1 to 5 cards, numbered N = 1, 2, \.\.\. With fewer on a line than 3, each card is wider and holds more text\./);
+  assert.match(JSON.stringify(requests[1]?.schema), /at most 30 characters/);
+  // The plain row says nothing of the kind.
+  const plain = scripted({ title: 'T', slides: [{ pattern: 'cards', purpose: 'p', items: 2 }] }, { s1: { title: 'Two', card1Text: 'One', card2Text: 'Two' } });
+  await planDeck(template, { prompt: 'x', language: 'en', imageDensity: 'none' }, { llm: plain.llm });
+  assert.doesNotMatch(plain.requests[0]?.prompt ?? '', /is wider and holds more text/);
+});
+
+test('a grid widens when its fullest line is shorter than drawn, and only then', () => {
+  const widen = (manifest: TemplateManifest): TemplateManifest => ({ ...manifest, patterns: manifest.patterns.map((pattern) => (pattern.repeat ? { ...pattern, repeat: { ...pattern.repeat, widen: 1.5 } } : pattern)) });
+  const plainGrid = loadTemplate(pptx, gridManifest);
+  const wideGrid = loadTemplate(pptx, widen(gridManifest));
+  const grid = (items: number): SlideSpec => ({ pattern: 'grid', items, slots: { title: 'T', ...Object.fromEntries(Array.from({ length: items }, (_, index) => [`card${index + 1}Text`, `Card ${index + 1}`])) } });
+  // Two to a line were drawn. One card is a shorter line: it grows by half and sits in the middle of the grid's area.
+  assert.deepEqual(across(slideWith(wideGrid, { slides: [grid(1)] }).root, '10'), [4750000, 1500000, 1500000]);
+  // Three make a line of two and a line of one: the fullest line is as drawn, so every card keeps its width.
+  for (const items of [2, 3, 4]) assert.deepEqual(slideWith(wideGrid, { slides: [grid(items)] }).pptx, slideWith(plainGrid, { slides: [grid(items)] }).pptx, `${items} cards`);
+});
+
+test('widening a card keeps round corners, circles and pictures as drawn, through a scaled group', () => {
+  const sp = (id: number, x: number, y: number, cx: number, cy: number, geometry: string) =>
+    `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="s"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="${x}" y="${y}"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>${geometry}</p:spPr></p:sp>`;
+  // A card whose own units are half the slide's: 1000000 inside is 2000000 on the slide.
+  const card = (id: number, x: number) =>
+    `<p:grpSp><p:nvGrpSpPr><p:cNvPr id="${id}" name="Card"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>` +
+    `<p:grpSpPr><a:xfrm><a:off x="${x}" y="0"/><a:ext cx="2000000" cy="4000000"/><a:chOff x="0" y="0"/><a:chExt cx="1000000" cy="2000000"/></a:xfrm></p:grpSpPr>` +
+    sp(id + 1, 0, 0, 1000000, 2000000, '<a:prstGeom prst="roundRect"><a:avLst><a:gd name="adj" fmla="val 10000"/></a:avLst></a:prstGeom>') +
+    sp(id + 2, 100000, 100000, 200000, 200000, '<a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom>') +
+    `<p:pic><p:nvPicPr><p:cNvPr id="${id + 3}" name="Icon"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill/><p:spPr><a:xfrm><a:off x="700000" y="100000"/><a:ext cx="200000" cy="200000"/></a:xfrm></p:spPr></p:pic>` +
+    `<p:cxnSp><p:nvCxnSpPr><p:cNvPr id="${id + 4}" name="Rule"/><p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr><p:spPr><a:xfrm><a:off x="100000" y="400000"/><a:ext cx="800000" cy="0"/></a:xfrm><a:prstGeom prst="line"><a:avLst/></a:prstGeom></p:spPr></p:cxnSp>` +
+    sp(id + 5, 100000, 500000, 300000, 200000, '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>') +
+    sp(id + 6, 600000, 1500000, 300000, 200000, '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>') +
+    `</p:grpSp>`;
+  const root = rootElement(
+    parseXml(
+      `<p:sld xmlns:a="${NS.a}" xmlns:p="${NS.p}"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>${card(10, 1000000)}${card(20, 4000000)}</p:spTree></p:cSld></p:sld>`,
+    ),
+  );
+  // One card of two: the limit of 1.5 makes it 3000000 wide on the slide, which is 500000 more in its own units.
+  applyRepeat(indexShapes(root), { item: 'card', slots: ['card{n}Text'], shapes: [['10'], ['20']], widen: 1.5 }, 1, 12192000, new Set(['15']));
+  assert.deepEqual(across(root, '10'), [2000000, 3000000, 1500000], 'the card grows and keeps the scale of its own units');
+  assert.deepEqual(across(root, '11'), [0, 1500000], 'the background fills the card');
+  // The corner was a tenth of the shorter side, the width; the same corner is a fifteenth of the new width.
+  assert.equal(path(shapeById(root, '11') as Element, [NS.p, 'spPr'], [NS.a, 'prstGeom'], [NS.a, 'avLst'], [NS.a, 'gd'])?.getAttribute('fmla'), 'val 6667');
+  assert.deepEqual(across(root, '12'), [100000, 200000], 'a circle near the left edge stays a circle, near the left edge');
+  assert.deepEqual(across(root, '13'), [1200000, 200000], 'a picture near the right edge keeps its size and its distance to that edge');
+  assert.deepEqual(across(root, '14'), [100000, 1300000], 'a rule that spans the card grows with it');
+  assert.deepEqual(across(root, '15'), [100000, 800000], 'a text the deck writes grows even though it is narrow');
+  assert.deepEqual(across(root, '16'), [1100000, 300000], 'a narrow box that is not such a text keeps its size, by the nearer edge');
+  assert.equal(shapeById(root, '20'), undefined);
+});
+
+test('the studio sets widen, a model can ask for it, and the checker knows it', async () => {
+  const changed = changeManifest(template, [
+    { op: 'setRepeat', pattern: 'cards', widen: 1.5 },
+    { op: 'setRepeat', pattern: 'cards', widen: 9 },
+  ]);
+  assert.match(changed.applied[0]?.message ?? '', /^"cards": the row of cards takes 1 to 5\. With fewer cards on a line than drawn, each grows up to 1\.5 times as wide to fill the row, and holds more text\.$/);
+  assert.match(changed.rejected[0]?.reason ?? '', /^widen is a factor between 1 and 4/);
+  assert.equal(changed.manifest.patterns.at(-1)?.repeat?.widen, 1.5);
+  const made = { pkg: template.pkg, manifest: changed.manifest };
+  assert.match(describeManifest(made), /row of 3 cards \(card\{n\}Text, card\{n\}Icon\); takes 1 to 5; fewer on a line grow up to 1\.5 times as wide/);
+  const cleared = changeManifest(made, [{ op: 'setRepeat', pattern: 'cards', widen: null }]);
+  assert.match(cleared.applied[0]?.message ?? '', /The cards keep their drawn width whatever their number\.$/);
+  assert.deepEqual(cleared.manifest, cardsManifest);
+
+  const { llm, requests } = scripted({ changes: [{ op: 'setRepeat', pattern: 'cards', shape: '', slot: '', values: [{ property: 'widen', value: '1.6' }] }], note: '' });
+  const edited = await editManifest(template, 'With two cards, let them fill the row.', { llm });
+  assert.match(requests[0]?.prompt ?? '', /- setRepeat \(pattern\): .* Values: min, max, and widen \(a factor such as "1\.5"/);
+  assert.deepEqual(edited.applied.map((entry) => entry.change), [{ op: 'setRepeat', pattern: 'cards', widen: 1.6 }]);
+
+  const broken = { ...cardsManifest, patterns: cardsManifest.patterns.map((pattern) => (pattern.repeat ? { ...pattern, repeat: { ...pattern.repeat, widen: 0.5 } } : pattern)) };
+  assert.deepEqual(checkManifest(loadTemplate(pptx, broken)).filter((issue) => issue.severity === 'error').map((issue) => issue.message), ['repeat.widen is a factor of 1 or more, such as 1.5']);
+  // The sample deck shows the widened row at its own budgets when asked for the fewest items.
+  const sample = sampleDeck(made, { items: 'min' }).deck.slides.at(-1);
+  assert.deepEqual([sample?.items, String(sample?.slots.card1Text).length > 20], [1, true]);
 });

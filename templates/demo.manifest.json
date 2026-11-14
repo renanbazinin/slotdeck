@@ -80,6 +80,74 @@
       ]
     },
     {
+      "id": "text-and-photo-mirrored",
+      "sourceSlide": 2,
+      "description": "A tall photo on the left with a title, subtitle and body text on the right. The mirror image of text-and-photo: alternate the two for variety.",
+      "slots": [
+        {
+          "name": "photo",
+          "kind": "image",
+          "imageKind": "photo",
+          "shapeId": "2",
+          "box": {
+            "x": 0,
+            "y": 0.1367,
+            "w": 0.4277,
+            "h": 0.8633
+          }
+        },
+        {
+          "name": "title",
+          "kind": "text",
+          "shapeId": "5",
+          "size": 34,
+          "maxChars": 43,
+          "box": {
+            "x": 0.4825,
+            "y": 0.2,
+            "w": 0.48,
+            "h": 0.1867
+          }
+        },
+        {
+          "name": "subtitle",
+          "kind": "text",
+          "shapeId": "6",
+          "size": 17,
+          "maxChars": 42,
+          "empty": "remove",
+          "box": {
+            "x": 0.4825,
+            "y": 0.4067,
+            "w": 0.4725,
+            "h": 0.0533
+          }
+        },
+        {
+          "name": "body",
+          "kind": "text",
+          "shapeId": "7",
+          "size": 18,
+          "maxChars": 352,
+          "box": {
+            "x": 0.4825,
+            "y": 0.4933,
+            "w": 0.465,
+            "h": 0.3867
+          }
+        },
+        {
+          "name": "organizationDepartment",
+          "kind": "text",
+          "shapeId": "4",
+          "size": 12,
+          "maxChars": 61,
+          "deckField": "organizationDepartment",
+          "alignOnDirectionChange": "keep"
+        }
+      ]
+    },
+    {
       "id": "text-only",
       "sourceSlide": 2,
       "description": "A title, an optional supporting line and two or three short paragraphs, with no picture. Use it sparingly, for a point that needs words.",
@@ -190,6 +258,74 @@
       "figures": true
     },
     {
+      "id": "photo-stat-mirrored",
+      "sourceSlide": 3,
+      "description": "A single key metric or percentage with a title and explanatory text on the left and an image on the right. The mirror image of photo-stat: alternate the two for variety.",
+      "slots": [
+        {
+          "name": "photo",
+          "kind": "image",
+          "imageKind": "photo",
+          "shapeId": "5",
+          "box": {
+            "x": 0.54,
+            "y": 0.1733,
+            "w": 0.42,
+            "h": 0.7333
+          }
+        },
+        {
+          "name": "title",
+          "kind": "text",
+          "shapeId": "6",
+          "size": 30,
+          "maxChars": 46,
+          "box": {
+            "x": 0.0375,
+            "y": 0.1867,
+            "w": 0.4575,
+            "h": 0.16
+          }
+        },
+        {
+          "name": "statValue",
+          "kind": "text",
+          "shapeId": "7",
+          "size": 84,
+          "maxChars": 5,
+          "box": {
+            "x": 0.0375,
+            "y": 0.38,
+            "w": 0.4575,
+            "h": 0.1933
+          }
+        },
+        {
+          "name": "statDescription",
+          "kind": "text",
+          "shapeId": "8",
+          "size": 19,
+          "maxChars": 211,
+          "box": {
+            "x": 0.0375,
+            "y": 0.6,
+            "w": 0.4425,
+            "h": 0.2533
+          }
+        },
+        {
+          "name": "organizationDepartment",
+          "kind": "text",
+          "shapeId": "3",
+          "size": 12,
+          "maxChars": 61,
+          "deckField": "organizationDepartment",
+          "alignOnDirectionChange": "keep"
+        }
+      ],
+      "figures": true
+    },
+    {
       "id": "list-with-photo",
       "sourceSlide": 4,
       "description": "A bulleted list of key points alongside a supporting image.",
@@ -214,6 +350,55 @@
           "kind": "image",
           "imageKind": "photo",
           "shapeId": "7"
+        },
+        {
+          "name": "organizationDepartment",
+          "kind": "text",
+          "shapeId": "3",
+          "size": 12,
+          "maxChars": 61,
+          "deckField": "organizationDepartment",
+          "alignOnDirectionChange": "keep"
+        }
+      ]
+    },
+    {
+      "id": "list-with-photo-mirrored",
+      "sourceSlide": 4,
+      "description": "A supporting image on the left with a bulleted list of key points on the right. The mirror image of list-with-photo: alternate the two for variety.",
+      "slots": [
+        {
+          "name": "title",
+          "kind": "text",
+          "shapeId": "5",
+          "size": 34,
+          "maxChars": 41
+        },
+        {
+          "name": "bulletList",
+          "kind": "text",
+          "shapeId": "6",
+          "size": 22,
+          "maxChars": 369,
+          "maxParagraphs": 4,
+          "box": {
+            "x": 0.4748,
+            "y": 0.3,
+            "w": 0.4875,
+            "h": 0.5733
+          }
+        },
+        {
+          "name": "photo",
+          "kind": "image",
+          "imageKind": "photo",
+          "shapeId": "7",
+          "box": {
+            "x": 0.0375,
+            "y": 0.2867,
+            "w": 0.3923,
+            "h": 0.5933
+          }
         },
         {
           "name": "organizationDepartment",
@@ -350,7 +535,8 @@
           ]
         ],
         "min": 2,
-        "max": 4
+        "max": 4,
+        "widen": 2.2
       }
     },
     {
@@ -488,7 +674,8 @@
         ],
         "min": 2,
         "max": 6,
-        "columns": 3
+        "columns": 3,
+        "widen": 1.6
       }
     },
     {

@@ -1,4 +1,4 @@
-import { DeckValidationError, resolveSlot, validateDeck } from '../deck/validate.ts';
+import { DeckValidationError, fitOptions, resolveSlot, validateDeck } from '../deck/validate.ts';
 import type { Issue, LayoutMode } from '../deck/validate.ts';
 import type { ChartValue, DeckSpec } from '../deck/spec.ts';
 import {
@@ -24,8 +24,10 @@ import { CHART_CONTENT_TYPE, CHART_REL_TYPE, WORKBOOK_CONTENT_TYPE, WORKBOOK_REL
 import { setPicture } from './picture.ts';
 import type { PictureFill } from './picture.ts';
 import { setTable } from './table.ts';
-import { applyRepeat, placeShape } from './repeat.ts';
-import { adjustText, setShapeText } from './text.ts';
+import { applyRepeat, moveShape, placeShape, rowTextIds } from './repeat.ts';
+import type { FontMetrics } from '../text/fonts.ts';
+import { measurerFor } from '../text/measure.ts';
+import { adjustText, setShapeText, setTextSizes } from './text.ts';
 
 const SLIDE_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.slide+xml';
 const IMAGE_REL_TYPE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image';
@@ -37,10 +39,22 @@ const FIRST_SLIDE_ID = 256;
 export interface Template {
   pkg: PptxPackage;
   manifest: TemplateManifest;
+  /**
+   * Metrics of the template's fonts. With them, text is measured as it will be set: validation
+   * reports overflow in lines, the planner repairs by it, and text can be shrunk to fit.
+   */
+  fonts?: FontMetrics;
 }
 
-export function loadTemplate(pptx: Uint8Array, manifest: TemplateManifest): Template {
-  return { pkg: PptxPackage.load(pptx), manifest };
+export interface TemplateOptions {
+  /** Metrics of the template's fonts, e.g. from `fontkitMetrics`. Without them budgets are character counts. */
+  fonts?: FontMetrics;
+}
+
+export function loadTemplate(pptx: Uint8Array, manifest: TemplateManifest, options: TemplateOptions = {}): Template {
+  const template: Template = { pkg: PptxPackage.load(pptx), manifest };
+  if (options.fonts) template.fonts = options.fonts;
+  return template;
 }
 
 export interface RenderOptions {
@@ -57,6 +71,8 @@ export interface RenderResult {
   pptx: Uint8Array;
   /** Non-blocking findings, e.g. text longer than a slot's budget. */
   warnings: Issue[];
+  /** Texts that were set smaller to fit their boxes, when the manifest's `shrinkText` allows it. */
+  shrunk: Array<{ slide: number; slot: string; size: number; scale: number }>;
 }
 
 /**
@@ -68,9 +84,12 @@ export function renderDeck(template: Template, deck: DeckSpec, options: RenderOp
   const layout = options.layout ?? 'strict';
   const assets = options.assets ?? {};
 
-  const issues = validateDeck(manifest, deck, { layout, assets: Object.keys(assets) });
+  // A template loaded with fonts measures its text: warnings are in lines, and text may be shrunk to fit.
+  const measure = measurerFor(template);
+  const issues = validateDeck(manifest, deck, measure ? { layout, assets: Object.keys(assets), measure } : { layout, assets: Object.keys(assets) });
   const errors = issues.filter((issue) => issue.severity === 'error');
   if (errors.length > 0) throw new DeckValidationError(errors);
+  const shrunk: RenderResult['shrunk'] = [];
 
   const source = template.pkg;
   const out = source.clone();
@@ -141,7 +160,7 @@ export function renderDeck(template: Template, deck: DeckSpec, options: RenderOp
     let rels = readRels(source, sourceSlide.part).filter((rel) => !isRelType(rel, 'notesSlide'));
     const part = `${slideDir}/slide${number}.xml`;
     // A row of items is first brought to the number the slide asks for; the shapes it copies get new ids.
-    if (pattern.repeat) applyRepeat(indexShapes(root), pattern.repeat, itemCount(pattern, slide.items), pres.slideWidth);
+    if (pattern.repeat) applyRepeat(indexShapes(root), pattern.repeat, itemCount(pattern, slide.items), pres.slideWidth, rowTextIds(pattern));
     const shapes = indexShapes(root);
     const sources = slotSources(pattern, directionChanged, slide.items);
     const textScale = bodyTextScale(template.manifest, deck.textScale);
@@ -157,6 +176,9 @@ export function renderDeck(template: Template, deck: DeckSpec, options: RenderOp
 
       if (action.type === 'remove') {
         removeNode(shape);
+      } else if (action.type === 'keep') {
+        // A part of the design that a derived pattern shows in another place.
+        if ((slot.kind === 'text' || slot.kind === 'image') && slot.box) moveShape(shape, slot.box, pres.slideWidth, pres.slideHeight);
       } else if (action.type === 'text' && slot.kind === 'text') {
         const align = slot.alignOnDirectionChange ?? manifest.alignOnDirectionChange ?? 'flip';
         const text = { flipAlign: directionChanged && align === 'flip' };
@@ -167,6 +189,14 @@ export function renderDeck(template: Template, deck: DeckSpec, options: RenderOp
         if (textScale !== 1 && scalesWithText(slot)) change.scale = textScale;
         if (slot.paragraphGap !== undefined) change.paragraphGap = slot.paragraphGap;
         if (Object.keys(change).length > 0) adjustText(shape, change);
+        // Text that does not fit is set smaller, as far as the manifest allows; the measurer says how far.
+        if (measure && manifest.shrinkText) {
+          const fit = measure.fit(pattern, slot, action.paragraphs, fitOptions(manifest, deck, slide));
+          if (fit && fit.scale < 1) {
+            setTextSizes(shape, fit.sizes);
+            shrunk.push({ slide: number, slot: sources.get(slot.name) ?? slot.name, size: fit.size, scale: Math.round(fit.scale * 1000) / 1000 });
+          }
+        }
       } else if (action.type === 'image' && slot.kind === 'image') {
         const image = addMedia(action.image.asset);
         const relId = nextRelId(rels);
@@ -252,7 +282,7 @@ export function renderDeck(template: Template, deck: DeckSpec, options: RenderOp
   pruneUnreachable(out, types);
   types.save(out);
 
-  return { pptx: out.save(), warnings: issues.filter((issue) => issue.severity === 'warning') };
+  return { pptx: out.save(), warnings: issues.filter((issue) => issue.severity === 'warning'), shrunk };
 }
 
 /** Maps `p:cNvPr/@id` to the shape element that owns it. */

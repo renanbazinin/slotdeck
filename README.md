@@ -218,7 +218,9 @@ data reaches a model, and a pptx can be rebuilt from the JSON and the pictures a
 new plan or deck under a new id; earlier versions stay.
 
 To show a plan as layout thumbnails, render the template once and name the pictures after the patterns
-(`scripts/pattern-thumbnails.ts`). `examples/plan-preview.ts` turns a plan into a self-contained page.
+(`scripts/pattern-thumbnails.ts`). A derived pattern, such as a mirror image, looks different from the slide it
+comes from: `scripts/template-deck.ts` writes a deck with one slide per pattern, filled with the template's own
+sample content, to take those pictures from. `examples/plan-preview.ts` turns a plan into a self-contained page.
 
 ### Other models
 
@@ -285,6 +287,10 @@ manifest allows and the code moves the shapes; the model never positions anythin
   accepts (in the demo template `icon-cards` takes 2 to 4 and `stat-cards` 2 to 6). A slide says how many with
   `items`. Surplus cards are removed, extra ones are copies of the last, and the row is spaced out again around
   its centre. A copied card has its own slots (`card5Icon`, `card5Heading`, ...).
+- **Rows that fill their line.** With `widen` on the `repeat`, fewer cards than drawn grow wider instead of
+  standing in the middle of the row: backgrounds and text boxes widen, icons and pictures keep their size
+  and their side, and the text budgets grow with the cards. The number of cards decides, never the length of
+  the text.
 - **Grids.** With `columns`, the items form a grid. They take as few rows as they need and spread evenly: four
   figures in a three-column grid make two rows of two, five make three and two, three make one row.
 - **Larger text.** `textScale` on a deck (or `textSize: 'large' | 'x-large'` on a brief) enlarges body text:
@@ -295,6 +301,77 @@ manifest allows and the code moves the shapes; the model never positions anythin
   given a font size (`fontSize`) and paragraph spacing, and any shape can be dropped. In the demo template
   `text-only` is the photo slide with its photo dropped and its text widened, and `chart-native` is the chart
   slide with a native chart in place of the picture.
+- **Variants the code works out.** For three common variants nobody types a box: the mirror image of a slide
+  with a picture, the same slide without its picture, and a slide without one of its optional lines. One
+  operation (`derivePattern`) makes each, moving the shapes and measuring the budgets again; the header, logo
+  and page number stay where they are. In the demo template `text-and-photo-mirrored`, `photo-stat-mirrored`
+  and `list-with-photo-mirrored` were made this way.
+
+### Another layout for a slide
+
+`slideAlternatives(manifest, deck, slideNumber)` takes a slide that already has its content and lists the
+other patterns that can hold the same content, with the slide written for each: three cards as a list of three
+points, two cards as two columns, a photo slide as its mirror image. It is code only. No model is asked and no
+word is changed, so a pattern that would need a subtitle, a number or an icon the slide does not have is not
+offered. What does not fit a new slot's budget is reported, not cut.
+
+```ts
+import { slideAlternatives } from 'slotdeck';
+
+const [first] = slideAlternatives(manifest, deck, 5, { layout: 'adaptive' });
+// first.pattern, first.slide, first.changes, first.dropped, first.warnings
+```
+
+### Text that fits
+
+By default a slot's limit is a character budget, which cannot see where lines break. Give the template its font
+files and text is measured the way PowerPoint sets it: broken into lines at the slot's typeface and size and
+compared with the room in its box.
+
+```ts
+import * as fontkit from 'fontkit'; // installed by you; slotdeck does not depend on it
+import { fontkitMetrics, loadTemplate, renderDeck } from 'slotdeck';
+
+const fonts = fontkitMetrics(fontkit, { Calibri: [calibri, calibriBold], Cambria: [cambria, cambriaBold] });
+const template = loadTemplate(pptx, manifest, { fonts });
+
+renderDeck(template, deck, { assets }).warnings;
+// text takes 7 lines at 18 pt; the box holds 5 (2 lines too many). Text of about 290 characters fits.
+```
+
+The planner repairs drafts by the same measurement, `shrinkText` on the manifest lets text that does not fit be
+set a little smaller, and `measuredBudgets` works out budgets from what the boxes hold. On the demo template
+every line broke at the same word as in PowerPoint in all 1,153 text slots checked, in English and Hebrew. See
+[`docs/text-fit.md`](docs/text-fit.md).
+
+### Design checks
+
+A deck can fit its boxes and still look wrong. With fonts loaded, `checkDesign(template, deck)` finds what
+measurement can see: a box left almost empty, a card far shorter than its neighbours, a heading that ends with
+one word on a line of its own. Each finding says what length of text would put it right, and
+`review: designReview(template)` sends the findings back to the writing model while a deck is planned. On the
+example deck it reports the two orphan words that PowerPoint's own picture shows. See
+[`docs/design-checks.md`](docs/design-checks.md).
+
+### Previews
+
+slotdeck draws nothing itself, but it has a hook for a renderer that does: a `PreviewProvider` turns a pptx into
+one picture for each slide. An adapter for the Pagus library comes with the package (you install Pagus), and
+any other renderer or service can be plugged in.
+
+```ts
+import * as pagusCore from '@pagus-kit/core';
+import * as pagusRenderer from '@pagus-kit/renderer';
+import { pagusPreviews, patternPreviews, previewDeck } from 'slotdeck';
+
+const preview = pagusPreviews(pagusCore, pagusRenderer);
+const { pptx, previews } = await previewDeck(template, deck, preview, { assets }); // SVG, one for each slide
+const thumbnails = await patternPreviews(template, preview);                      // one for each pattern
+```
+
+The chat tools take the same provider and keep a picture of every slide they make. A preview shows what a deck
+looks like; it is not PowerPoint. What three renderers got right and wrong, in English and in Hebrew, is in
+[`docs/preview.md`](docs/preview.md).
 
 ## Template studio
 
@@ -372,8 +449,9 @@ const view = studioView(template);
 | `setSlot` | A slot's budget, whether it is required, optional, kept or always removed (`empty`), font size, area (`box`), name, deck field, picture kind, and the settings of a table or chart. |
 | `addSlot` | Makes a shape a slot in a role (`title`, `text`, `list`, `number`, `caption`, `photo`, `icon`, `graphic`, `chart`, `table`, `decoration`), with limits measured from the shape. On a shape that is already a slot it changes the role. |
 | `removeSlot` | The shape goes back to being part of the design. |
-| `setRepeat`, `removeRepeat` | How many items a row or grid takes. Finds the row from numbered slot names when the pattern has none. |
+| `setRepeat`, `removeRepeat` | How many items a row or grid takes, and whether fewer items grow wider to fill the row (`widen`). Finds the row from numbered slot names when the pattern has none. |
 | `addPattern`, `copyPattern`, `setPattern`, `removePattern` | Which slides are patterns, their ids and descriptions, and variants of a pattern from the same slide. |
+| `derivePattern` | A variant of a pattern that the code lays out by itself: `mirror`, `text-only`, or `without` an optional text. Refused with the reason when the slide does not allow it. |
 | `setManifest` | The template's name, language, direction and alignment policy. |
 
 What the code adds to each change:
@@ -387,7 +465,8 @@ What the code adds to each change:
   is refused, and the rest of the list is still applied.
 
 `editManifest` makes one model call, and a second when some of its operations were refused, so the model can
-correct them. The model never sets a position: `box` and `span` exist only for changes made by hand.
+correct them. The model never sets a position: `box` and `span` exist only for changes made by hand, and a
+variant it asks for by name is laid out by the code.
 `describeManifest(template)` returns the text the model reads, for an app that wants to show the manifest to its
 own chat model.
 
@@ -402,6 +481,7 @@ own chat model.
    native-chart variant. It also asked for five cards in a row; that was refused, because four fit.
 3. A few changes by hand with `changeManifest`: the text-only variant, chart colours, mirrored alignment for
    right-to-left decks, and tighter budgets for figures and one-line captions.
+4. Three `derivePattern` operations for the mirror images of the slides with a photo.
 
 A draft is a starting point. What it does not contain, and a person adds while reviewing: budgets tuned by eye,
 derived patterns, wider rows, picture areas and chart colours. On a 36-slide corporate template (not included
@@ -480,15 +560,15 @@ powershell -File scripts/render-pptx.ps1 -Path out/patterns-en.pptx -OutDir out/
   as empty, so its budget is only as long as its sample text. Decks exported from Google Slides and decks built
   from free-standing text boxes work as they are.
 - **Budgets are estimates.** A character budget cannot see lines lost to wrapping. Budgets for slots with several
-  paragraphs should be set with room to spare, and a sample deck is the way to see them.
+  paragraphs should be set with room to spare, and a sample deck is the way to see them. A template loaded with
+  its fonts measures text slots in lines instead (see Text that fits); tables and charts keep their budgets.
 - **Models invent details.** In the showcase deck the model made up an email address and a phone number for the
   closing slide, which were replaced by hand. Figures are guarded (see How planning works); contact details and
   names are not.
 - **What has been run.** The whole path was run against the Gemini Developer API with `gemini-3.8-flash` for
   text and `gemini-3.1-flash-image` for photos, in English and Hebrew. Vertex AI is supported by the adapter but
   has not been run live. Output was checked by rendering in PowerPoint on Windows; other viewers were not tested.
-- **Not built:** swapping the photo side, stacked or combined charts, speaker notes, and reading back changes
-  made in PowerPoint.
+- **Not built:** stacked or combined charts, speaker notes, and reading back changes made in PowerPoint.
 
 ## The demo template and pictures
 

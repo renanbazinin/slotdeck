@@ -1,14 +1,24 @@
 import type { DeckSpec, SlideSpec, SlotValue } from '../deck/spec.ts';
 import type { Template } from '../render/render.ts';
 import { solidPng } from '../util/png.ts';
+import { measurerFor } from '../text/measure.ts';
+import type { TextMeasurer } from '../text/measure.ts';
 import { inspectTemplate } from './inspect.ts';
 import { COPY_ID_STEP, effectiveSlots, itemRange, tableAtScale, textBudget } from './manifest.ts';
+import type { PatternDef, TextSlotDef } from './manifest.ts';
 
 export interface SampleOptions {
   /** How full to make each text slot, as a share of its budget. Defaults to 0.95. */
   fill?: number;
   /** For patterns with a row of items: `drawn` (default) uses the template's number, `max` the most allowed. */
   items?: 'drawn' | 'max' | 'min';
+  /**
+   * What "full" means for a text slot. `budget` (default) is the slot's character budget. `box` is
+   * what the slot's box holds as measured with the template's fonts, whatever the budget says:
+   * the deck then shows every box at its true capacity. `box` needs a template loaded with fonts;
+   * a slot that cannot be measured is filled to its budget.
+   */
+  fit?: 'budget' | 'box';
 }
 
 /**
@@ -20,6 +30,7 @@ export function sampleDeck(template: Template, options: SampleOptions = {}): { d
   const { manifest } = template;
   const info = inspectTemplate(template.pkg);
   const fill = options.fill ?? 0.95;
+  const measure = options.fit === 'box' ? measurerFor(template) : undefined;
   const assets: Record<string, Uint8Array> = {
     'sample-photo': solidPng(96, 64, [120, 150, 135]),
     'sample-icon': solidPng(32, 32, [105, 36, 232]),
@@ -49,7 +60,9 @@ export function sampleDeck(template: Template, options: SampleOptions = {}): { d
         const budget = textBudget(slot, manifest.textScale ?? 1);
         const several = (slot.maxParagraphs ?? 1) > 1;
         const paragraphs = several ? (budget.maxParagraphs ?? 2) : 1;
-        const total = budget.maxChars !== undefined ? Math.max(1, Math.floor(budget.maxChars * fill)) : words.join(' ').length || 12;
+        const held = measure ? boxCapacity(measure, pattern, slot, words, paragraphs, manifest.textScale ?? 1, items) : undefined;
+        const total =
+          held !== undefined ? Math.max(1, Math.floor(held * fill)) : budget.maxChars !== undefined ? Math.max(1, Math.floor(budget.maxChars * fill)) : words.join(' ').length || 12;
         const each = Math.max(1, Math.floor(total / paragraphs));
         const text = Array.from({ length: paragraphs }, (_, index) => filler(words, each, index));
         slots[slot.name] = several ? text : (text[0] as string);
@@ -85,8 +98,28 @@ export function sampleDeck(template: Template, options: SampleOptions = {}): { d
   return { deck, assets };
 }
 
+/**
+ * The most characters of filler text, in a number of paragraphs, that a slot's box holds as
+ * measured. `undefined` when the slot cannot be measured. `items` is the number of items on the
+ * slide, for a slot of a row whose items widen when there are fewer of them.
+ */
+export function boxCapacity(measure: TextMeasurer, pattern: PatternDef, slot: TextSlotDef, words: string[], paragraphs: number, textScale = 1, items?: number): number | undefined {
+  const make = (total: number) => Array.from({ length: paragraphs }, (_, index) => filler(words, Math.max(1, Math.floor(total / paragraphs)), index));
+  const options = items === undefined ? { textScale } : { textScale, items };
+  const fits = (total: number) => measure.fit(pattern, slot, make(total), options)?.fits;
+  if (fits(paragraphs) === undefined) return undefined;
+  let low = paragraphs;
+  let high = 6000;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (fits(middle)) low = middle;
+    else high = middle - 1;
+  }
+  return low;
+}
+
 /** Text of about `length` characters, made of whole words where they fit, starting at a different word each time. */
-function filler(words: string[], length: number, start: number): string {
+export function filler(words: string[], length: number, start: number): string {
   if (words.length === 0) return 'x'.repeat(length);
   let text = '';
   for (let index = start % words.length; text.length < length; index = (index + 1) % words.length) {

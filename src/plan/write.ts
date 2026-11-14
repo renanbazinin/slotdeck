@@ -1,12 +1,13 @@
 // The part of planning that planDeck and planEdit share: asking the model for the content of
 // a set of slides, turning its answer into slide specs, and sending drafts back for repair.
 import { validateDeck } from '../deck/validate.ts';
-import type { Issue, LayoutMode } from '../deck/validate.ts';
+import type { Issue, LayoutMode, ValidateOptions } from '../deck/validate.ts';
 import { isImageRef } from '../deck/spec.ts';
 import type { DeckSpec, ImageRef, SlideSpec, SlotValue } from '../deck/spec.ts';
 import type { JsonSchema } from '../llm/provider.ts';
 import { textBudget } from '../template/manifest.ts';
 import type { TemplateManifest } from '../template/manifest.ts';
+import type { TextMeasurer } from '../text/measure.ts';
 import { readImageInfo } from '../util/image.ts';
 import { budgetScale, contentSchema } from './catalog.ts';
 import type { CatalogContext, UsablePattern, WriteItem } from './catalog.ts';
@@ -149,6 +150,10 @@ export interface WriteArgs {
   /** Builds the whole deck from the freshly written slides, keyed by slide number. */
   assemble: (written: Map<number, SlideSpec>) => DeckSpec;
   manifest: TemplateManifest;
+  /** Measures text with the template's fonts, so drafts are checked and repaired by the lines they take. */
+  measure?: TextMeasurer | undefined;
+  /** A second look at each draft that renders: what it finds goes back to the model with the limits the draft broke. */
+  review?: ((deck: DeckSpec) => Issue[] | Promise<Issue[]>) | undefined;
   layout: LayoutMode;
   maxRepairs: number;
   onRepair?: (attempt: number, issues: number) => void;
@@ -185,7 +190,7 @@ export async function writeSlides(args: WriteArgs): Promise<{ deck: DeckSpec; is
   const schema = contentSchema(jobs, context);
   const numbers = new Set(jobs.map((job) => job.number));
 
-  const build = (answer: unknown): { deck: DeckSpec; issues: Issue[] } => {
+  const build = async (answer: unknown): Promise<{ deck: DeckSpec; issues: Issue[] }> => {
     const content = (typeof answer === 'object' && answer !== null ? answer : {}) as Record<string, unknown>;
     const written = new Map<number, SlideSpec>();
     for (const job of jobs) {
@@ -195,14 +200,19 @@ export async function writeSlides(args: WriteArgs): Promise<{ deck: DeckSpec; is
       written.set(job.number, next);
     }
     const deck = args.assemble(written);
-    return { deck, issues: validateDeck(args.manifest, deck, { layout: args.layout, assets: knownAssets(deck, context) }) };
+    const options: ValidateOptions = { layout: args.layout, assets: knownAssets(deck, context) };
+    if (args.measure) options.measure = args.measure;
+    const issues = validateDeck(args.manifest, deck, options);
+    // A draft with errors cannot be rendered, so there is nothing yet for a review to look at.
+    if (args.review && !issues.some((issue) => issue.severity === 'error')) issues.push(...(await args.review(deck)));
+    return { deck, issues };
   };
   // Only slides that were just written can be fixed by asking again.
   const repairable = (issues: Issue[]) => issues.filter((issue) => issue.slide !== undefined && numbers.has(issue.slide));
 
   const room = contentRoom(jobs, context);
   let answer = await args.ask(args.request, schema, room);
-  let draft = build(answer);
+  let draft = await build(answer);
   for (let attempt = 1; attempt <= args.maxRepairs; attempt++) {
     const problems = repairable(draft.issues);
     if (problems.length === 0) break;
@@ -214,7 +224,7 @@ export async function writeSlides(args: WriteArgs): Promise<{ deck: DeckSpec; is
       'Return the full content again with these problems fixed. Change nothing else.',
     ].join('\n\n');
     answer = await args.ask(repair, schema, room);
-    draft = build(answer);
+    draft = await build(answer);
   }
   return draft;
 }

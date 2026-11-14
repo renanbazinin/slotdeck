@@ -205,7 +205,9 @@ export function describeCatalog(catalog: Catalog, textScale = 1): string {
           return `${itemSlot.get(slot.name)?.label ?? slot.name}${planned.required ? '' : '?'} (${kind})`;
         })
         .join('; ');
-      const count = repeat && range && range.max > range.min ? `\n  items: ${range.min} to ${range.max} ${repeat.item}s, numbered N = 1, 2, ...` : '';
+      // A row that widens its items gives each of fewer items more room; the limits shown are those of the drawn number.
+      const roomier = repeat?.widen && repeat.widen > 1 && range && range.min < (repeat.columns ?? range.drawn) ? ` With fewer on a line than ${repeat.columns ?? range.drawn}, each ${repeat.item} is wider and holds more text.` : '';
+      const count = repeat && range && range.max > range.min ? `\n  items: ${range.min} to ${range.max} ${repeat.item}s, numbered N = 1, 2, ...${roomier}` : '';
       // Said in so many words, so that a wish for text-only slides can be met without guessing from the slots.
       const plain = isPlainText(pattern.def) ? ' Plain text.' : '';
       return `- ${pattern.def.id}: ${pattern.def.description}${plain}\n  slots: ${slots}${count}`;

@@ -223,3 +223,9 @@ const issues = validateDeck(manifest, deck, { layout: 'adaptive', assets: ['phot
 
 Errors make `renderDeck` throw. Warnings do not. Every message is listed in
 [troubleshooting.md](troubleshooting.md).
+
+## Another pattern for a slide
+
+`slideAlternatives(manifest, deck, slideNumber)` lists the other patterns that can hold what a slide says, and
+returns the slide written for each: cards as a list, a slide as its mirror image. It changes no words and
+calls no model. See "Another layout for the same slide" in [layout-freedom.md](layout-freedom.md).

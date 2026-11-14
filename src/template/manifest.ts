@@ -25,6 +25,12 @@ export interface TemplateManifest {
    * comfortably. Budgets shrink with it, and a deck's own text size is applied on top.
    */
   textScale?: number;
+  /**
+   * Lets text that does not fit its box be set smaller: down to `to` of its size (0.85 is 85%)
+   * and never under `minSize` points. It needs fonts to measure with, so it only acts for a
+   * template loaded with fonts; without them nothing is shrunk.
+   */
+  shrinkText?: { to: number; minSize?: number };
   patterns: PatternDef[];
 }
 
@@ -102,6 +108,25 @@ export interface RepeatDef {
    * reading order, spread evenly over as few rows as they need. Leave it out for a single row.
    */
   columns?: number;
+  /**
+   * Lets items grow wider when a line holds fewer of them than the template draws, so that they
+   * fill the row's span and do not float in the middle of it. The value is the most an item may
+   * grow, as a factor on its drawn width: 1.5 lets a card become half as wide again. Backgrounds
+   * and text boxes widen; pictures keep their size and their side. Left out, items keep their size.
+   */
+  widen?: number;
+}
+
+/**
+ * The factor by which the items of a row are at least wider than drawn for a given count: 1 when
+ * the row does not widen. Items grow when the fullest line holds fewer than the template draws on
+ * a line; with the same gaps between them, they are then at least `drawn / held` times as wide.
+ */
+export function widenFactor(repeat: RepeatDef, count: number): number {
+  if (!repeat.widen || !(repeat.widen > 1)) return 1;
+  const drawn = repeat.columns ?? repeat.shapes.length;
+  const held = Math.max(0, ...rowLayout(repeat, count));
+  return held > 0 && held < drawn ? Math.min(repeat.widen, drawn / held) : 1;
 }
 
 /**
@@ -314,7 +339,10 @@ export function effectiveSlots(pattern: PatternDef, items?: number): SlotDef[] {
       slots.push(copy.kind === 'image' ? { ...copy, copyOf: original.shapeId } : copy);
     }
   }
-  return slots;
+  // Wider items hold more text: the budgets of the row's texts grow with the items.
+  const factor = widenFactor(repeat, count);
+  if (factor === 1) return slots;
+  return slots.map((slot) => (slot.kind === 'text' && slot.maxChars !== undefined && itemOf.has(slot.name) ? { ...slot, maxChars: Math.floor(slot.maxChars * factor) } : slot));
 }
 
 /** Deck text sizes by name, as factors on the template's body text. */

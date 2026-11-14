@@ -6,6 +6,7 @@ import { PptxPackage } from '../pptx/package.ts';
 import { detectDirection } from '../render/text.ts';
 import { checkManifest } from './check.ts';
 import type { ManifestIssue } from './check.ts';
+import { deriveVariant } from './derive.ts';
 import { inspectTemplate } from './inspect.ts';
 import type { ShapeInfo, SlideInfo } from './inspect.ts';
 import type { Direction, PatternDef, RepeatDef, SlotDef, TemplateManifest } from './manifest.ts';
@@ -30,6 +31,13 @@ export interface DraftOptions {
   slideImage?: (slide: number) => SlidePicture | undefined | Promise<SlidePicture | undefined>;
   /** Analyse only these slides. Defaults to all. */
   slides?: number[];
+  /**
+   * Also add these variants of every drafted pattern whose slide allows them: `mirror` (the
+   * picture and the text beside it change sides) and `text-only` (the picture left out, the text
+   * widened). Off by default: each variant is one more layout to review, and whether a mirrored
+   * slide suits the design is for a person to say. Patterns that allow no variant get none.
+   */
+  variants?: Array<'mirror' | 'text-only'>;
   /** How many slides to send to the model at once. Defaults to 4. */
   concurrency?: number;
   onProgress?: (event: { done: number; total: number; slide: number }) => void;
@@ -311,13 +319,26 @@ export async function draftManifest(pptx: Uint8Array | PptxPackage, options: Dra
   });
 
   const language = normalize(String(deckAnswer?.language ?? ''));
+  // Variants are worked out by code from the drafted patterns; no model is asked.
+  const withVariants: PatternDef[] = [];
+  for (const pattern of ordered) {
+    withVariants.push(pattern);
+    for (const variant of new Set(options.variants ?? [])) {
+      const made = deriveVariant(pattern, { variant }, { pkg, info, manifest: { version: 1, name: '', direction, patterns: ordered } });
+      if ('refused' in made) continue;
+      let id = `${pattern.id}-${made.suffix}`;
+      if (ids.has(id)) id = `${id}-${pattern.sourceSlide}`;
+      ids.add(id);
+      withVariants.push({ ...made.pattern, id, description: made.description });
+    }
+  }
   const manifest: TemplateManifest = {
     version: 1,
     name: options.name ?? 'template',
     direction,
     // Text boxes rarely share both edges, so mirrored alignment is opt-in per slot.
     alignOnDirectionChange: 'keep',
-    patterns: ordered,
+    patterns: withVariants,
   };
   if (language) manifest.language = language;
   skipped.sort((a, b) => a.slide - b.slide);

@@ -16,10 +16,11 @@ every field.
 ### `loadTemplate`
 
 ```ts
-function loadTemplate(pptx: Uint8Array, manifest: TemplateManifest): Template;
+function loadTemplate(pptx: Uint8Array, manifest: TemplateManifest, options?: TemplateOptions): Template;
 ```
 
-Unzips a template once. Reuse the result.
+Unzips a template once. Reuse the result. `options.fonts` gives it font metrics, which turns on text measuring
+everywhere the template is used (see "Measuring text" below).
 
 ### `renderDeck`
 
@@ -45,6 +46,26 @@ function extractAssets(template: Template, deck: DeckSpec, pptx: Uint8Array): Re
 
 Reads a deck's pictures back from a pptx rendered from it, by asset id.
 
+### `slideAlternatives`
+
+```ts
+function slideAlternatives(manifest: TemplateManifest, deck: DeckSpec, slide: number, options?: AlternativesOptions): SlideAlternative[];
+
+interface AlternativesOptions { layout?: LayoutMode; patterns?: string[] }
+interface SlideAlternative {
+  pattern: string;      // a pattern that has a place for everything the slide says
+  description: string;  // what that pattern is for
+  slide: SlideSpec;     // the slide written for that pattern
+  changes: string[];    // what was done where the content was not copied slot for slot
+  dropped: string[];    // slots of the original whose photo or icon has no place
+  warnings: Issue[];    // what validateDeck says about the new slide
+}
+```
+
+The other patterns that can hold what slide number `slide` (from 1) of a deck says, with the slide written for
+each. Synchronous, no model, no words changed. Throws a `RangeError` when the deck has no such slide. See
+"Another layout for the same slide" in [layout-freedom.md](layout-freedom.md).
+
 ### `DeckValidationError`
 
 ```ts
@@ -66,13 +87,18 @@ Tell the kinds of slot value apart when walking a deck.
 ### Types
 
 ```ts
-interface Template { pkg: PptxPackage; manifest: TemplateManifest }
+interface Template { pkg: PptxPackage; manifest: TemplateManifest; fonts?: FontMetrics }
+interface TemplateOptions { fonts?: FontMetrics }
 
 interface RenderOptions { assets?: Record<string, Uint8Array>; layout?: LayoutMode }
-interface RenderResult { pptx: Uint8Array; warnings: Issue[] }
+interface RenderResult {
+  pptx: Uint8Array;
+  warnings: Issue[];
+  shrunk: Array<{ slide: number; slot: string; size: number; scale: number }>; // texts set smaller to fit; empty without shrinkText
+}
 
 type LayoutMode = 'strict' | 'adaptive';
-interface ValidateOptions { layout?: LayoutMode; assets?: Iterable<string> }
+interface ValidateOptions { layout?: LayoutMode; assets?: Iterable<string>; measure?: TextMeasurer }
 interface Issue { severity: 'error' | 'warning'; slide?: number; slot?: string; message: string }
 
 interface DeckSpec {
@@ -219,6 +245,7 @@ interface PlanOptions {
   patterns?: string[];
   numberPatterns?: 'from-brief' | 'always' | 'never';
   maxRepairs?: number;
+  review?: DeckReview; // a second look at every draft; see "Design checks and reviews"
   onProgress?: (event: PlanProgress) => void;
   signal?: AbortSignal;
 }
@@ -296,6 +323,7 @@ const storeKeys: {
   deck(id: string): string;  // 'deck/<id>.json'
   pptx(id: string): string;  // 'pptx/<id>.pptx'
   asset(id: string): string; // 'asset/<id>'
+  preview(id: string, slide: number, extension: string): string; // 'preview/<id>/slide-03.svg'
 };
 ```
 
@@ -331,7 +359,9 @@ interface PresentationToolsOptions {
   layout?: LayoutMode;
   fields?: Record<string, string>;
   numberPatterns?: 'from-brief' | 'always' | 'never';
+  review?: DeckReview; // a second look at every draft the tools write
   thumbnail?: (patternId: string) => string | undefined;
+  preview?: PreviewProvider; // draws every presentation the tools create or change
   newId?: (kind: 'plan' | 'deck') => string;
   onProgress?: (event: GenerateProgress, tool: string) => void;
 }
@@ -340,7 +370,7 @@ interface PresentationTools {
   call(name: string, args: unknown, context?: { signal?: AbortSignal }): Promise<ToolResult>;
 }
 interface ToolDefinition { name: string; description: string; parameters: JsonSchema }
-interface ToolResult { output: Record<string, unknown>; plan?: DeckPlan; deck?: DeckSpec; pptx?: Uint8Array }
+interface ToolResult { output: Record<string, unknown>; plan?: DeckPlan; deck?: DeckSpec; pptx?: Uint8Array; previews?: SlidePreview[] }
 ```
 
 ## Providers
@@ -439,6 +469,17 @@ function changeManifest(template: Template, changes: ManifestChange[]): ChangeRe
 function editManifest(template: Template, instruction: string, options: ManifestEditOptions): Promise<ManifestEditResult>;
 ```
 
+### `patternVariants`, `VARIANTS`
+
+```ts
+function patternVariants(template: Template, pattern: string): VariantOption[];
+const VARIANTS: readonly ['mirror', 'text-only', 'without'];
+type PatternVariant = (typeof VARIANTS)[number];
+```
+
+The variants of a pattern that `changeManifest` can derive with `{ op: 'derivePattern' }`, each with whether
+the pattern's slide allows it. See [template-studio.md](template-studio.md).
+
 ### `describeManifest`, `describeSlot`
 
 ```ts
@@ -493,6 +534,7 @@ interface DraftOptions {
   name?: string;
   slideImage?: (slide: number) => SlidePicture | undefined | Promise<SlidePicture | undefined>;
   slides?: number[];
+  variants?: Array<'mirror' | 'text-only'>; // also add these variants of every pattern that allows them
   concurrency?: number;
   onProgress?: (event: { done: number; total: number; slide: number }) => void;
   signal?: AbortSignal;
@@ -500,18 +542,19 @@ interface DraftOptions {
 interface DraftResult { manifest: TemplateManifest; skipped: Array<{ slide: number; reason: string }>; issues: ManifestIssue[] }
 
 interface ManifestIssue { severity: 'error' | 'warning'; pattern?: string; slot?: string; message: string }
-interface SampleOptions { fill?: number; items?: 'drawn' | 'max' | 'min' }
+interface SampleOptions { fill?: number; items?: 'drawn' | 'max' | 'min'; fit?: 'budget' | 'box' }
 
 type ManifestChange =
   | { op: 'setManifest'; name?: string; language?: string; direction?: Direction; alignOnDirectionChange?: AlignPolicy; textScale?: number | null }
   | { op: 'addPattern'; slide: number; id: string; description?: string }
   | { op: 'copyPattern'; pattern: string; id: string; description?: string }
+  | { op: 'derivePattern'; pattern: string; variant: PatternVariant; slot?: string; id?: string; description?: string }
   | { op: 'removePattern'; pattern: string }
   | { op: 'setPattern'; pattern: string; id?: string; description?: string; figures?: boolean }
   | { op: 'addSlot'; pattern: string; shape: string; role: Role; name?: string; optional?: boolean }
   | { op: 'removeSlot'; pattern: string; slot: string }
   | ({ op: 'setSlot'; pattern: string; slot: string } & SlotPatch)
-  | { op: 'setRepeat'; pattern: string; min?: number; max?: number; item?: string; span?: { left: number; right: number } | null }
+  | { op: 'setRepeat'; pattern: string; min?: number; max?: number; item?: string; span?: { left: number; right: number } | null; widen?: number | null }
   | { op: 'removeRepeat'; pattern: string };
 
 interface SlotPatch {
@@ -547,6 +590,7 @@ interface ChangeResult {
   rejected: Array<{ index: number; change: ManifestChange; reason: string }>;
   issues: ManifestIssue[];
 }
+interface VariantOption { variant: PatternVariant; slot?: string; available: boolean; note: string }
 interface ManifestEditOptions { llm: LlmProvider; signal?: AbortSignal }
 interface ManifestEditResult extends ChangeResult { note: string }
 
@@ -582,6 +626,230 @@ interface SlideInfo { number: number; part: string; layout: string; shapes: Shap
 interface TemplateInfo { slideWidth: number; slideHeight: number; defaultFontSize: number; slides: SlideInfo[] }
 ```
 
+## Design checks and reviews
+
+Explained in [design-checks.md](design-checks.md). Both need a template loaded with fonts.
+
+### `checkDesign`
+
+```ts
+function checkDesign(template: Template, deck: DeckSpec, options?: DesignOptions): DesignIssue[];
+```
+
+Lists design problems that follow from measurement alone: text that runs over its box, boxes and cards left
+mostly empty, headings that end in a lone word. Synchronous, no model, no picture.
+
+### `designReview`
+
+```ts
+function designReview(template: Template, options?: DesignOptions): DeckReview;
+```
+
+The design checks as a review for the planner's `review` option. Reports `empty`, `uneven` and `orphan`.
+
+### `visionReview`
+
+```ts
+function visionReview(options: VisionReviewOptions): DeckReview;
+```
+
+A review by a model that looks at pictures of the draft's slides, drawn by a `PreviewProvider` that gives
+bitmap pictures. Not run against a live model; see the cautions in [design-checks.md](design-checks.md).
+
+### Types
+
+```ts
+type DesignKind = 'overflow' | 'empty' | 'uneven' | 'orphan';
+interface DesignIssue { severity: 'warning'; slide: number; slot: string; kind: DesignKind; message: string } // an Issue with a kind
+interface DesignOptions {
+  layout?: LayoutMode;
+  kinds?: DesignKind[];  // default: all four
+  emptyBelow?: number;   // default 1/3
+  headingSize?: number;  // points; default 20
+}
+
+// A second look at a draft deck: problems to send back to the writing model.
+type DeckReview = (deck: DeckSpec, context: { signal?: AbortSignal }) => Issue[] | Promise<Issue[]>;
+
+interface VisionReviewOptions {
+  template: Template;
+  llm: LlmProvider;         // a model that accepts pictures
+  preview: PreviewProvider; // must give PNG, JPEG, WebP or GIF
+  icons?: IconDef[];
+  assets?: AssetDef[];
+  layout?: LayoutMode;       // default 'adaptive'
+  slidesPerRequest?: number; // default 6
+}
+```
+
+## Slide previews
+
+Explained in [preview.md](preview.md). slotdeck draws nothing itself: a `PreviewProvider` is a renderer you plug in.
+
+### `pagusPreviews`
+
+```ts
+function pagusPreviews(core: PagusCore, renderer: PagusRenderer, options?: PagusOptions): PreviewProvider;
+
+interface PagusCore { parse(data: ArrayBuffer): Promise<{ slides: readonly unknown[]; slideSize: unknown }> } // the `@pagus-kit/core` module
+interface PagusRenderer { renderSlide(slide: never, slideSize: never, options?: never): { svg: string; width: number; height: number } } // the `@pagus-kit/renderer` module
+interface PagusOptions { scale?: number; fontSubstitutes?: Record<string, string>; fontCss?: string }
+```
+
+A provider that draws slides with the Pagus library, which you install and pass in:
+`pagusPreviews(pagusCore, pagusRenderer)` after `import * as pagusCore from '@pagus-kit/core'` and
+`import * as pagusRenderer from '@pagus-kit/renderer'`. One SVG for each slide, with the text as real text for a
+browser to set. Paragraphs that start with a right-to-left letter are marked as running right to left.
+
+### `previewDeck`
+
+```ts
+function previewDeck(template: Template, deck: DeckSpec, preview: PreviewProvider, options?: PreviewDeckOptions): Promise<{ pptx: Uint8Array; previews: SlidePreview[] }>;
+```
+
+`renderDeck`, then the provider: the pptx and a picture of each of its slides.
+
+### `patternPreviews`
+
+```ts
+function patternPreviews(template: Template, preview: PreviewProvider, options?: SampleOptions & { signal?: AbortSignal }): Promise<Record<string, SlidePreview>>;
+```
+
+A picture of every pattern, by pattern id: each pattern's slide of the template's sample deck.
+
+### `previewExtension`
+
+```ts
+function previewExtension(preview: { mimeType: string }): string; // 'svg', 'png', 'jpg', ...
+```
+
+The file extension for a preview's type, for naming it in a store or on disk.
+
+### Types
+
+```ts
+// What slotdeck needs from a slide renderer. Implement it to plug in any renderer.
+interface PreviewProvider {
+  renderSlides(request: PreviewRequest): Promise<SlidePreview[]>; // one picture for each slide asked for, in slide order
+}
+interface PreviewRequest {
+  pptx: Uint8Array;
+  slides?: number[]; // 1-based; every slide when left out
+  signal?: AbortSignal;
+}
+interface SlidePreview {
+  slide: number;    // 1-based
+  mimeType: string; // 'image/svg+xml', 'image/png'
+  data: Uint8Array; // SVG as UTF-8 text, or the bitmap's bytes
+  width?: number;   // pixels
+  height?: number;
+}
+interface PreviewDeckOptions { assets?: Record<string, Uint8Array>; layout?: LayoutMode; signal?: AbortSignal }
+```
+
+## Measuring text
+
+Explained in [text-fit.md](text-fit.md). All of it is optional: without fonts nothing here is used.
+
+### `fontkitMetrics`
+
+```ts
+function fontkitMetrics(fontkit: FontkitModule, files: FontFiles): FontMetrics;
+
+type FontFiles = Record<string, Uint8Array | Uint8Array[]>; // typeface name as the template states it -> its font files
+interface FontkitModule { create(buffer: never, postscriptName?: string): unknown } // the `fontkit` module itself
+```
+
+Font metrics from font files, read with the `fontkit` library, which you install and pass in:
+`fontkitMetrics(fontkit, { Calibri: [regularBytes, boldBytes] })` after `import * as fontkit from 'fontkit'`.
+Reads TrueType, OpenType, collections, WOFF and WOFF2.
+
+### `fontFiles` (from `slotdeck/node`)
+
+```ts
+function fontFiles(fontkit: FontkitModule, directory: string, typefaces: Iterable<string>): FontFiles;
+```
+
+Finds the font files of the given typefaces in a folder, such as the system's font folder, by the family name
+each file states. Typefaces with no file there are left out.
+
+### `templateFonts`
+
+```ts
+function templateFonts(template: Template, language?: string): TemplateFont[];
+```
+
+The typefaces a template's text slots are set in, with the weights and slants used: the font files to supply.
+`language` (default: the manifest's) adds the typeface that text of that language is set in.
+
+### `textMeasurer`
+
+```ts
+function textMeasurer(template: Template, fonts?: FontMetrics): TextMeasurer;
+```
+
+A measurer for a template. `fonts` defaults to the fonts the template was loaded with; it throws when there
+are none. Pass the result to `validateDeck` as `measure`, or call `fit` yourself.
+
+### `measuredBudgets`
+
+```ts
+function measuredBudgets(template: Template, options?: BudgetOptions): MeasuredBudget[];
+```
+
+How many characters each text slot's box holds, as measured, with a budget to set. The template must have
+fonts.
+
+### Types
+
+```ts
+// What slotdeck needs from a font library. Implement it to use a library other than fontkit.
+interface FontMetrics {
+  face(typeface: string, style: FontStyle): FontFace | undefined; // undefined: the typeface was not supplied
+  fallback?(codePoint: number, style: FontStyle): FontFace | undefined; // a face for a character the chosen one lacks
+}
+interface FontStyle { bold: boolean; italic: boolean }
+interface FontFace {
+  has(codePoint: number): boolean;
+  advances(text: string, kerning: boolean): number[]; // the advance of each glyph after shaping, in ems
+  substitute?: boolean; // stands in for a weight or slant that was not supplied
+}
+
+interface TemplateFont { typeface: string; bold: boolean; italic: boolean }
+
+interface TextMeasurer {
+  fit(pattern: string | PatternDef, slot: string | TextSlotDef, text: string | string[], options?: FitOptions): TextFit | undefined;
+  missingFonts(): TemplateFont[];
+}
+interface FitOptions {
+  textScale?: number;   // the factor on body text the deck is rendered with; default 1
+  shrink?: ShrinkLimit; // allow the text to be set smaller when it does not fit
+  items?: number;       // for a slot of a row of items: how many items the slide has
+}
+interface ShrinkLimit { to: number; minSize?: number } // the shape of the manifest's shrinkText
+interface TextFit {
+  fits: boolean;
+  lines: number;       // lines the text takes
+  capacity: number;    // lines of this text the box holds
+  overflow: number;    // lines that do not fit
+  height: number;      // points the text takes
+  room: number;        // points the box gives
+  widthRatio: number;  // for a box that does not wrap: longest line / box width
+  size: number;        // font size of the first paragraph, in points
+  sizes: number[];     // font size of each paragraph
+  scale: number;       // the factor the text was shrunk by; 1 when it was not
+  fitsChars: number;   // about how many characters of such text the box holds
+  paragraphs: string[][]; // the lines of each paragraph
+  widths: number[][];     // the width of each of those lines, in points
+  lineRoom: number[];     // the width a line of each paragraph may take, in points
+  sampleLines: number;    // lines the template's own sample text takes in the slot; 0 when there is none to compare with
+  approximate: boolean;   // a typeface, weight or outline was stood in for
+}
+
+interface BudgetOptions { sample?: string; margin?: number } // margin defaults to 0.9
+interface MeasuredBudget { pattern: string; slot: string; maxChars?: number; fits: number; suggested: number }
+```
+
 ## Manifest types
 
 Described field by field in [manifest-format.md](manifest-format.md).
@@ -601,6 +869,7 @@ interface TemplateManifest {
   direction: Direction;
   alignOnDirectionChange?: AlignPolicy;
   textScale?: number; // enlarges body text in every deck made from the template
+  shrinkText?: { to: number; minSize?: number }; // lets text that does not fit be set smaller; needs fonts
   patterns: PatternDef[];
 }
 interface PatternDef {
@@ -620,6 +889,7 @@ interface RepeatDef {
   max?: number;
   span?: { left: number; right: number };
   columns?: number;
+  widen?: number; // fewer items on a line than drawn grow up to this factor to fill the row
 }
 type SlotDef = TextSlotDef | ImageSlotDef | TableSlotDef | ChartSlotDef;
 

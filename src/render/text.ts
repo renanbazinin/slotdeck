@@ -65,6 +65,30 @@ export function adjustText(shape: Element, change: { scale?: number; size?: numb
   }
 }
 
+/**
+ * Sets the font size of each paragraph of a filled shape outright, in points: `sizes[n]` for
+ * paragraph n, the last one for any paragraph beyond it. Unlike {@link adjustText} it also sizes
+ * runs that state no size of their own, so text that inherits its size can be set smaller.
+ */
+export function setTextSizes(shape: Element, sizes: number[]): void {
+  const body = childElement(shape, NS.p, 'txBody');
+  if (!body || sizes.length === 0) return;
+  childElements(body, NS.a, 'p').forEach((paragraph, index) => {
+    const size = String(Math.round((sizes[Math.min(index, sizes.length - 1)] as number) * 100));
+    const doc = paragraph.ownerDocument;
+    const prefix = paragraph.prefix ? `${paragraph.prefix}:` : '';
+    for (const run of childElements(paragraph, NS.a, 'r')) {
+      let props = childElement(run, NS.a, 'rPr');
+      if (!props && doc) {
+        props = doc.createElementNS(NS.a, `${prefix}rPr`);
+        run.insertBefore(props, run.firstChild);
+      }
+      props?.setAttribute('sz', size);
+    }
+    childElement(paragraph, NS.a, 'endParaRPr')?.setAttribute('sz', size);
+  });
+}
+
 function setParagraphGap(paragraph: Element, points: number): void {
   const doc = paragraph.ownerDocument;
   if (!doc) return;

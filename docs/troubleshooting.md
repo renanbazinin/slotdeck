@@ -43,6 +43,11 @@ These do not stop rendering. `renderDeck` and the planner return them.
 | Message | Meaning | What to do |
 | --- | --- | --- |
 | `text is 230 characters; the slot fits about 211` | Text over the slot's `maxChars`. It is rendered and may overflow its box. | Shorten the text, or raise the budget in the manifest if the sample deck shows room. |
+| `text takes 7 lines at 18 pt; the box holds 5 (2 lines too many). Text of about 290 characters fits.` | (Template loaded with fonts.) The text was measured and runs over its box by that many lines. | Shorten the text to about the length given, or allow shrinking with `shrinkText`. See [text-fit.md](text-fit.md). |
+| `text takes 6 lines even at 15.5 pt; the box holds 5 ...` | The text was set as small as `shrinkText` allows and still does not fit. | Shorten the text. |
+| `text is 30% wider than its box at 12 pt, and the box does not wrap. ...` | (With fonts.) A one-line box whose text is too long. | Shorten the text. |
+| `text takes 1 line where the template's own text takes 5, so its box will look empty. ...` | (From `checkDesign` or a `review`.) The text fits but leaves its box almost empty. Also: `...so the row will look uneven`, and `the last of its 2 lines holds one word, ...`. | Lengthen or shorten the text as the message says. See [design-checks.md](design-checks.md). |
+| `seen in the picture of the slide: ...` | (From `visionReview`.) A model looked at a picture of the slide and reported this. It is only as reliable as the picture. | Check the slide; see the cautions in [design-checks.md](design-checks.md). |
 | `text has 5 paragraphs; the slot fits 4` | Over `maxParagraphs`. | Fewer paragraphs. |
 | `the table has 6 columns; the slot fits 5` (also rows) | Over the table's limits. The table may leave the slide. | A smaller table. |
 | `a cell is 40 characters; cells fit about 22` | A long cell makes its row taller. | Shorter cells. |
@@ -89,6 +94,9 @@ Reasons a pattern is not offered:
 | warning: `has no character budget, so nothing stops text that does not fit` | Add `maxChars`. |
 | warning: `points at the same shape as "x"` | Two slots on one shape: usually a mistake. |
 | warning: `a grid cannot hold more items than it draws` | Lower `max` to the number drawn. |
+| warning: `has a budget of 900 characters, but sample text of that length takes 14 lines where 9 fit; about 560 characters fit` | (Template loaded with fonts.) The budget lets text run over the box. Lower `maxChars` to about the length given, or use `measuredBudgets`. See [text-fit.md](text-fit.md). |
+| warning: `has a budget of 520 characters on a slide with 2 of its 4 items, but sample text of that length takes 10 lines where 7 fit; about 376 characters fit` | (Template loaded with fonts, row with `widen`.) With that number of items the row's items are wider and their texts have a larger budget, which still lets text run over the wider box. Lower the slot's `maxChars`: the budget at each number of items follows from it. See "Fewer items that fill the row" in [layout-freedom.md](layout-freedom.md). |
+| warning: `no font was supplied for Cambria bold; text set in it is checked by its character budget` | Add the font file to `fontkitMetrics`, or accept character budgets for those slots. |
 
 ## Refusals from `changeManifest`
 
@@ -159,7 +167,8 @@ Plain `Error`s from `renderDeck`. They mean the manifest and the pptx disagree, 
   as empty: a drafted budget for it is only as long as its sample text, and `box` cannot be applied to it. Decks
   exported from Google Slides and decks built from free-standing text boxes work as they are.
 - **Budgets are estimates.** A character budget cannot see lines lost to wrapping. Leave room in budgets for
-  slots with several paragraphs.
+  slots with several paragraphs. A template loaded with its fonts measures text in lines and does not have this
+  limit for text slots: see [text-fit.md](text-fit.md). Tables and charts are not measured.
 - **Text boxes do not resize.** Text longer than its box overflows.
 - **Charts:** `column`, `bar`, `line` and `pie` only. No stacked or combined charts.
 - **Tables:** the sample table must not have merged cells.
@@ -168,7 +177,9 @@ Plain `Error`s from `renderDeck`. They mean the manifest and the pptx disagree, 
 - **Animations** on template slides were not tested. A slide whose animated shape is removed may make PowerPoint
   offer to repair the file; use templates without animations, or keep animated shapes out of optional slots.
 - **Not read back:** changes made to a rendered file in PowerPoint. The deck JSON is the source of truth.
-- **Not possible:** swapping the side of a photo; positioning a shape from a deck.
+- **Not possible:** positioning a shape from a deck; mirroring a slide because of a deck's reading direction
+  (a mirrored layout is a separate pattern: see "Variants the code works out" in
+  [layout-freedom.md](layout-freedom.md)).
 - **What was tested.** Output was checked by rendering in PowerPoint on Windows. Other programs that open pptx
   files were not tested. The Gemini adapters were run against the Gemini Developer API; the Vertex AI endpoint
   is supported but was not run live.
