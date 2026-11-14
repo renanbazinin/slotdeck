@@ -155,6 +155,7 @@ function outlinePrompt(brief: Brief, catalog: Catalog, count: { min: number; max
     [
       '- Open with an opening pattern and end with a closing pattern when the list has them.',
       '- For a pattern with a row of items, set "items" to the number the content really has. Do not pad a list to fill a row.',
+      '- When the brief asks for a number of columns, or for items side by side, use a pattern whose items are "side by side in one row" and that takes that number. A pattern whose items are "in lines of" a number is a grid: it breaks them over several lines.',
       '- Choose a pattern only when the content can fill every required slot within its limits.',
       ...(brief.textOnly
         ? ['- The deck is text only, and every pattern in the list is plain text. Using the same pattern for several slides in a row is expected.']

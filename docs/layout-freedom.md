@@ -26,6 +26,14 @@ Deck:
 { "pattern": "icon-cards", "items": 3, "slots": { "title": "...", "card1Icon": {"asset": "clock"}, "card1Heading": "...", "card1Text": "...", "card2Icon": {"asset": "shield"}, "card2Heading": "...", "card2Text": "...", "card3Icon": {"asset": "people"}, "card3Heading": "...", "card3Text": "..." } }
 ```
 
+`max` may be more than the template draws. A manifest made by `draftManifest` sets it to what the slide has
+room for, and `suggestChanges` proposes it for a manifest that does not have it; see
+[template-studio.md](template-studio.md).
+
+The planner reads how each pattern sets its items: `side by side in one row` for a row, `in lines of 2` for a
+grid. A brief that asks for a number of columns, or for items side by side, is answered with a row that takes
+that number, not with a grid that breaks them over two lines.
+
 What the renderer does:
 
 - **Fewer items than drawn:** the surplus items' shapes are removed.

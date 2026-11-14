@@ -7,7 +7,7 @@ import { checkManifest } from './check.ts';
 import type { ManifestIssue } from './check.ts';
 import { VARIANTS, deriveVariant } from './derive.ts';
 import type { PatternVariant } from './derive.ts';
-import { detectRepeat } from './draft.ts';
+import { detectRepeat, rowFit, rowOnSlide } from './rows.ts';
 import { inspectTemplate } from './inspect.ts';
 import type { ShapeInfo, SlideInfo, TemplateInfo } from './inspect.ts';
 import type { AlignPolicy, Direction, EmptyPolicy, ImageKind, PatternDef, SlideBox, SlotDef, TableTextStyle, TemplateManifest } from './manifest.ts';
@@ -117,7 +117,11 @@ const policyWord = (policy: EmptyPolicy) => ({ error: 'required', remove: 'optio
  * manifest pointing at something the pptx does not have, is rejected with a reason and skipped.
  */
 export function changeManifest(template: Template, changes: ManifestChange[]): ChangeResult {
-  const info = inspectTemplate(template.pkg);
+  return changeWith(template, changes, inspectTemplate(template.pkg));
+}
+
+/** {@link changeManifest} for a caller that has already read the pptx's shapes. */
+export function changeWith(template: Template, changes: ManifestChange[], info: TemplateInfo): ChangeResult {
   const errors = (manifest: TemplateManifest) =>
     checkManifest({ pkg: template.pkg, manifest }, info)
       .filter((issue) => issue.severity === 'error')
@@ -355,27 +359,30 @@ function apply(manifest: TemplateManifest, change: ManifestChange, info: Templat
       }
       const repeat = pattern.repeat as NonNullable<PatternDef['repeat']>;
       const drawn = repeat.shapes.length;
+      let spanned = '';
       if (change.item !== undefined) repeat.item = change.item.trim().toLowerCase() || reject('the item needs a name, such as "card"');
       if (change.span === null) delete repeat.span;
       else if (change.span !== undefined) {
         if (!(change.span.left >= 0 && change.span.right <= 1 && change.span.left < change.span.right)) reject('a span runs from left to right, both between 0 and 1');
         repeat.span = { left: change.span.left, right: change.span.right };
+        spanned = ` The row may now spread from ${Math.round(change.span.left * 100)}% to ${Math.round(change.span.right * 100)}% of the slide's width.`;
       }
       const min = change.min ?? repeat.min ?? drawn;
       const max = change.max ?? repeat.max ?? drawn;
       for (const value of [min, max]) if (!Number.isInteger(value) || value < 1) reject('the fewest and most items are whole numbers of 1 or more');
       if (min > max) reject(`the fewest (${min}) cannot be more than the most (${max})`);
 
-      let widened = '';
+      let widened = spanned;
       if (repeat.columns !== undefined) {
         if (max > drawn) reject(`a grid holds at most the ${drawn} ${repeat.item}s it draws; ${max} would need a new line of them`);
       } else {
         // A row may hold more than it draws, as long as the items fit side by side in the room there is.
         const room = rowRoom(slide, repeat.shapes);
-        const onSlide = repeat.shapes.flat().every((id) => slide.shapes.find((shape) => shape.id === id)?.groupId === undefined);
-        const fits = (left: number, right: number) => Math.max(1, Math.floor((right - left - room.itemWidth) / (room.itemWidth * 1.03) + 1 + 1e-6));
+        const onSlide = rowOnSlide(slide, repeat);
+        const fits = (left: number, right: number) => rowFit(room.itemWidth, left, right);
         const span = repeat.span ?? { left: room.area.x, right: room.area.x + room.area.w };
-        if (max > fits(span.left, span.right)) {
+        // What the template draws always fits, however close its items sit.
+        if (max > drawn && max > fits(span.left, span.right)) {
           const most = change.span === undefined && onSlide ? fits(room.left, room.right) : fits(span.left, span.right);
           if (max > most) {
             reject(`${max} ${repeat.item}s do not fit side by side: each is ${Math.round(room.itemWidth * 100)}% of the slide wide and the row has ${Math.round(((change.span === undefined && onSlide ? room.right - room.left : span.right - span.left)) * 100)}%. The most is ${most}`);

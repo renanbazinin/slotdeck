@@ -233,7 +233,7 @@ test('the planner chooses the number of items and writes exactly that many', asy
   );
   const { deck } = await planDeck(template, { prompt: 'Two things', language: 'en', imageDensity: 'none' }, { llm });
 
-  assert.match(requests[0]?.prompt ?? '', /- cards: A row of cards\.\n {2}slots: title \(text\); cardNText \(at most 20 characters\)\n {2}items: 1 to 5 cards/);
+  assert.match(requests[0]?.prompt ?? '', /- cards: A row of cards\.\n {2}slots: title \(text\); cardNText \(at most 20 characters\)\n {2}items: 1 to 5 cards side by side in one row, numbered/);
   const outline = (requests[0]?.schema as { properties: { slides: { items: { properties: { items: { minimum: number; maximum: number } } } } } }).properties.slides.items
     .properties.items;
   assert.deepEqual([outline.minimum, outline.maximum], [1, 5]);
@@ -244,6 +244,17 @@ test('the planner chooses the number of items and writes exactly that many', asy
   const tooMany = scripted({ title: 'T', slides: [{ pattern: 'cards', purpose: 'p', items: 9 }] }, { title: 'T', slides: [{ pattern: 'cards', purpose: 'p', items: 5 }] }, { s1: {} });
   await planDeck(template, { prompt: 'x', language: 'en', imageDensity: 'none' }, { llm: tooMany.llm, maxRepairs: 0 }).catch(() => undefined);
   assert.match(tooMany.requests[1]?.prompt ?? '', /takes 1 to 5 cards, not 9/);
+});
+
+test('the planner is told which patterns set their items in one row and which break them over lines', async () => {
+  // Both hold cards. Only one of them answers a wish for three columns side by side.
+  const both: TemplateManifest = { ...cardsManifest, patterns: [...cardsManifest.patterns, ...gridManifest.patterns.filter((pattern) => pattern.id === 'grid')] };
+  const { llm, requests } = scripted({ title: 'T', slides: [{ pattern: 'cards', purpose: 'Three things', items: 3 }] }, { s1: { title: 'T', card1Text: 'One', card2Text: 'Two', card3Text: 'Three' } });
+  await planDeck(loadTemplate(pptx, both), { prompt: 'Three columns side by side', language: 'en', imageDensity: 'none' }, { llm });
+  const prompt = requests[0]?.prompt ?? '';
+  assert.match(prompt, /\n {2}items: 1 to 5 cards side by side in one row, numbered N = 1, 2, \.\.\./);
+  assert.match(prompt, /\n {2}items: 1 to 4 cards in lines of 2, numbered N = 1, 2, \.\.\./);
+  assert.match(prompt, /When the brief asks for a number of columns, or for items side by side, use a pattern whose items are "side by side in one row"/);
 });
 
 test('a larger text size reaches the model as smaller limits', async () => {
@@ -431,7 +442,7 @@ test('budgets of widened items follow their width, in validation and in what the
 
   const { llm, requests } = scripted({ title: 'T', slides: [{ pattern: 'cards', purpose: 'Two things', items: 2 }] }, { s1: { title: 'Two', card1Text: 'One', card2Text: 'Two' } });
   await planDeck(wideTemplate, { prompt: 'Two things', language: 'en', imageDensity: 'none' }, { llm });
-  assert.match(requests[0]?.prompt ?? '', /cardNText \(at most 20 characters\)\n {2}items: 1 to 5 cards, numbered N = 1, 2, \.\.\. With fewer on a line than 3, each card is wider and holds more text\./);
+  assert.match(requests[0]?.prompt ?? '', /cardNText \(at most 20 characters\)\n {2}items: 1 to 5 cards side by side in one row, numbered N = 1, 2, \.\.\. With fewer on a line than 3, each card is wider and holds more text\./);
   assert.match(JSON.stringify(requests[1]?.schema), /at most 30 characters/);
   // The plain row says nothing of the kind.
   const plain = scripted({ title: 'T', slides: [{ pattern: 'cards', purpose: 'p', items: 2 }] }, { s1: { title: 'Two', card1Text: 'One', card2Text: 'Two' } });

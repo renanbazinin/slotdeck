@@ -5,24 +5,37 @@ manifest with a model, checking it, seeing whether its budgets hold, and changin
 
 ```ts
 import {
-  draftManifest, checkManifest, sampleDeck, changeManifest, editManifest, patternVariants, VARIANTS,
-  studioView, describeManifest, describeSlot, inspectTemplate, ROLES, PptxPackage, loadTemplate, renderDeck,
+  draftManifest, checkManifest, sampleDeck, changeManifest, editManifest, suggestChanges, SUGGESTION_KINDS,
+  patternVariants, VARIANTS, studioView, describeManifest, describeSlot, inspectTemplate, ROLES, PptxPackage,
+  loadTemplate, renderDeck,
 } from 'slotdeck';
-import type { ManifestChange, SlotPatch, ChangeResult, ManifestIssue, PatternVariant, Role, StudioView, VariantOption } from 'slotdeck';
+import type {
+  ManifestChange, SlotPatch, ChangeResult, ManifestIssue, ManifestSuggestion, SuggestionKind, PatternVariant,
+  Role, StudioView, VariantOption,
+} from 'slotdeck';
 ```
 
 ## The workflow
 
-1. **Draft** with `draftManifest`. A model labels the shapes; the code measures everything.
+1. **Draft** with `draftManifest`. A model labels the shapes; the code measures everything, and settles what
+   measurement decides: how many items each row takes, and which small pictures are icons.
 2. **Check** with `checkManifest`. It should report nothing.
 3. **Look** at a sample: `sampleDeck` then `renderDeck`, and open the file. Every slot is filled to its budget,
    so text that overflows here will overflow in real decks, and shapes that should not be there are easy to see.
-4. **Change** what is wrong: `changeManifest` with operations, or `editManifest` with an instruction.
-5. Repeat 2 to 4 until the sample looks right. Store the manifest as JSON next to the pptx.
+4. **Take suggestions** with `suggestChanges`: what the slides allow that the manifest does not use yet, each
+   ready to apply. No model.
+5. **Change** what is wrong: `changeManifest` with operations, or `editManifest` with an instruction.
+6. Repeat 2 to 5 until the sample looks right. Store the manifest as JSON next to the pptx.
 
-A draft is a starting point for review, not a finished manifest. What a draft does not contain, and a person
-adds: budgets tuned by eye, derived patterns (a mirrored or text-only variant, a native chart), wider rows,
-picture areas, chart colours, and alignment choices for decks that read the other way.
+A draft can be used as it is: a deck may ask it for two cards or for six, and gets them. It is still worth a
+review. What a draft does not contain, and a person adds: budgets tuned by eye, a native chart, picture areas,
+chart colours, and alignment choices for decks that read the other way. Variants and rows that widen are a
+matter of taste; `suggestChanges` lists them and a click adds them.
+
+**Do not draft again to repair a manifest.** A model names and describes the same slide differently each time,
+so a second draft replaces every pattern id and description, drops every correction made since, and leaves
+stored decks pointing at ids that no longer exist. To improve a manifest that is in use, ask `suggestChanges`
+and apply what it returns: ids and slot names stay as they are. See "Repairing a manifest that is in use" below.
 
 ## `draftManifest(pptx, options)`
 
@@ -33,16 +46,22 @@ const { manifest, skipped, issues } = await draftManifest(pptxBytes, {
   slideImage: (slide) => thumbnails.get(slide),  // optional: { mimeType, data } of a picture of slide N (1-based); may be async
   slides: [1, 2, 5],                             // optional: only these slides; default all
   variants: ['mirror', 'text-only'],             // optional: also add these variants of every pattern that allows them; default none
+  rows: 'fit',                                   // optional: 'fit' (default) lets a row take as many items as the slide has room for; 'drawn' only what the template draws
+  widen: 2,                                      // optional: let the items of every row and grid grow up to this factor when there are fewer; default off
   concurrency: 4,                                // optional: slides sent to the model at once; default 4
   onProgress: ({ done, total, slide }) => {},    // optional
   signal,                                        // optional
 });
-// manifest: TemplateManifest
-// skipped:  [{ slide, reason }]   slides that did not become patterns, and why
-// issues:   ManifestIssue[]       what checkManifest finds in the draft
+// manifest:    TemplateManifest
+// skipped:     [{ slide, reason }]   slides that did not become patterns, and why
+// issues:      ManifestIssue[]       what checkManifest finds in the draft
+// notes:       string[]              what the code settled by measurement, in sentences
+// suggestions: ManifestSuggestion[]  what the slides allow beyond the draft; see suggestChanges
 ```
 
-Model calls: one about the deck as a whole, then one per slide.
+Model calls: one about the deck as a whole, then one per slide. Each call carries a ceiling on the size of its
+answer (`maxOutputTokens` on the request: 400 tokens plus 60 for each shape listed), which ends a model that
+runs away inside a text field. A provider should pass it on as its output limit; the Gemini adapter does.
 
 What the code works out without the model:
 
@@ -54,13 +73,19 @@ What the code works out without the model:
 - The reading direction, from the letters of the sample text.
 - A character budget for each text box, from its size and font size, and never less than its sample text.
 - A table's columns and rows, and how many characters fit a cell before the table leaves the slide.
-- Rows and grids of like items, from numbered slot names (`card1Heading`, `card2Heading`).
+- Rows and grids of like items, from numbered slot names (`card1Heading`, `card2Heading`), and how many items
+  each row has room for.
+- Which pictures are pictograms: no side longer than 1.1 inch, not a JPEG, not cropped into a frame. The model
+  reads `small: a pictogram` on such a shape's line.
 
 What the model decides, for each slide:
 
 - Whether the slide is a reusable layout at all. A sheet of brand assets or a broken slide is skipped, with a
   reason.
-- An id and a description for the pattern, and whether it is built around numbers.
+- An id and a description for the pattern, and whether it is built around numbers. It is told to name and
+  describe the layout by its structure ("a row of cards, each with an icon, a heading and a short text"), never
+  by the subject of the filler ("profiles of team members") and without a number of items: the planner chooses
+  a pattern by its description, and a layout described as team profiles is passed over for anything else.
 - A role, a name and "optional or not" for each shape.
 
 A label for a shape that is not on the slide is discarded, so the model cannot make the manifest point at
@@ -71,6 +96,38 @@ Any PNG or JPEG of the slide works; 480 pixels wide is enough.
 
 To redo one slide after changing the pptx, call `draftManifest` with `slides: [n]` and add the pattern it
 returns to your manifest.
+
+### What a draft settles by itself
+
+Two things are facts of the slide, so the code decides them and says so in `notes`.
+
+**How many items a row takes.** A row drawn with four cards takes four by default in the manifest format, and a
+deck that wants five then has nowhere to go: the planner picks a table or a grid. With `rows: 'fit'`, the
+default, a drafted row takes as many items as fit side by side at their drawn width, spreading out to the
+slide's margin or to the next shape, while the space between items stays at a third of the drawn space or more.
+The row's `span` is set with it. A grid takes what it draws, because one more item would need another line.
+`rows: 'drawn'` keeps every row at what the template draws; the same change is then the first suggestion.
+
+```ts
+// notes
+// '"icon-columns": the row of columns takes 2 to 6. The row may now spread from 4% to 96% of the slide\'s width.'
+```
+
+A person may still ask for more with `setRepeat`, up to the number at which items would touch; the refusal
+says that number.
+
+**Which pictures are icons.** A model that does not see the slide was observed to label the small pictograms of
+a row of cards as photographs. Such a layout then asks for one photograph per card, and is not offered at all
+when pictures are turned off. A picture labelled `photo` that measures as a pictogram becomes an icon slot, and
+a name such as `card1Photo` becomes `card1Icon`.
+
+```ts
+// notes
+// 'Slide 15: 4 pictures labelled photo are no more than 1.1 inch on a side, so they were made icons.'
+```
+
+`widen` is off unless asked for: whether two cards should grow to fill a row drawn for four is a matter of
+taste. With `widen: 2` every drafted row and grid gets it; without, it comes back as a suggestion.
 
 ### Variants in a draft
 
@@ -295,6 +352,10 @@ Sets how many items a row or grid takes. When the pattern has no row yet, it is 
 name the slots of each item alike with a number (`card1Heading`, `card1Text`, `card2Heading`, `card2Text`) and
 they become a row.
 
+A row may take more items than it draws, as long as they fit side by side at their drawn width; a refusal says
+the most that do. `suggestChanges` proposes a number that keeps a third of the drawn spacing, which is fewer
+than the most that fit. A grid takes at most what it draws.
+
 `widen` lets the items grow wider when a line holds fewer of them than the template draws, so that two or
 three cards fill a row drawn for four. It is the most an item may grow, as a factor on its drawn width,
 between 1 and 4; `null` or `1` turns it off. See "Fewer items that fill the row" in
@@ -443,6 +504,69 @@ that are slots, and on a click offers the shape's `roles` (sending `addSlot`) or
 `setSlot`). Nothing is stored in the view: call it again after every change.
 
 `describeSlot(slot)` gives a slot in a few words, such as `text, up to 40 characters, required`.
+
+## `suggestChanges(template, options?)`
+
+```ts
+const suggestions = suggestChanges(template);
+// [
+//   { kind: 'icon', pattern: 'team-cards', slide: 15,
+//     message: '"card1Photo", "card2Photo", "card3Photo", "card4Photo" are photo slots, but their pictures are no more than 6% of the slide wide: pictograms. As icons they are filled from the icon set, and the layout no longer waits for photographs.',
+//     changes: [{ op: 'setSlot', pattern: 'team-cards', slot: 'card1Photo', imageKind: 'icon' }] },
+//   { kind: 'row-max', pattern: 'team-cards', slide: 15,
+//     message: 'The row of cards in "team-cards" takes up to 4, and the slide has room for 5 side by side at their drawn width, with the space between them no less than a third of what the template draws. For that the row spreads from 4% to 68% of the slide\'s width.',
+//     changes: [{ op: 'setRepeat', pattern: 'team-cards', max: 5, span: { left: 0.04, right: 0.68 } }] },
+//   { kind: 'row-widen', pattern: 'team-cards', slide: 15, message: '...', changes: [{ op: 'setRepeat', pattern: 'team-cards', widen: 2 }] },
+//   { kind: 'variant', variant: 'text-only', pattern: 'text-and-photo', slide: 3, message: '...', changes: [{ op: 'derivePattern', pattern: 'text-and-photo', variant: 'text-only' }] },
+// ]
+
+const result = changeManifest(template, suggestions.filter((s) => s.kind !== 'variant').flatMap((s) => s.changes));
+```
+
+No model, and nothing is changed. It reads the manifest against the pptx and lists what the slides allow that
+the manifest does not use yet. It works on any manifest: one a draft made, one written by hand, one that has
+been in use for months. Every suggestion has been tried against the pptx before it is listed, so its `changes`
+apply as they stand.
+
+| `kind` | What was found | The change |
+| --- | --- | --- |
+| `icon` | Photo slots whose pictures measure as pictograms (no side over 1.1 inch, not a JPEG, not cropped into a frame). | `setSlot` with `imageKind: 'icon'`. One change covers a row. |
+| `row` | Slots that name several items alike (`card1Text`, `card2Text`) in a pattern with no row, so a deck must fill them all. | `setRepeat`, which finds the row. |
+| `row-max` | A row with room for more items than it takes, at a third of the drawn spacing or more. | `setRepeat` with `max`, and `span` when the row has to spread for it. |
+| `row-widen` | A row or grid that may hold fewer items than it draws on a line, and keeps them at their drawn width. | `setRepeat` with `widen`. |
+| `variant` | A mirrored, text-only or shortened layout the slide allows and the manifest does not have. `variant` says which, and `slot` the text a `without` leaves out. | `derivePattern`. |
+
+`SUGGESTION_KINDS` lists the kinds. The first three are facts of the slide and safe to take together; the last
+two are choices about how a deck should look.
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `kinds` | all | Only these kinds. |
+| `widen` | `2` | The factor suggested by `row-widen`. |
+
+Ask again after applying: one change can open another. A row found by `row` is then asked how many items it
+takes, and a variant derived from a pattern copies the row as it is at that moment, so take `row-max` before
+`variant`. A variant is offered once, for the first pattern of a slide; a pattern that is itself a variant gets
+none.
+
+A studio screen can show each suggestion as a line of text with a button that sends its `changes`.
+
+### Repairing a manifest that is in use
+
+A manifest drafted with an earlier version keeps every row at what the template draws, and may have photo
+slots where the slide has pictograms. Three lines repair it, with no model and with every pattern id and slot
+name unchanged, so stored decks keep working:
+
+```ts
+const template = loadTemplate(pptxBytes, savedManifest);
+const facts = suggestChanges(template, { kinds: ['icon', 'row', 'row-max'] });
+const { manifest, applied, rejected } = changeManifest(template, facts.flatMap((s) => s.changes));
+// store `manifest`; show `applied[i].message` to whoever reviews it
+```
+
+What the code cannot repair is a description that names the subject of the filler ("Four team member profiles
+with photos"). The planner reads it and passes the layout over for other subjects. Change it with
+`{ op: 'setPattern', pattern, description }`, or ask `editManifest` in a sentence.
 
 ## `patternVariants(template, pattern)`
 

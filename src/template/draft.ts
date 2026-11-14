@@ -4,13 +4,19 @@
 import type { JsonSchema, LlmProvider } from '../llm/provider.ts';
 import { PptxPackage } from '../pptx/package.ts';
 import { detectDirection } from '../render/text.ts';
+import { changeWith } from './change.ts';
 import { checkManifest } from './check.ts';
 import type { ManifestIssue } from './check.ts';
 import { deriveVariant } from './derive.ts';
 import { inspectTemplate } from './inspect.ts';
 import type { ShapeInfo, SlideInfo } from './inspect.ts';
-import type { Direction, PatternDef, RepeatDef, SlotDef, TemplateManifest } from './manifest.ts';
-import { ROLES, describeShape, frameFacts, normalize, shapeText, slotFromShape, slotName, textLimits } from './measure.ts';
+import type { Direction, PatternDef, SlotDef, TemplateManifest } from './manifest.ts';
+import { ROLES, describeShape, frameFacts, isPictogram, normalize, shapeText, slotFromShape, slotName, textLimits } from './measure.ts';
+import { detectRepeat } from './rows.ts';
+import { suggestChanges } from './suggest.ts';
+import type { ManifestSuggestion, SuggestionKind } from './suggest.ts';
+
+export { detectRepeat } from './rows.ts';
 
 /** The roles the drafter offers. A chart in place of a picture is a choice for a person to make. */
 const DRAFT_ROLES = ROLES.filter((role) => role !== 'chart');
@@ -38,6 +44,18 @@ export interface DraftOptions {
    * slide suits the design is for a person to say. Patterns that allow no variant get none.
    */
   variants?: Array<'mirror' | 'text-only'>;
+  /**
+   * The most items a drafted row takes. `fit`, the default: as many as the slide has room for side
+   * by side at their drawn width, so a row drawn with four cards may take five or six. `drawn`:
+   * only as many as the template draws. A grid always takes what it draws.
+   */
+  rows?: 'fit' | 'drawn';
+  /**
+   * Lets the items of every drafted row and grid grow wider, up to this factor (above 1, at most
+   * 4), when a slide has fewer of them than the template draws on a line. Off by default: the
+   * items then keep their width. The same change is offered afterwards in `suggestions`.
+   */
+  widen?: number;
   /** How many slides to send to the model at once. Defaults to 4. */
   concurrency?: number;
   onProgress?: (event: { done: number; total: number; slide: number }) => void;
@@ -50,76 +68,18 @@ export interface DraftResult {
   skipped: Array<{ slide: number; reason: string }>;
   /** What {@link checkManifest} finds in the draft. */
   issues: ManifestIssue[];
+  /** What the code settled from measurement on top of the model's labels, in sentences: rows that take more than they draw, small pictures made icons. */
+  notes: string[];
+  /** What the slides allow beyond the draft, each with the changes for `changeManifest`: variants, wider rows. */
+  suggestions: ManifestSuggestion[];
 }
 
 const SYSTEM = [
   'You label the shapes of a slide from a presentation template, so that software can reuse the slide as a layout.',
   'The software will copy the slide and replace the content of the shapes you mark as content. Everything else stays as designed.',
-  "The template's text is filler. Judge each shape by its position, size, font size and the picture of the slide when you have one.",
+  "The template's text and pictures are filler. Judge each shape by its position, size, font size and the picture of the slide when you have one.",
+  'The layout will carry any subject, so name and describe it by its structure, never by what the filler is about.',
 ].join(' ');
-
-/** Works out a row or grid of like items from numbered slot names such as card1Heading, card2Heading. */
-export function detectRepeat(slots: SlotDef[], slide: SlideInfo): RepeatDef | undefined {
-  const byId = new Map(slide.shapes.map((shape) => [shape.id, shape]));
-  const items = new Map<string, Map<number, SlotDef[]>>();
-  for (const slot of slots) {
-    const match = /^([a-z][A-Za-z]*?)(\d+)([A-Z][A-Za-z0-9]*)?$/.exec(slot.name);
-    // Decorations may be numbered too (sticker1, sticker2), but they are not items of a row.
-    if (!match || (slot.kind === 'text' && slot.deckField) || slot.empty === 'drop' || slot.empty === 'keep') continue;
-    const prefix = match[1] as string;
-    const byNumber = items.get(prefix) ?? new Map<number, SlotDef[]>();
-    byNumber.set(Number(match[2]), [...(byNumber.get(Number(match[2])) ?? []), slot]);
-    items.set(prefix, byNumber);
-  }
-
-  for (const [prefix, byNumber] of items) {
-    const count = byNumber.size;
-    if (count < 2 || !Array.from({ length: count }, (_, index) => byNumber.has(index + 1)).every(Boolean)) continue;
-    const suffixes = (n: number) => (byNumber.get(n) ?? []).map((slot) => slot.name.slice(prefix.length + String(n).length));
-    const first = suffixes(1);
-    if (!Array.from({ length: count }, (_, index) => suffixes(index + 1).slice().sort().join()).every((set) => set === first.slice().sort().join())) continue;
-
-    // Each item moves as its outermost shapes: the group around a card, or the shapes themselves.
-    const chain = (id: string): string[] => {
-      const parent = byId.get(id)?.groupId;
-      return parent ? [...chain(parent), id] : [id];
-    };
-    const chains = Array.from({ length: count }, (_, index) => (byNumber.get(index + 1) ?? []).map((slot) => chain(slot.shapeId)));
-    // When every item sits inside one shared group, the items are that group's children.
-    const shared = chains.flat().every((path) => path[0] === chains[0]?.[0]?.[0] && path.length > 1) ? 1 : 0;
-    const shapes = chains.map((paths) => [...new Set(paths.map((path) => path[Math.min(shared, path.length - 1)] as string))]);
-    if (new Set(shapes.flat()).size !== shapes.flat().length) continue; // items share a shape: not separable
-
-    const boxOf = (ids: string[]) => {
-      const boxes = ids.map((id) => (byId.get(id) as ShapeInfo).box);
-      const x = Math.min(...boxes.map((box) => box.x));
-      const y = Math.min(...boxes.map((box) => box.y));
-      return { x, y, right: Math.max(...boxes.map((box) => box.x + box.w)), bottom: Math.max(...boxes.map((box) => box.y + box.h)) };
-    };
-    if (shared === 0) {
-      // A card's background is often a separate shape behind its group: it belongs to the item too.
-      const taken = new Set([...shapes.flat(), ...slots.map((slot) => slot.shapeId)]);
-      for (const candidate of slide.shapes) {
-        if (candidate.groupId || candidate.kind !== 'shape' || taken.has(candidate.id) || candidate.box.w > 0.6) continue;
-        const holds = shapes.filter((ids) => {
-          const box = boxOf(ids);
-          const slack = 0.01;
-          return candidate.box.x <= box.x + slack && candidate.box.y <= box.y + slack && candidate.box.x + candidate.box.w >= box.right - slack && candidate.box.y + candidate.box.h >= box.bottom - slack;
-        });
-        if (holds.length === 1) (holds[0] as string[]).unshift(candidate.id);
-      }
-    }
-
-    const tops = shapes.map((ids) => boxOf(ids).y);
-    const firstRow = tops.filter((top) => Math.abs(top - (tops[0] as number)) < 0.03).length;
-    // Things stacked one under another (two paragraphs, say) are numbered alike but are not a row of items.
-    if (firstRow < 2) continue;
-    const repeat: RepeatDef = { item: prefix.toLowerCase(), slots: first.map((suffix) => `${prefix}{n}${suffix}`), shapes, min: Math.min(2, count), max: count };
-    if (firstRow < count) repeat.columns = firstRow;
-    return repeat;
-  }
-  return undefined;
-}
 
 /**
  * Drafts a manifest for a template: one model call for the deck as a whole, then one per slide.
@@ -130,11 +90,14 @@ export async function draftManifest(pptx: Uint8Array | PptxPackage, options: Dra
   const pkg = pptx instanceof PptxPackage ? pptx : PptxPackage.load(pptx);
   const info = inspectTemplate(pkg);
   const total = info.slides.length;
-  const ask = async (prompt: string, schema: JsonSchema, slide?: number) => {
+  if (options.widen !== undefined && !(options.widen > 1 && options.widen <= 4)) throw new Error('widen is a factor above 1 and at most 4, such as 2 to let an item become twice as wide');
+  // `room` is a ceiling on the answer in tokens: the answers are short, and a ceiling ends a model that runs away.
+  const ask = async (prompt: string, schema: JsonSchema, room: number, slide?: number) => {
     const image = slide !== undefined ? await options.slideImage?.(slide) : undefined;
-    const request = { system: SYSTEM, prompt, schema, ...(image ? { images: [image] } : {}), ...(options.signal ? { signal: options.signal } : {}) };
+    const request = { system: SYSTEM, prompt, schema, maxOutputTokens: Math.ceil(room), ...(image ? { images: [image] } : {}), ...(options.signal ? { signal: options.signal } : {}) };
     return options.llm.generateJson(request);
   };
+  const notes: string[] = [];
 
   // --- facts shared by the whole deck -----------------------------------------------------
   const frame = frameFacts(info);
@@ -167,6 +130,7 @@ export async function draftManifest(pptx: Uint8Array | PptxPackage, options: Dra
       },
       required: ['language', 'fields'],
     },
+    300 + 40 * repeatedTexts.length,
   )) as { language?: unknown; fields?: Array<{ text?: unknown; name?: unknown }> } | null;
   const fieldOf = new Map<string, string>();
   repeatedTexts.forEach((text, index) => {
@@ -180,6 +144,7 @@ export async function draftManifest(pptx: Uint8Array | PptxPackage, options: Dra
   const wanted = (options.slides ?? info.slides.map((slide) => slide.number)).filter((number) => number >= 1 && number <= total);
   const patterns = new Map<number, PatternDef>();
   const skipped: DraftResult['skipped'] = [];
+  const slideNotes = new Map<number, string>();
   let done = 0;
 
   const analyse = async (number: number): Promise<void> => {
@@ -205,7 +170,8 @@ export async function draftManifest(pptx: Uint8Array | PptxPackage, options: Dra
       return;
     }
 
-    const lines = listed.map((shape) => describeShape(shape, info));
+    // What is measurably a pictogram is said so, which settles icon or photo before the model guesses.
+    const lines = listed.map((shape) => `${describeShape(shape, info)}${isPictogram(shape, info) ? ', small: a pictogram' : ''}`);
 
     const prompt = [
       `Slide ${number} of ${total}. Positions and sizes are percentages of the slide. The template reads ${direction === 'rtl' ? 'right to left, so the first of a row of items is the rightmost' : 'left to right'}.`,
@@ -213,8 +179,8 @@ export async function draftManifest(pptx: Uint8Array | PptxPackage, options: Dra
       [
         'Decide:',
         '- usable: false when the slide is not a content layout: a sheet of brand assets (icons, colour swatches, graphic elements), instructions for designers, or a slide whose shapes overlap in a way that looks broken.',
-        '- id: a short kebab-case name for the layout, such as "title-photo" or "icon-cards".',
-        '- description: one sentence telling an author what the layout holds and when to use it.',
+        '- id: a short kebab-case name for the layout by its structure, such as "title-photo" or "icon-cards". No subject of the filler and no number of items: "icon-cards", not "four-team-cards".',
+        '- description: one sentence telling an author what the layout holds and when to use it. Describe the structure only, never the subject of the filler: "a row of cards, each with an icon, a heading and a short text", not "profiles of team members". For repeated items give no number ("a row of cards", not "four cards"): the software states how many the layout takes.',
         '- figures: true when the layout is built around numbers.',
         '- a role for every shape:',
         '  title, subtitle: the headings of the slide',
@@ -223,12 +189,12 @@ export async function draftManifest(pptx: Uint8Array | PptxPackage, options: Dra
         '  number: a large figure',
         '  caption: a few words under a figure, icon or picture',
         '  photo: a photograph to replace',
-        '  icon: a small pictogram to replace',
+        '  icon: a small pictogram to replace. A picture marked "small: a pictogram" is an icon, not a photo.',
         '  graphic: a chart, diagram or screenshot to replace',
         '  table: a table',
         '  decoration: an ornament drawn for the sample content, such as a sticker on a photo, to remove when the content changes',
         '  fixed: part of the design that stays exactly as it is',
-        '- name: a camelCase name for what the shape holds. Number repeated items (cards, steps, columns) in reading order, each item with the same set of names: card1Heading, card1Text, card2Heading, card2Text.',
+        '- name: a camelCase name for what the shape holds. Number repeated items (cards, steps, columns) in reading order, each item with the same set of names: card1Heading, card1Text, card2Heading, card2Text. Name the items by what they are on the slide (card, column, step, stat), not by the subject of the filler (not person, member, product).',
         '- optional: true when the slide still works without that content, such as a subtitle or a footnote.',
       ].join('\n'),
     ].join('\n\n');
@@ -257,7 +223,7 @@ export async function draftManifest(pptx: Uint8Array | PptxPackage, options: Dra
       required: ['usable', 'reason', 'id', 'description', 'figures', 'shapes'],
     };
 
-    const answer = (await ask(prompt, schema, number)) as {
+    const answer = (await ask(prompt, schema, 400 + 60 * listed.length, number)) as {
       usable?: unknown;
       reason?: unknown;
       id?: unknown;
@@ -275,12 +241,20 @@ export async function draftManifest(pptx: Uint8Array | PptxPackage, options: Dra
     const slots: SlotDef[] = [];
     const names = new Set(fixedSlots.map((slot) => slot.name));
     const seen = new Set<string>();
+    const madeIcons: string[] = [];
     for (const entry of Array.isArray(answer.shapes) ? answer.shapes : []) {
       const shape = byId.get(String(entry?.shape ?? ''));
-      const role = DRAFT_ROLES.find((candidate) => candidate === entry?.role);
+      let role = DRAFT_ROLES.find((candidate) => candidate === entry?.role);
       if (!shape || !role || role === 'fixed' || seen.has(shape.id)) continue;
       seen.add(shape.id);
-      let name = slotName(String(entry?.name ?? ''), `${role}${slots.length + 1}`);
+      let given = String(entry?.name ?? '');
+      if (role === 'photo' && isPictogram(shape, info)) {
+        // No photograph is drawn this small. The name follows, so that the slot says what it holds.
+        role = 'icon';
+        given = given.replace(/photo|picture|image|portrait|avatar/gi, (word) => (word[0] === word[0]?.toUpperCase() ? 'Icon' : 'icon'));
+        madeIcons.push(shape.id);
+      }
+      let name = slotName(given, `${role}${slots.length + 1}`);
       while (names.has(name)) name = `${name}x`;
       names.add(name);
       const slot = slotFromShape(shape, info, role, name, entry?.optional === true, slide);
@@ -301,6 +275,9 @@ export async function draftManifest(pptx: Uint8Array | PptxPackage, options: Dra
     const repeat = detectRepeat(slots, slide);
     if (repeat) pattern.repeat = repeat;
     patterns.set(number, pattern);
+    if (madeIcons.length > 0) {
+      slideNotes.set(number, `Slide ${number}: ${madeIcons.length === 1 ? 'a picture' : `${madeIcons.length} pictures`} labelled photo ${madeIcons.length === 1 ? 'is' : 'are'} no more than 1.1 inch on a side, so ${madeIcons.length === 1 ? 'it was made an icon' : 'they were made icons'}.`);
+    }
   };
 
   const queue = [...wanted];
@@ -319,12 +296,32 @@ export async function draftManifest(pptx: Uint8Array | PptxPackage, options: Dra
   });
 
   const language = normalize(String(deckAnswer?.language ?? ''));
+  let manifest: TemplateManifest = {
+    version: 1,
+    name: options.name ?? 'template',
+    direction,
+    // Text boxes rarely share both edges, so mirrored alignment is opt-in per slot.
+    alignOnDirectionChange: 'keep',
+    patterns: ordered,
+  };
+  if (language) manifest.language = language;
+  for (const number of [...slideNotes.keys()].sort((a, b) => a - b)) notes.push(slideNotes.get(number) as string);
+
+  // How many items a row takes is a fact of the slide, so it is settled here and not left for review.
+  const settle: SuggestionKind[] = [...((options.rows ?? 'fit') === 'fit' ? (['row-max'] as const) : []), ...(options.widen !== undefined ? (['row-widen'] as const) : [])];
+  if (settle.length > 0) {
+    const wanted = suggestChanges({ pkg, manifest }, { kinds: settle, ...(options.widen !== undefined ? { widen: options.widen } : {}) });
+    const settled = changeWith({ pkg, manifest }, wanted.flatMap((suggestion) => suggestion.changes), info);
+    manifest = settled.manifest;
+    notes.push(...settled.applied.map((change) => change.message));
+  }
+
   // Variants are worked out by code from the drafted patterns; no model is asked.
   const withVariants: PatternDef[] = [];
-  for (const pattern of ordered) {
+  for (const pattern of manifest.patterns) {
     withVariants.push(pattern);
     for (const variant of new Set(options.variants ?? [])) {
-      const made = deriveVariant(pattern, { variant }, { pkg, info, manifest: { version: 1, name: '', direction, patterns: ordered } });
+      const made = deriveVariant(pattern, { variant }, { pkg, info, manifest });
       if ('refused' in made) continue;
       let id = `${pattern.id}-${made.suffix}`;
       if (ids.has(id)) id = `${id}-${pattern.sourceSlide}`;
@@ -332,15 +329,7 @@ export async function draftManifest(pptx: Uint8Array | PptxPackage, options: Dra
       withVariants.push({ ...made.pattern, id, description: made.description });
     }
   }
-  const manifest: TemplateManifest = {
-    version: 1,
-    name: options.name ?? 'template',
-    direction,
-    // Text boxes rarely share both edges, so mirrored alignment is opt-in per slot.
-    alignOnDirectionChange: 'keep',
-    patterns: withVariants,
-  };
-  if (language) manifest.language = language;
+  manifest = { ...manifest, patterns: withVariants };
   skipped.sort((a, b) => a.slide - b.slide);
-  return { manifest, skipped, issues: checkManifest({ pkg, manifest }) };
+  return { manifest, skipped, issues: checkManifest({ pkg, manifest }), notes, suggestions: suggestChanges({ pkg, manifest }) };
 }

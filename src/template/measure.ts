@@ -117,6 +117,22 @@ export function slotFromShape(shape: ShapeInfo, info: TemplateInfo, role: Role, 
   return slot;
 }
 
+/** The longest side a pictogram has, in inches. A photograph in a layout is drawn larger than this. */
+const PICTOGRAM_SIDE = 1.1;
+
+/**
+ * Whether a picture is a pictogram by what can be measured: no side longer than 1.1 inch, not a
+ * JPEG (the format of photographs), and not cropped into a frame as a portrait is. A layout that
+ * asks for a photograph in a place this small gets an icon instead.
+ */
+export function isPictogram(shape: ShapeInfo, info: TemplateInfo): boolean {
+  if (shape.kind !== 'picture' || !shape.image) return false;
+  const inches = (fraction: number, of: number) => (fraction * of) / 914400;
+  if (inches(shape.box.w, info.slideWidth) > PICTOGRAM_SIDE || inches(shape.box.h, info.slideHeight) > PICTOGRAM_SIDE) return false;
+  if (/\.jpe?g$/i.test(shape.image.part) || shape.image.cropped) return false;
+  return shape.image.geometry === 'rect' || shape.image.geometry === 'custom';
+}
+
 /** Whether a shape of a role's kind carries text. */
 export function isTextRole(role: Role): boolean {
   return TEXT_ROLES.has(role);
