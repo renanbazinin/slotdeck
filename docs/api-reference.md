@@ -45,6 +45,26 @@ function extractAssets(template: Template, deck: DeckSpec, pptx: Uint8Array): Re
 
 Reads a deck's pictures back from a pptx rendered from it, by asset id.
 
+### `slideAlternatives`
+
+```ts
+function slideAlternatives(manifest: TemplateManifest, deck: DeckSpec, slide: number, options?: AlternativesOptions): SlideAlternative[];
+
+interface AlternativesOptions { layout?: LayoutMode; patterns?: string[] }
+interface SlideAlternative {
+  pattern: string;      // a pattern that has a place for everything the slide says
+  description: string;  // what that pattern is for
+  slide: SlideSpec;     // the slide written for that pattern
+  changes: string[];    // what was done where the content was not copied slot for slot
+  dropped: string[];    // slots of the original whose photo or icon has no place
+  warnings: Issue[];    // what validateDeck says about the new slide
+}
+```
+
+The other patterns that can hold what slide number `slide` (from 1) of a deck says, with the slide written for
+each. Synchronous, no model, no words changed. Throws a `RangeError` when the deck has no such slide. See
+"Another layout for the same slide" in [layout-freedom.md](layout-freedom.md).
+
 ### `DeckValidationError`
 
 ```ts

@@ -31,6 +31,8 @@ export { DeckValidationError, validateDeck } from './deck/validate.ts';
 export type { Issue, LayoutMode, ValidateOptions } from './deck/validate.ts';
 export type { ChartType, ChartValue, DeckSpec, ImageRef, SlideSpec, SlotValue, TableValue } from './deck/spec.ts';
 export { isChartValue, isImageRef, isTableValue } from './deck/spec.ts';
+export { slideAlternatives } from './deck/alternatives.ts';
+export type { AlternativesOptions, SlideAlternative } from './deck/alternatives.ts';
 
 // Templates.
 export { draftManifest } from './template/draft.ts';

@@ -278,6 +278,96 @@ say more.
 Render the sample deck after deriving a variant (`sampleDeck`, then `renderDeck`): it holds every pattern,
 variants included, filled to its budgets.
 
+## Another layout for the same slide
+
+The sections above are about what a deck may ask for. `slideAlternatives` answers another question: a slide
+already has its content; which other patterns could show it? It puts the content into every pattern that has a
+place for all of it and returns the slide written for each. It uses no model and changes no words, so an
+alternative says exactly what the slide said.
+
+```ts
+import { slideAlternatives } from 'slotdeck';
+
+const alternatives = slideAlternatives(manifest, deck, 5, { layout: 'adaptive' }); // slide 5 of the deck, counted from 1
+// [
+//   {
+//     pattern: 'text-only',
+//     description: 'A title, an optional supporting line and two or three short paragraphs, with no picture. ...',
+//     slide: { pattern: 'text-only', slots: { title: 'Three changes for next season', body: ['Longer hours: Bikes unlock ...', '...', '...'] } },
+//     changes: ['The 3 cards became a list of 3 points, each written as "heading: text".'],
+//     dropped: ['card1Icon', 'card2Icon', 'card3Icon'],
+//     warnings: [],
+//   },
+// ]
+
+deck.slides[4] = alternatives[0].slide; // take one, then validate and render as usual
+```
+
+| Field | Meaning |
+| --- | --- |
+| `pattern`, `description` | The pattern's id and what it is for, from the manifest. |
+| `slide` | The slide written for that pattern: put it in the deck in place of the original. |
+| `changes` | What was done to the content where it was not copied slot for slot, a sentence each. Empty for a plain copy. |
+| `dropped` | Slots of the original slide whose photo or icon the pattern has no place for. |
+| `warnings` | What `validateDeck` says about the new slide, such as `text is 30 characters; the slot fits about 20`. Empty when everything fits. |
+
+Options: `layout` (`'strict'` by default, as in `renderDeck`) and `patterns` (consider only these ids). The list
+is ordered: alternatives that fit and leave nothing out come first, then those that leave out a photo or
+icons, then those with a warning. A slide with no alternative gives `[]`.
+
+### How the content of a slide is read
+
+A manifest does not say what a slot is for, so the code tells from names and limits:
+
+| Part | Which slot |
+| --- | --- |
+| Title | The text slot whose name ends in `title` (`title`, `slideTitle`) and is not a subtitle. |
+| Subtitle | The text slot whose name ends in `subtitle` or `subheading`. |
+| Figure | A big, short text: a budget of at most 10 characters at 24 pt or more, such as `87%`. |
+| Body | Of the text slots that are left, the one with the largest budget. It counts as a list when it takes several paragraphs (`maxParagraphs`). |
+| Picture | The pattern's one photo or graphic outside its row. |
+| Items | The row or grid (`repeat`). In each item: an icon, a picture, a figure, and of its other texts the one with the smaller budget is the heading and the one with the larger is the text. |
+| Everything else | A takeaway, a footnote, a table, a chart. It keeps its name and fits only a slot of the same name and kind. |
+
+Deck fields and slots with `"empty": "keep"` or `"drop"` take no part.
+
+### What can become what
+
+- **The same part.** A title goes to the title, a subtitle to the subtitle, a figure to the figure, the body to
+  the body, a picture to a picture of the same kind.
+- **Variants of one slide.** Between a pattern and its mirror image, or any two patterns whose slots have the
+  same names, every value goes to the slot of the same name.
+- **Items to items.** Cards become columns, a row becomes a grid, when the target takes that many items.
+  Headings go to headings and texts to texts. Items with a heading and a text fit items with one text, written
+  `heading: text`; single texts written that way fit items with a heading and a text, split at the first colon
+  (or dash between spaces).
+- **Items to a list.** One point for each item, written `heading: text`, in a body that takes several
+  paragraphs. Each part of an item must be one paragraph.
+- **A list to items.** One item for each point, from two points up. For items with a heading and a text, only
+  when every point is written `heading: text`.
+- **A list to paragraphs and back.** The words are the same; whether they show as points is the new slot's own
+  formatting. `changes` says so.
+
+### When a pattern is an alternative
+
+- **Everything the slide says has a place**: every text, table, chart and supplied graphic. Nothing is cut and
+  nothing is run together, apart from `heading: text`.
+- **Everything the pattern requires can be filled** from the slide. In `strict` layout that includes its
+  optional slots; in `adaptive` layout those may stay empty. Code does not invent a subtitle, a heading, a
+  number, an icon or a photo, so a pattern that needs one the slide lacks is not offered.
+- **A photo or an icon may be left out**, because it illustrates. `dropped` names the slots.
+- **A figure stays a figure.** Figures do not become headings of cards, and headings do not become figures.
+- **A text that is too long for its new slot does not rule a pattern out.** It is reported in `warnings`, and
+  the alternative is listed after those that fit.
+
+### Limits
+
+- It judges what fits, not what suits. A section slide is offered for a cover, because both hold a title and
+  a subtitle. `description` is there for a person or a model to choose by.
+- The parts are told from slot names and limits. A title slot called `heading`, or an item with three texts,
+  is not recognised; such a slide still gets the alternatives whose slots have the same names.
+- It is not offered by the chat tools yet. Call it from your own code.
+
 ## What is not possible
 
 - Moving a shape to an arbitrary place from a deck. Positions come only from the template and the manifest.
@@ -287,6 +377,8 @@ variants included, filled to its budgets.
 - Widening a picture inside an item, or making an item taller. A widened item keeps its height, and its
   pictures keep their size.
 - Letting the length of the text decide the size of an item. Only the number of items does.
+- An alternative that needs words the slide does not have. `slideAlternatives` never writes text; ask a model
+  for that with `editDeck`.
 - A mirror or text-only variant of a slide with several pictures, or with a picture between two texts.
 - A `box` for a shape inside a group. A variant moves a group as a whole and never resizes what is in it.
 - A grid with more items than the template slide draws.

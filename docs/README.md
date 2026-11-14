@@ -37,7 +37,7 @@ slotdeck makes new PowerPoint files from an existing PowerPoint template.
 | [generating.md](generating.md) | Make a deck from a brief, or change one by instruction, with a language model |
 | [chat-tools.md](chat-tools.md) | Give a chat model the four presentation tools and store what they produce |
 | [providers.md](providers.md) | Connect your own language model or image source, including an internal gateway |
-| [layout-freedom.md](layout-freedom.md) | Vary the number of cards, enlarge text, and derive several patterns from one slide |
+| [layout-freedom.md](layout-freedom.md) | Vary the number of cards, enlarge text, derive several patterns from one slide, and find other layouts for a slide |
 | [languages.md](languages.md) | Make right-to-left decks from a left-to-right template, or the reverse |
 | [template-studio.md](template-studio.md) | Draft a manifest with a model, check it, change it by hand or by instruction |
 | [api-reference.md](api-reference.md) | Look up any export: its signature and what it does |
@@ -50,6 +50,7 @@ slotdeck makes new PowerPoint files from an existing PowerPoint template.
 | --- | --- | --- |
 | Turn deck JSON into a pptx | `renderDeck` | none |
 | Check deck JSON before rendering | `validateDeck` | none |
+| See which other layouts a slide's content fits | `slideAlternatives` | none |
 | Brief in, pptx out | `generateDeck` | text: 2 plus repairs; images: one per photo |
 | Brief in, deck JSON out | `planDeck` | 2 plus repairs |
 | Show a plan first, write later | `planOutline`, `editPlan`, `writeDeck` | 1 each, `writeDeck` plus repairs |
@@ -59,6 +60,7 @@ slotdeck makes new PowerPoint files from an existing PowerPoint template.
 | Verify a manifest against its pptx | `checkManifest` | none |
 | See whether a manifest's budgets hold | `sampleDeck` then `renderDeck` | none |
 | Change a manifest by operations | `changeManifest` | none |
+| Add a mirrored or text-only variant of a pattern | `changeManifest` with `derivePattern`; `patternVariants` lists what is possible | none |
 | Change a manifest by instruction | `editManifest` | 1 or 2 |
 | List the shapes of a template | `inspectTemplate`, `studioView` | none |
 
@@ -69,8 +71,8 @@ slotdeck makes new PowerPoint files from an existing PowerPoint template.
   the file system).
 - All binary data is `Uint8Array`. In Node a `Buffer` is a `Uint8Array`, so `fs.readFileSync(path)` can be
   passed directly.
-- Functions that call a model are `async`. `renderDeck`, `validateDeck`, `checkManifest`, `sampleDeck`,
-  `changeManifest`, `inspectTemplate` and `studioView` are synchronous.
+- Functions that call a model are `async`. `renderDeck`, `validateDeck`, `slideAlternatives`, `checkManifest`,
+  `sampleDeck`, `changeManifest`, `patternVariants`, `inspectTemplate` and `studioView` are synchronous.
 - A deck never contains binary data. Pictures are referenced by an **asset id** and passed to the renderer as
   a map from id to bytes.
 - Nothing is written to disk and nothing is sent anywhere by slotdeck itself, except what your own provider

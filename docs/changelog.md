@@ -37,6 +37,11 @@ in `node_modules/slotdeck/package.json`.
   [layout-freedom.md](layout-freedom.md).
 - **The demo template's `icon-cards` and `stat-cards` use `widen`**, so the example decks with three cards
   or four figures fill their rows.
+- **`slideAlternatives(manifest, deck, slide)`** lists the other patterns that can hold what one slide of a deck
+  says and returns the slide written for each: a row of cards as a list or as columns, a slide as its mirror
+  image, a list as paragraphs. Code only: no model call, and no word is changed. A photo or an icon the new
+  pattern has no place for is reported, and so is a text that is over its new budget. The chat tools do not
+  offer it yet. See "Another layout for the same slide" in [layout-freedom.md](layout-freedom.md).
 
 ### Changed
 

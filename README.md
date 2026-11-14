@@ -307,6 +307,21 @@ manifest allows and the code moves the shapes; the model never positions anythin
   and page number stay where they are. In the demo template `text-and-photo-mirrored`, `photo-stat-mirrored`
   and `list-with-photo-mirrored` were made this way.
 
+### Another layout for a slide
+
+`slideAlternatives(manifest, deck, slideNumber)` takes a slide that already has its content and lists the
+other patterns that can hold the same content, with the slide written for each: three cards as a list of three
+points, two cards as two columns, a photo slide as its mirror image. It is code only. No model is asked and no
+word is changed, so a pattern that would need a subtitle, a number or an icon the slide does not have is not
+offered. What does not fit a new slot's budget is reported, not cut.
+
+```ts
+import { slideAlternatives } from 'slotdeck';
+
+const [first] = slideAlternatives(manifest, deck, 5, { layout: 'adaptive' });
+// first.pattern, first.slide, first.changes, first.dropped, first.warnings
+```
+
 ## Template studio
 
 Writing a manifest by hand means reading shape ids out of a pptx. The studio functions do that work with a
