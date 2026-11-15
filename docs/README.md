@@ -70,6 +70,7 @@ slotdeck makes new PowerPoint files from an existing PowerPoint template.
 | Have drafts checked for design while a deck is written | `review: designReview(template)` on the planner | none of its own; each repair is one writing call |
 | Change a manifest by operations | `changeManifest` | none |
 | Add a mirrored or text-only variant of a pattern | `changeManifest` with `derivePattern`; `patternVariants` lists what is possible | none |
+| Add a layout the template does not have, in its own look (a text-only slide, three points, an agenda) | `composePattern`; `buildPattern` for a design you already have | 1 or 2 |
 | Make a drafted manifest ready to use in one step, or repair one that is in use | `prepareManifest` | none |
 | Find what a template's slides allow that its manifest does not use (rows that take more, icons, variants) | `suggestChanges`, then `changeManifest` with the changes it returns | none |
 | Change a manifest by instruction | `editManifest` | 1 or 2 |

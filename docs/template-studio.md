@@ -738,6 +738,72 @@ carries the reason in `note`; an available one says there what the variant would
 the available ones as buttons that send `{ op: 'derivePattern', pattern, variant, slot }`. It throws when the
 template has no pattern of that id.
 
+## `composePattern(template, instruction, options)`
+
+```ts
+const made = await composePattern(template, 'A text-only slide with three key points', { llm, effort: 'low' });
+// made.pptx       the template with one more slide, after the last one: store it in place of the template's
+// made.manifest   the manifest with the new pattern at the end
+// made.pattern    'three-points'
+// made.summary    '"three-points" is a new layout on slide 14, on the frame of "list-with-photo" with its title: ...'
+// made.warnings   what the code allowed, such as a part of the slide left empty
+```
+
+A layout the template does not have, in the template's own look. Variants (`derivePattern`) can only move and
+leave out what a slide already has; a text-only variant of a slide with a photo keeps the text where it was and
+leaves the rest of the slide empty. `composePattern` makes a new slide instead.
+
+How it is made:
+
+1. **The kit** (`designKit`, no model). The code picks the slide to stand on: a layout whose title sits where
+   most titles do. Its frame stays (background, header, logo, page number, the deck's own texts), and so does
+   its title, where every title is. Over the content area it lays a grid of 12 columns and 12 rows, and marks
+   the cells the frame takes. It lists every distinct text style the template's layouts use (size, weight,
+   typeface, colour, alignment, bullets, a filled or outlined box, what it is used for) and every decoration
+   (rules, panels that cards are made of, circles), each with a key: `T1`, `T2`, ... and `D1`, `D2`, ...
+2. **The design** (one model call). The model answers with parts: which style, which cells, what role, a slot
+   name and a sample text. It cannot name a colour, a font or a size, only a style the template has. Items
+   that repeat get numbered names (`point1Heading`, `point1Text`, `point2Heading`, ...).
+3. **The check** (no model). A part that lies on another text, crosses the frame or the kept title, reaches over
+   the edge of the panel it sits on, is too low for one line of its style, or names a style or name that does
+   not exist is a problem. So is a slide left half empty: a free column at a side, more than two free columns,
+   or a quarter of the rows unused. A design with problems goes back to the model once, with the reasons.
+4. **The slide** (no model). The base slide is copied with only its frame and the kept slots. Every part is a
+   copy of the template's own shape for its style, set in its cells: a text keeps its font, colour, alignment
+   and direction, a panel keeps its corners, a rule keeps its thickness. Texts on a panel keep a margin from
+   its edges. Numbered items are made equally wide and equally far apart over the room the model gave them.
+   The slide is added after the last one; no other slide changes and no slide number moves.
+5. **The pattern** (no model). The base slide's slots for what stayed are copied (the title, the deck's own
+   texts), and each text becomes a slot with `addSlot`. Its budget is what its box holds: measured with the
+   template's fonts when it has them, estimated from the box when it does not, never from the sample the model
+   wrote. Numbered items become a row with `setRepeat`, so that a deck can ask for fewer of them; a row (not a
+   grid) widens its items when there are fewer. A layout with a figure gets `figures: true`.
+6. **The proof.** `checkManifest` finds no error in the new pattern, and its sample deck renders with the
+   fewest and with the most items. Otherwise nothing is returned and `DesignError` says why.
+
+`buildPattern(template, design)` is steps 3 to 6 alone: for a design that was kept, corrected by hand, or
+written by the app. `composePattern` throws `DesignError` when the second answer cannot be built either. When
+the second answer has more problems than the first, the first is kept.
+
+What it does not do:
+
+- Pictures, icons, tables and charts. A composed layout is made of text and decorations. For a picture beside
+  text, the template's own layouts and their variants are there.
+- More than one layout per call. Ask again for another; each call adds a slide.
+- Change the frame. A layout without the usual title is possible when the instruction asks for it; the
+  header, logo and page number always stay.
+
+Storing it: the result is a new pptx and a new manifest, which belong together. Keep the old ones until a person
+has looked at the sample deck and agreed. Nothing that is stored changes meaning: every other pattern points at
+the slide it pointed at before, and decks made earlier still render. To take a composed layout away again,
+`removePattern` takes it out of the manifest; its slide stays in the pptx, unused.
+
+Light reasoning (`effort: 'low'`) is the setting to use. On Gemini 3.8 Flash one design took about 210 seconds
+with the model's default reasoning and 4 to 28 seconds with `effort: 'low'`, with designs as good.
+
+A decoration that holds a picture on its slide, such as the disc behind a card's icon, is not offered: without
+its picture it would be an empty shape.
+
 ## `inspectTemplate(pkg)`
 
 ```ts

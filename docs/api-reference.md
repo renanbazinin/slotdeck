@@ -567,6 +567,25 @@ type PatternVariant = (typeof VARIANTS)[number];
 The variants of a pattern that `changeManifest` can derive with `{ op: 'derivePattern' }`, each with whether
 the pattern's slide allows it. See [template-studio.md](template-studio.md).
 
+### `composePattern`, `buildPattern`, `designKit`
+
+```ts
+function composePattern(template: Template, instruction: string, options: ComposeOptions): Promise<ComposedPattern>;
+function buildPattern(template: Template, design: PatternDesign): ComposedPattern;
+function designKit(template: Template, inspected?: TemplateInfo): DesignKit | undefined;
+const DESIGN_GRID: 12;
+const DESIGN_ROLES: readonly ['title', 'subtitle', 'text', 'list', 'number', 'caption', 'decoration'];
+class DesignError extends Error { readonly problems: string[] }
+```
+
+A layout the template does not have, made from its own parts. `composePattern` asks the model for a design on
+a grid of `DESIGN_GRID` columns and rows over the content area, with the template's own text styles and
+decorations (`designKit` lists them), sends a design with problems back once, and builds it with
+`buildPattern`: a new slide after the last one, on the frame of an existing layout, and a pattern for it.
+`buildPattern` is the code half alone, for a design the app keeps or a person corrected. Both throw
+`DesignError` with every reason when a design cannot be built. The result carries a new pptx: store it in
+place of the template's. See "composePattern" in [template-studio.md](template-studio.md).
+
 ### `describeManifest`, `describeSlot`
 
 ```ts
@@ -700,6 +719,60 @@ interface ShapeInfo {
 }
 interface SlideInfo { number: number; part: string; layout: string; shapes: ShapeInfo[] }
 interface TemplateInfo { slideWidth: number; slideHeight: number; defaultFontSize: number; slides: SlideInfo[] }
+```
+
+Composing a layout:
+
+```ts
+interface ComposeOptions {
+  llm: LlmProvider;
+  effort?: 'low';               // light reasoning: about 10 s instead of minutes, and enough in the runs measured
+  signal?: AbortSignal;
+}
+interface ComposedPattern {
+  pptx: Uint8Array;             // the template with the new slide after the last one
+  manifest: TemplateManifest;   // with the new pattern at the end
+  pattern: string;
+  slide: number;
+  summary: string;
+  design: PatternDesign;
+  warnings: string[];           // what was allowed, such as a part of the slide left empty
+}
+interface PatternDesign {
+  id: string;
+  description: string;
+  keep: string[];               // slots of the base slide that stay where they are, such as 'title'
+  elements: DesignElement[];    // in drawing order: a panel before the texts on it
+}
+interface DesignElement {
+  name: string;                 // the slot's name; '' for a decoration
+  style: string;                // 'T1'... a text style, 'D1'... a decoration, from designKit
+  role: DesignRole;
+  optional: boolean;
+  sample: string;               // paragraphs separated by line breaks
+  column: number; row: number; width: number; height: number;   // grid cells, from 1; column 1 is at the left
+}
+type DesignRole = (typeof DESIGN_ROLES)[number];
+interface DesignKit {
+  base: string;                 // the pattern whose slide gives the frame and the title
+  baseSlide: number;
+  area: Box;                    // the content area the grid covers
+  keepable: Array<{ slot: string; role: string; cells: { column: number; row: number; width: number; height: number } }>;
+  taken: boolean[][];           // [row][column]: cells the frame takes
+  styles: KitStyle[];
+}
+interface KitStyle {
+  key: string;
+  kind: 'text' | 'decoration';
+  slide: number;
+  shapeId: string;
+  text: string;                 // one line about it, as the model reads it
+  drawn: Box;
+  size?: number;
+  lineRows?: number;            // grid rows one line takes
+  bullet?: boolean;
+  shape?: 'across' | 'down' | 'area';
+}
 ```
 
 ## Design checks and reviews
