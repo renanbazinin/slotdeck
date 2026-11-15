@@ -269,7 +269,7 @@ export async function draftManifest(pptx: Uint8Array | PptxPackage, options: Dra
       slots: [...slots, ...fixedSlots],
     };
     if (answer.figures === true) pattern.figures = true;
-    const repeat = detectRepeat(slots, slide);
+    const repeat = detectRepeat(pattern.slots, slide);
     if (repeat) pattern.repeat = repeat;
     patterns.set(number, pattern);
 

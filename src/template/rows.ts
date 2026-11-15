@@ -1,15 +1,18 @@
 // Rows and grids of like items: finding one from the names of a pattern's slots, and working
 // out how many items a row has room for.
 import type { Box, ShapeInfo, SlideInfo } from './inspect.ts';
-import type { RepeatDef, SlotDef } from './manifest.ts';
+import type { PatternDef, RepeatDef, SlotDef } from './manifest.ts';
 import { rowRoom } from './measure.ts';
+
+/** A numbered slot name: what the item is called, its number, and what of the item it is (card, 2, Heading). */
+const NUMBERED = /^([a-z][A-Za-z]*?)(\d+)([A-Z][A-Za-z0-9]*)?$/;
 
 /** Works out a row or grid of like items from numbered slot names such as card1Heading, card2Heading. */
 export function detectRepeat(slots: SlotDef[], slide: SlideInfo): RepeatDef | undefined {
   const byId = new Map(slide.shapes.map((shape) => [shape.id, shape]));
   const items = new Map<string, Map<number, SlotDef[]>>();
   for (const slot of slots) {
-    const match = /^([a-z][A-Za-z]*?)(\d+)([A-Z][A-Za-z0-9]*)?$/.exec(slot.name);
+    const match = NUMBERED.exec(slot.name);
     // Decorations may be numbered too (sticker1, sticker2), but they are not items of a row.
     if (!match || (slot.kind === 'text' && slot.deckField) || slot.empty === 'drop' || slot.empty === 'keep') continue;
     const prefix = match[1] as string;
@@ -38,6 +41,24 @@ export function detectRepeat(slots: SlotDef[], slide: SlideInfo): RepeatDef | un
     const shapes = chains.map((paths) => [...new Set(paths.map((path) => path[Math.min(shared, path.length - 1)] as string))]);
     if (new Set(shapes.flat()).size !== shapes.flat().length) continue; // items share a shape: not separable
 
+    // An item takes everything in it along: with fewer items its shapes are gone, and a further
+    // item is a copy of the last. So a slot whose shape lies in an item is a slot of the row when
+    // every item has one under its own number (card1Icon, card2Icon, or icon1, icon2): a pictogram
+    // that is kept, a sticker that is removed, a picture named by its kind. Any other slot in an
+    // item holds the row to no fewer items than that one, and in the last item it means no row.
+    const own = new Set([...byNumber.values()].flat());
+    const itemOf = (id: string) => shapes.findIndex((ids) => chain(id).some((part) => ids.includes(part))) + 1;
+    const others = slots.filter((slot) => !own.has(slot) && itemOf(slot.shapeId) > 0);
+    const nameOf = (slot: SlotDef) => {
+      // A value of the whole deck is one text, whatever its name: it is never a slot of the row.
+      const numbered = slot.kind === 'text' && slot.deckField ? null : NUMBERED.exec(slot.name);
+      return numbered && Number(numbered[2]) === itemOf(slot.shapeId) ? `${numbered[1]}{n}${numbered[3] ?? ''}` : undefined;
+    };
+    const joins = (name: string | undefined): name is string => name !== undefined && others.filter((slot) => nameOf(slot) === name).length === count;
+    const alone = others.filter((slot) => !joins(nameOf(slot))).map((slot) => itemOf(slot.shapeId));
+    if (alone.includes(count)) continue;
+    const names = [...first.map((suffix) => `${prefix}{n}${suffix}`), ...new Set(others.map(nameOf).filter(joins))];
+
     const boxOf = (ids: string[]) => {
       const boxes = ids.map((id) => (byId.get(id) as ShapeInfo).box);
       const x = Math.min(...boxes.map((box) => box.x));
@@ -65,11 +86,25 @@ export function detectRepeat(slots: SlotDef[], slide: SlideInfo): RepeatDef | un
     // A row with an arrow, a line or a highlight among its items holds what it draws: with fewer
     // items the rest are laid out again, across what stays where it is.
     const pinned = firstRow === count && rowRoom(slide, shapes, droppedShapes(slots)).pinned;
-    const repeat: RepeatDef = { item: prefix.toLowerCase(), slots: first.map((suffix) => `${prefix}{n}${suffix}`), shapes, min: pinned ? count : Math.min(2, count), max: count };
+    const repeat: RepeatDef = { item: prefix.toLowerCase(), slots: names, shapes, min: pinned ? count : Math.max(Math.min(2, count), ...alone), max: count };
     if (firstRow < count) repeat.columns = firstRow;
     return repeat;
   }
   return undefined;
+}
+
+/**
+ * The slots of a pattern that are not slots of its row though their shapes lie in one of the row's
+ * items, each with the number of that item. On a slide with fewer items than that, the shape is
+ * gone with its item and the slide cannot be rendered.
+ */
+export function strandedSlots(pattern: PatternDef, slide: SlideInfo | undefined): Array<{ slot: string; item: number }> {
+  const repeat = pattern.repeat;
+  if (!repeat || !slide) return [];
+  const parent = new Map(slide.shapes.map((shape) => [shape.id, shape.groupId]));
+  const names = new Set(repeat.slots.flatMap((name) => repeat.shapes.map((_, index) => name.replace('{n}', String(index + 1)))));
+  const itemOf = (id: string | undefined): number => (id === undefined ? 0 : repeat.shapes.findIndex((ids) => ids.includes(id)) + 1 || itemOf(parent.get(id)));
+  return pattern.slots.filter((slot) => !names.has(slot.name)).map((slot) => ({ slot: slot.name, item: itemOf(slot.shapeId) })).filter((entry) => entry.item > 0);
 }
 
 /** The shapes a pattern takes off every slide: they are not in the way of a row. */

@@ -1,0 +1,360 @@
+// Prepares a manifest for use without a person going through it item by item: takes what the
+// slides allow, solves the issues that have one answer, and says in a few sentences what is left.
+// No model is asked. It is the step a studio runs after a draft, behind one control.
+import type { LayoutMode } from '../deck/validate.ts';
+import { renderDeck } from '../render/render.ts';
+import type { Template } from '../render/render.ts';
+import { measuredBudgets } from './budgets.ts';
+import { changeWith } from './change.ts';
+import type { ManifestChange } from './change.ts';
+import { checkManifest } from './check.ts';
+import type { ManifestIssue } from './check.ts';
+import { VARIANTS } from './derive.ts';
+import type { PatternVariant } from './derive.ts';
+import { inspectTemplate } from './inspect.ts';
+import type { PatternDef, TemplateManifest } from './manifest.ts';
+import { shapeText } from './measure.ts';
+import { detectRepeat, strandedSlots } from './rows.ts';
+import { sampleDeck } from './sample.ts';
+import { suggestChanges } from './suggest.ts';
+import type { SuggestionKind } from './suggest.ts';
+
+export interface PrepareOptions {
+  /**
+   * Whether the app has an icon set for this template, which it gives the planner as `icons`. An
+   * icon slot is filled from it. Without one, a layout with an icon slot that must be filled is not
+   * offered at all, so such slots are then set to keep the template's own pictogram.
+   */
+  icons: boolean;
+  /**
+   * The layout mode the chat side plans with, which it gives `presentationTools` as `layout`.
+   * Defaults to `'strict'`, as there. It decides which icon slots must be filled: with `'strict'`
+   * one that may be left out must be filled all the same, with `'adaptive'` only a required one.
+   * It matters only when `icons` is `false`.
+   */
+  layout?: LayoutMode;
+  /**
+   * The variants to add wherever a slide allows them. Defaults to `mirror` and `text-only`. An empty
+   * list adds none. `without` is left out by default: there is one for every optional text, and an
+   * optional text can be left empty anyway.
+   */
+  variants?: readonly PatternVariant[];
+  /**
+   * The factor given to rows and grids that have none yet: how much their items may grow when a
+   * line holds fewer than the template draws, above 1 and at most 4. Defaults to 2. A row that
+   * already widens keeps its factor. `false` gives none: rows stay as they are.
+   */
+  widen?: number | false;
+  /**
+   * Whether a pattern that cannot be used may be taken out: one for which `checkManifest` reports
+   * an error, or whose sample cannot be rendered. Defaults to `true`, which is right after a draft.
+   * Pass `false` for a manifest that stored decks use. Nothing a stored deck depends on is then
+   * taken away: such a pattern stays, `sound` is `false`, `left` names it, and a grid said to
+   * take more items than it draws keeps its number.
+   */
+  remove?: boolean;
+  /** The values the app already has for deck fields. A field that has one is not asked about in `left`. */
+  fields?: Record<string, string>;
+}
+
+export interface PreparedManifest {
+  manifest: TemplateManifest;
+  /** Fit to use: `checkManifest` reports no error, and the sample deck renders at the fewest and at the most items. */
+  sound: boolean;
+  /** What was done, in sentences, in the order it was done. */
+  done: string[];
+  /** What only a person can settle, in sentences. A short list by design: it is what a studio shows first. */
+  left: string[];
+  /** The ids the manifest has now and did not have before, all of them variants. */
+  added: string[];
+  /** The ids the manifest had and no longer has: patterns that were taken out because they cannot be used. Decks made with them can no longer be changed. */
+  removed: string[];
+  /**
+   * The icon slots that were set to keep the template's pictogram because the app has no icon set,
+   * those of the variants made in the same run among them, each with what it was before: `'error'`
+   * for a required slot, `'remove'` for one that may be left out. When the app gets an icon set,
+   * give each back with `{ op: 'setSlot', pattern, slot, empty: was }`.
+   */
+  kept: Array<{ pattern: string; slot: string; was: 'error' | 'remove' }>;
+  /**
+   * A value for each deck field that has one: the one the app gave, or the text the template shows
+   * in its place. A field with neither is not in it, and `left` asks for it.
+   */
+  fields: Record<string, string>;
+}
+
+const clip = (text: string, most = 48) => (text.length > most ? `${text.slice(0, most - 1).trimEnd()}…` : text);
+const quote = (names: string[]) => names.map((name) => `"${name}"`).join(', ');
+
+/**
+ * Prepares a manifest for use in one step. It takes every suggestion of `suggestChanges` that is a
+ * fact of the slide (`icon`, `row`, `row-max`), lets rows widen, adds the mirrored and text-only
+ * variants, and then settles the rows of those variants. It keeps the template's own pictograms
+ * where the app has no icon set, sets the measured budget where a budget lets text run over its
+ * box, and takes out a pattern that cannot be used. No pattern and no slot is renamed, and a
+ * second run with the same options changes nothing.
+ *
+ * The template passed in is not touched. Use it after `draftManifest`. For a manifest that is in
+ * use, pass `remove: false`, so that every pattern stored decks were made with stays. What it
+ * cannot decide, such as whether a description says the right thing, comes back in `left`.
+ *
+ * It takes again what a person undid: a variant that was removed by hand is added again, and a row
+ * whose widening was taken away widens again. Pass `variants: []` and `widen: false` to settle the
+ * facts only.
+ */
+export function prepareManifest(template: Template, options: PrepareOptions): PreparedManifest {
+  if (typeof options?.icons !== 'boolean') throw new Error('say whether the app has an icon set for this template: icons is true or false');
+  const widen = options.widen ?? 2;
+  if (widen !== false && !(typeof widen === 'number' && widen > 1 && widen <= 4)) throw new Error('widen is a factor above 1 and at most 4, such as 2, or false to leave rows as they are');
+  const variants = new Set<PatternVariant>(options.variants ?? ['mirror', 'text-only']);
+  for (const variant of variants) if (!VARIANTS.includes(variant)) throw new Error(`"${String(variant)}" is not a variant; the variants are ${VARIANTS.join(', ')}`);
+  const layout = options.layout ?? 'strict';
+  if (layout !== 'strict' && layout !== 'adaptive') throw new Error(`"${String(layout)}" is not a layout mode; it is strict or adaptive`);
+  const remove = options.remove ?? true;
+
+  const info = inspectTemplate(template.pkg);
+  const before = new Set(template.manifest.patterns.map((pattern) => pattern.id));
+  let current: Template = template;
+  let done: string[] = [];
+  const reasons = new Map<string, string>();
+  const apply = (changes: ManifestChange[]): number => {
+    if (changes.length === 0) return 0;
+    const result = changeWith(current, changes, info);
+    for (const entry of result.applied) if (!done.includes(entry.message)) done.push(entry.message);
+    current = { ...current, manifest: result.manifest };
+    return result.applied.length;
+  };
+  // Two patterns with one id are left for a person: nothing says which of them is meant.
+  const once = (id: string) => current.manifest.patterns.filter((pattern) => pattern.id === id).length === 1;
+  const takeOut = (ids: string[], why: (id: string) => string) => {
+    const result = changeWith(current, ids.filter(once).map((pattern): ManifestChange => ({ op: 'removePattern', pattern })), info);
+    for (const entry of result.applied) {
+      const id = (entry.change as { pattern: string }).pattern;
+      reasons.set(id, why(id));
+      done.push(`"${id}" was taken out: ${reasons.get(id)}.`);
+    }
+    current = { ...current, manifest: result.manifest };
+  };
+  // Why the sample deck of a manifest cannot be rendered, or nothing when it can.
+  const sampleOf = (manifest: TemplateManifest): string => {
+    if (manifest.patterns.length === 0) return '';
+    const one: Template = { ...current, manifest };
+    for (const items of ['min', 'max'] as const) {
+      try {
+        const { deck, assets } = sampleDeck(one, { items });
+        renderDeck(one, deck, { assets, layout: 'adaptive' });
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    }
+    return '';
+  };
+  // The patterns whose own sample cannot be rendered, each with why. Asked only when the whole sample fails.
+  const failing = (): Array<[id: string, why: string]> =>
+    current.manifest.patterns
+      .filter((pattern) => once(pattern.id))
+      .map((pattern): [string, string] => [pattern.id, sampleOf({ ...current.manifest, patterns: [pattern] })])
+      .filter(([, message]) => message !== '');
+  const faulty = (issue: ManifestIssue) => issue.severity === 'error' && issue.pattern !== undefined && issue.message !== 'another pattern has the same id';
+
+  // 1. A row whose items hold a slot that is not the row's, as an earlier draft made one where the
+  // pictogram of each card was labelled a decoration. On a slide with fewer items that slot's
+  // shape is gone with its item, and the slide cannot be rendered. Where every item has such a
+  // slot under its own number and no deck fills it, it becomes part of the row. Otherwise the row
+  // takes no fewer items than the one the slot is in. Every deck that rendered still does.
+  const settled = current.manifest.patterns.map((pattern): PatternDef => {
+    const slide = info.slides[pattern.sourceSlide - 1];
+    if (!pattern.repeat || !slide) return pattern;
+    let repeat = pattern.repeat;
+    const fewest = repeat.min ?? repeat.shapes.length;
+    const outside = () => strandedSlots({ ...pattern, repeat }, slide).filter((entry) => entry.item > fewest);
+    if (outside().length === 0) return pattern;
+    const at = new Map(strandedSlots(pattern, slide).map((entry) => [entry.slot, entry.item]));
+    const unfilled = (name: string, item: number) => {
+      const slot = pattern.slots.find((entry) => entry.name === name.replace('{n}', String(item)));
+      return slot !== undefined && (slot.empty === 'keep' || slot.empty === 'drop') && at.get(slot.name) === item;
+    };
+    const found = detectRepeat(pattern.slots, slide);
+    const more = (found?.slots ?? []).filter((name) => !repeat.slots.includes(name) && repeat.shapes.every((_, index) => unfilled(name, index + 1)));
+    if (more.length > 0) {
+      repeat = { ...repeat, slots: [...repeat.slots, ...more] };
+      done.push(`"${pattern.id}": ${quote(more)} ${more.length === 1 ? 'is' : 'are'} now part of the row of ${repeat.item}s, because the shape lies in each ${repeat.item}. A slide with fewer ${repeat.item}s could not be rendered.`);
+    }
+    const rest = outside();
+    if (rest.length > 0) {
+      const item = Math.max(...rest.map((entry) => entry.item));
+      const slots = rest.filter((entry) => entry.item === item).map((entry) => entry.slot);
+      repeat = { ...repeat, min: item, ...(item > (repeat.max ?? repeat.shapes.length) ? { max: item } : {}) };
+      done.push(`"${pattern.id}": the row of ${repeat.item}s takes no fewer than ${item}, because ${quote(slots)} ${slots.length === 1 ? 'lies' : 'lie'} in ${repeat.item} ${item} and ${slots.length === 1 ? 'is' : 'are'} not part of the row. A slide with fewer could not be rendered.`);
+    }
+    return { ...pattern, repeat };
+  });
+  if (settled.some((pattern, index) => pattern !== current.manifest.patterns[index])) current = { ...current, manifest: { ...current.manifest, patterns: settled } };
+
+  // 2. A pattern that cannot be used: checkManifest reports an error for it, or its own sample
+  // cannot be rendered. It is taken out before anything is made of it. Where patterns must stay,
+  // nothing is made of it either: a variant of it could not be used any more than it can.
+  if (remove) {
+    for (let turn = 0; turn < 3; turn++) {
+      const errors = checkManifest(current, info).filter(faulty);
+      const ids = [...new Set(errors.map((issue) => issue.pattern as string))].filter(once);
+      if (ids.length === 0) break;
+      takeOut(ids, (id) => {
+        const first = errors.find((issue) => issue.pattern === id) as ManifestIssue;
+        return `${first.slot ? `"${first.slot}" ` : /^(points|has|is) /.test(first.message) ? 'it ' : ''}${first.message}`;
+      });
+    }
+  }
+  const unusable = new Set(checkManifest(current, info).filter(faulty).map((issue) => issue.pattern as string));
+  if (sampleOf(current.manifest)) {
+    const found = failing().filter(([id]) => !unusable.has(id));
+    const why = new Map(found);
+    if (remove) takeOut(found.map(([id]) => id), (id) => `its sample cannot be rendered (${clip(why.get(id) ?? '', 120)})`);
+    for (const [id] of found) if (current.manifest.patterns.some((pattern) => pattern.id === id)) unusable.add(id);
+  }
+
+  // A grid that is said to take more than it draws: what it draws. A stored deck may have that
+  // many, and is rendered with them, so the number stays where patterns must stay.
+  const beyond = current.manifest.patterns.filter((pattern) => pattern.repeat?.columns !== undefined && (pattern.repeat.max ?? 0) > pattern.repeat.shapes.length);
+  if (remove) apply(beyond.map((pattern): ManifestChange => ({ op: 'setRepeat', pattern: pattern.id, max: pattern.repeat?.shapes.length ?? 1 })));
+
+  // 3. What the slides allow: pictograms as icons, rows, then the variants, then the rows of the
+  // variants, because a variant without its picture has room its pattern did not have. Then,
+  // without an icon set, an icon slot that must be filled would keep its layout from being
+  // offered: the template's own pictogram stays instead. That comes after the rows and the
+  // variants, so that a row is found with its pictograms in it and a variant's slots are kept
+  // like its pattern's. What it opens is taken in one more turn.
+  const rows: SuggestionKind[] = widen === false ? ['row-max'] : ['row-max', 'row-widen'];
+  const kinds: SuggestionKind[] = ['icon', 'row', ...rows, ...(variants.size > 0 ? (['variant', 'row'] as const) : []), ...rows];
+  const take = (kind: SuggestionKind) => {
+    for (let turn = 0; turn < 3; turn++) {
+      const offered = suggestChanges(current, { kinds: [kind], ...(widen === false ? {} : { widen }) }).filter(
+        (suggestion) => suggestion.variant === undefined || (variants.has(suggestion.variant) && !unusable.has(suggestion.pattern)),
+      );
+      if (apply(offered.flatMap((suggestion) => suggestion.changes)) === 0) break;
+    }
+  };
+  let kept: PreparedManifest['kept'] = [];
+  for (let turn = 0; turn < 3; turn++) {
+    for (const kind of kinds) take(kind);
+    if (options.icons) break;
+    const must = current.manifest.patterns.flatMap((pattern) =>
+      pattern.slots.flatMap((slot): PreparedManifest['kept'] => {
+        if (slot.kind !== 'image' || slot.imageKind !== 'icon') return [];
+        const was = slot.empty ?? 'error';
+        return was === 'error' || (was === 'remove' && layout === 'strict') ? [{ pattern: pattern.id, slot: slot.name, was }] : [];
+      }),
+    );
+    if (must.length === 0) break;
+    apply(must.map((entry): ManifestChange => ({ op: 'setSlot', pattern: entry.pattern, slot: entry.slot, empty: 'keep' })));
+    const set = must.filter((entry) => current.manifest.patterns.find((pattern) => pattern.id === entry.pattern)?.slots.find((slot) => slot.name === entry.slot)?.empty === 'keep');
+    kept.push(...set);
+    if (set.length === 0) break;
+  }
+
+  // 4. A budget that lets text run over its box, which is reported when the template has its
+  // fonts: the measured budget. The items of a row share one budget, the smallest any of them
+  // measures, because a change to a slot of a row is made to that slot of every item.
+  if (current.fonts) {
+    const familyOf = (patternId: string | undefined, slot: string | undefined) => {
+      const repeat = current.manifest.patterns.find((pattern) => pattern.id === patternId)?.repeat;
+      const name = repeat?.slots.find((entry) => repeat.shapes.some((_, index) => entry.replace('{n}', String(index + 1)) === slot));
+      return `${patternId}\n${name ?? slot}`;
+    };
+    const over = new Set(
+      checkManifest(current, info)
+        .filter((issue) => issue.message.startsWith('has a budget of '))
+        .map((issue) => familyOf(issue.pattern, issue.slot)),
+    );
+    if (over.size > 0) {
+      const smallest = new Map<string, { pattern: string; slot: string; suggested: number }>();
+      const has = new Map<string, number>();
+      for (const budget of measuredBudgets(current)) {
+        const key = familyOf(budget.pattern, budget.slot);
+        if (!over.has(key)) continue;
+        if (budget.suggested < (smallest.get(key)?.suggested ?? Infinity)) smallest.set(key, budget);
+        const slot = current.manifest.patterns.find((pattern) => pattern.id === budget.pattern)?.slots.find((entry) => entry.name === budget.slot);
+        has.set(key, Math.max(has.get(key) ?? 0, slot?.kind === 'text' ? (slot.maxChars ?? Infinity) : 0));
+      }
+      // Only a budget that gets smaller: the one a slot has may be the measured one already, and
+      // still be too much for the wider box of a row with fewer items.
+      const lower = [...smallest].filter(([key, budget]) => budget.suggested < (has.get(key) ?? 0)).map(([, budget]) => budget);
+      apply(lower.map((budget): ManifestChange => ({ op: 'setSlot', pattern: budget.pattern, slot: budget.slot, maxChars: budget.suggested })));
+    }
+  }
+
+  // 5. Does it render. A variant made here that does not is dropped without a word, whatever was
+  // asked: no deck names it, and the manifest must not come back worse than it came. Any other
+  // pattern whose own sample fails is taken out when that is allowed, and named when it is not.
+  let failure = sampleOf(current.manifest);
+  if (failure) {
+    const found = failing();
+    const mine = new Set(found.map(([id]) => id).filter((id) => !before.has(id)));
+    if (mine.size > 0) {
+      current = { ...current, manifest: { ...current.manifest, patterns: current.manifest.patterns.filter((pattern) => !mine.has(pattern.id)) } };
+      done = done.filter((sentence) => ![...mine].some((id) => sentence.includes(`"${id}"`)));
+    }
+    const rest = found.filter(([id]) => !mine.has(id));
+    const why = new Map(rest);
+    if (remove) takeOut(rest.map(([id]) => id), (id) => `its sample cannot be rendered (${clip(why.get(id) ?? '', 120)})`);
+    failure = sampleOf(current.manifest);
+    const named = rest.filter(([id]) => current.manifest.patterns.some((pattern) => pattern.id === id));
+    if (failure && named.length > 0) failure = named.map(([id, message]) => `"${id}" (${clip(message, 120)})`).join('; ');
+  }
+
+  // 6. A value for each deck field: the one the app has, or the text the template itself shows there.
+  const fields: Record<string, string> = {};
+  const unset: string[] = [];
+  const missing: string[] = [];
+  for (const pattern of current.manifest.patterns) {
+    const shapes = info.slides[pattern.sourceSlide - 1]?.shapes ?? [];
+    for (const slot of pattern.slots) {
+      if (slot.kind !== 'text' || !slot.deckField || fields[slot.deckField] !== undefined) continue;
+      const given = options.fields?.[slot.deckField];
+      if (typeof given === 'string' && given.trim()) {
+        fields[slot.deckField] = given;
+        continue;
+      }
+      const shape = shapes.find((candidate) => candidate.id === slot.shapeId);
+      const text = shape ? shapeText(shape) : '';
+      if (text) {
+        fields[slot.deckField] = text;
+        unset.push(slot.deckField);
+      } else if (!missing.includes(slot.deckField)) missing.push(slot.deckField);
+    }
+  }
+  const valueless = missing.filter((name) => fields[name] === undefined);
+
+  // 7. What is left for a person.
+  const now = new Set(current.manifest.patterns.map((pattern) => pattern.id));
+  const added = [...now].filter((id) => !before.has(id));
+  const removed = [...before].filter((id) => !now.has(id));
+  kept = kept.filter((entry, index) => now.has(entry.pattern) && kept.findIndex((other) => other.pattern === entry.pattern && other.slot === entry.slot) === index);
+  if (current.manifest.patterns.length === 0) return { manifest: current.manifest, sound: false, done, left: ['The manifest has no layout. Draft the template first.'], added, removed, kept, fields };
+  const remaining = checkManifest(current, info);
+  const errors = remaining.filter((issue) => issue.severity === 'error');
+  const warnings = remaining.filter((issue) => issue.severity === 'warning' && !issue.message.startsWith('no font was supplied') && !(issue.message === 'a grid cannot hold more items than it draws' && !remove));
+  const say = (issue: ManifestIssue) => `${[issue.pattern, issue.slot].filter(Boolean).join('.') || 'the manifest'} ${issue.message}`;
+  const left: string[] = [];
+  if (removed.length > 0) left.push(`${removed.length === 1 ? 'One layout was' : `${removed.length} layouts were`} taken out because ${removed.length === 1 ? 'it' : 'they'} cannot be used: ${removed.map((id) => `"${id}" (${reasons.get(id)})`).join('; ')}. A presentation made with ${removed.length === 1 ? 'it' : 'one of them'} can no longer be changed.`);
+  if (errors.length > 0) left.push(`${errors.length === 1 ? 'One error' : `${errors.length} errors`} could not be solved: ${errors.slice(0, 3).map(say).join('; ')}${errors.length > 3 ? '; and more' : ''}.`);
+  if (failure) left.push(`The sample deck does not render: ${failure}`);
+  if (!remove) {
+    for (const pattern of current.manifest.patterns) {
+      const repeat = pattern.repeat;
+      if (repeat?.columns === undefined || (repeat.max ?? 0) <= repeat.shapes.length) continue;
+      left.push(`"${pattern.id}" says its grid takes up to ${repeat.max} ${repeat.item}s, and the template draws ${repeat.shapes.length}: a slide with more runs past what is drawn. The number was left, in case a stored presentation has that many. Set it to ${repeat.shapes.length} when none does.`);
+    }
+  }
+  if (warnings.length > 0) left.push(`${warnings.length === 1 ? 'One warning' : `${warnings.length} warnings`} to look at: ${warnings.slice(0, 3).map(say).join('; ')}${warnings.length > 3 ? '; and more' : ''}.`);
+  if (unset.length > 0) left.push(`${unset.length === 1 ? 'One text is' : `${unset.length} texts are`} the same on every slide and ${unset.length === 1 ? 'shows' : 'show'} what the template shows until you set your own: ${unset.map((name) => `${name} ("${clip(fields[name] as string)}")`).join(', ')}.`);
+  if (valueless.length > 0) left.push(`${valueless.length === 1 ? 'One text that is the same on every slide has' : `${valueless.length} texts that are the same on every slide have`} no value yet, and the template shows none in ${valueless.length === 1 ? 'its' : 'their'} place: ${valueless.join(', ')}. A layout with ${valueless.length === 1 ? 'it' : 'one of them'} is not offered until you set ${valueless.length === 1 ? 'one' : 'it'}.`);
+  if (!current.fonts) left.push("Text was not measured with the template's fonts, so budgets are estimates. Look at the sample deck for text that runs over its box.");
+  else {
+    const absent = remaining.find((issue) => issue.message.startsWith('no font was supplied'));
+    if (absent) left.push(`Some text was not measured: ${absent.message}.`);
+  }
+  left.push('Read the description of each layout once. The planner chooses a layout by it, so it should say what the layout holds and not what the sample is about.');
+
+  return { manifest: current.manifest, sound: errors.length === 0 && !failure, done, left, added, removed, kept, fields };
+}

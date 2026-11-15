@@ -353,7 +353,7 @@ function apply(manifest: TemplateManifest, change: ManifestChange, info: Templat
       let found = false;
       if (!pattern.repeat) {
         const detected =
-          detectRepeat(pattern.slots.filter((slot) => !(slot.kind === 'text' && slot.deckField)), slide) ??
+          detectRepeat(pattern.slots, slide) ??
           reject(`"${pattern.id}" has no row of like items. Name the slots of each item alike with a number (card1Heading, card1Text, card2Heading, card2Text) and they become a row`);
         // A row is laid out from where the slide draws its items. A slot with a box is shown elsewhere.
         const moved = movedRowSlots(pattern.slots, detected);

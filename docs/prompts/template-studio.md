@@ -3,8 +3,11 @@
 This is a prompt for a coding agent working in an app that embeds slotdeck and has, or is getting, a template
 studio: the part where a person turns an uploaded `.pptx` into a template and keeps it good.
 
-Paste everything below the line to the agent. It covers server logic only, for slotdeck 0.3.0 or later. The
+Paste everything below the line to the agent. It covers server logic only, for slotdeck 0.3.1 or later. The
 agent first reports what it found; read that before it changes anything.
+
+The path it asks for is short: a person uploads a file, starts one operation that prepares the template by
+itself, looks at one summary and a sample, and publishes. Everything else is for looking closer.
 
 ---
 
@@ -16,21 +19,37 @@ The reference is `node_modules/slotdeck/docs/template-studio.md` and the files b
 Where a document and the types (the `.d.ts` files under `node_modules/slotdeck/dist`) disagree, the types are
 right.
 
+## The path a person takes
+
+A person uploads a file, starts one operation, reads one short summary, looks at a sample, and publishes. That
+is four operations of your server: upload (4.1), prepare and publish (4.2), and the sample (4.8).
+
+Build this path first, and make it what an upload leads to: if the app has a draft operation today, it becomes
+the prepare operation, and is not left where it is with a new one beside it. A studio that answers an upload
+with thirty suggestions and a list of issues is correct and unusable: nobody reaches the end of the list.
+`prepareManifest` takes those suggestions and solves those issues in one call, without a model, and returns
+the few sentences that are left for a person.
+
+Everything else in this document (taking one suggestion, changing one slot, history, replacing the file) is
+for the person who wants to look closer. It stays behind the main path, never in front of it.
+
 ## 1. Find out first
 
 Change nothing yet. Report:
 
-1. The installed version (`node_modules/slotdeck/package.json`). Below 0.3.0, report that first and stop
-   there: 0.2.0 has no `suggestChanges`, no `rows` or `widen` on `draftManifest`, and no `notes` or
-   `suggestions` in its result. On agreement upgrade, or ask the person to if the install fails; then follow
-   "Upgrading from" in the new `node_modules/slotdeck/docs/changelog.md`, run the app's tests, and resume
-   here.
+1. The installed version (`node_modules/slotdeck/package.json`). Below 0.3.1, report that first and stop
+   there: 0.3.0 has no `prepareManifest`, and 0.2.0 has no `suggestChanges` either, no `rows` or `widen` on
+   `draftManifest`, and no `notes` or `suggestions` in its result. On agreement upgrade, or ask the person to
+   if the install fails; then follow "Upgrading from" in the new `node_modules/slotdeck/docs/changelog.md`,
+   run the app's tests, and resume here.
 2. Where each template's `.pptx`, manifest, fonts and icons are stored; where plans and decks are, and what
    ties them to a template; whether a write can be read half done; what storage server instances share.
 3. Every `loadTemplate` call, hand-built `{ pkg, manifest }` and `presentationTools` call: from which
-   manifest, with which `icons` and `fields`, when it runs (build, start-up, request), and what is cached.
+   manifest, with which `icons`, `fields` and `layout` (`'strict'` when none is given), when it runs (build,
+   start-up, request), and what is cached.
 4. Which studio operations exist (upload, draft, change, instruct, import, export, replace the pptx, delete,
-   undo), and what guards each on the server.
+   undo), and what guards each on the server. And what a person is given after an upload and a draft: how many
+   suggestions, issues and other items they must go through before a template can be used.
 5. For each model call: its ceiling, its stop, what a failure leaves behind, and whether the app's
    `LlmProvider` passes `maxOutputTokens` and `signal` on, limits a call's time, and retries by itself.
 6. Which rules of section 3 already hold, and which have a test.
@@ -55,8 +74,10 @@ Store for each template:
 - revisions, append-only: a number, the manifest, its pptx and fonts, what made it, and the `applied`
   messages;
 - which revision is published, meaning the chat side uses it;
-- a value for each `deckField`, set by a person and passed as `fields` to `presentationTools`: a draft makes
-  every text that repeats across slides a required slot with one (R6);
+- a value for each `deckField`, passed as `fields` to `presentationTools`: a draft makes every text that
+  repeats across slides a required slot with one (R6). Its first value is the template's own text (4.2), until
+  a person sets theirs. Setting it is an operation of the app: it writes where the chat side reads its
+  `fields` and changes no manifest;
 - the ids of its plans and decks. The tools' `BlobStore` has only `get` and `set` and cannot be listed: record
   `plan_id` and `presentation_id` from each tool result's `output`, and read with `storeKeys.plan(id)` and
   `storeKeys.deck(id)`.
@@ -79,10 +100,11 @@ removed revision cannot be brought back. *Check:* after a change and a restore t
 the last equals the first.
 
 **R4. A template is drafted once.** The server refuses `draftManifest` for a manifest that has patterns,
-before any model call; a confirmation in the browser is not a guard. To start over, upload the file as a new
-template. *Why:* a model names, describes and even labels a slide differently each time, so a second draft
-replaces every pattern id and description, drops every correction, and strands stored decks. *Check:* a draft
-request on a drafted template makes zero model calls.
+before any model call, by whatever operation it is asked; a confirmation in the browser is not a guard. A
+second start while a draft runs is refused too (section 5). To start over, upload the file as a new template.
+*Why:* a model names, describes and even labels a slide differently each time, so a second draft replaces
+every pattern id and description, drops every correction, and strands stored decks. *Check:* a draft request
+on a drafted template makes zero model calls.
 
 **R5. Nothing that breaks stored plans or decks is stored unseen.** If a new manifest loses a name, or a
 stored deck validates worse against it, store it only after the person saw the list and confirmed. *Why:* such
@@ -104,14 +126,18 @@ const hitDecks = decks.filter((deck) => harm(after, deck) > harm(before, deck));
 name. `lostNames` also covers stored plans, which name patterns; check a plan's `items` against the new `min`
 and `max` too. No suggestion changes a name.
 
-**R6. Only a sound manifest is published, and no other template stands in.** A revision is published when
-`checkManifest` reports no `error`, its sample renders, and the planner would be offered a pattern. One is not
-offered while a required slot (an optional one too, unless `layout` is `'adaptive'`) lacks its `fields` value,
-`icons`, photos or graphic asset on the chat side. slotdeck exports no function for this: work it out, and
-return the patterns left out with every revision. Otherwise it is stored, the earlier one stays published, and
-the person is told. With nothing published the chat gets an error, never another template. *Why:* errors
-otherwise surface while a deck is made. *Check:* import a manifest whose slot names a missing shape; the chat
-still gets the earlier revision.
+**R6. Only a sound manifest is published, and no other template stands in.** A revision is sound when
+`checkManifest` reports no `error`, its sample renders at the fewest and at the most items, and the planner
+would be offered a pattern. One is not offered while a required slot (an optional one too, unless `layout` is
+`'adaptive'`) lacks its `fields` value, `icons`, photos or graphic asset on the chat side. slotdeck exports no
+function for this: work it out on the revision as it is stored, and return the patterns left out with every
+revision. A template that was never published is published only when a person says so, after the summary of
+4.2: until then no commit publishes a revision of it, whatever made the commit. Once it has been published,
+each later revision is published as soon as it is sound; one that is not is stored, the earlier one stays
+published, and the person is told. A template adopted in 4.5 counts as published. With nothing published the
+chat gets an error, never another template. *Why:* errors otherwise surface while a deck is made. *Check:*
+import a manifest whose slot names a missing shape; the chat still gets the earlier revision. And a change
+committed to a template nobody published yet does not publish it.
 
 **R7. The chat side builds from the published revision**, never from a manifest loaded at start-up or bundled
 at build time: a template shipped with the app's code only seeds its first revision (4.5). *Why:* a studio
@@ -135,7 +161,8 @@ Every way state changes is an operation of the app's own server, and ends in one
    `description` and `slots` yourself, and treat a throw as a refusal.
 3. Run the checks of R5.
 4. Store in one step (R1, R3), then decide publication (R6).
-5. Return the revision, the `issues`, what was applied and refused, and whether it is published.
+5. Return the revision, the `issues`, what was applied and refused, and whether it is published. The prepare
+   operation alone returns its summary (4.2) in their place.
 
 ### 4.1 Upload
 
@@ -143,58 +170,90 @@ Every way state changes is an operation of the app's own server, and ends in one
 (`inspectTemplate(pkg).slides.length`). Never reuse an id, also after deletion, or a new template inherits the
 old plans and decks. Tell the person the slide count: a draft makes up to one model call per slide, plus one.
 
-### 4.2 Draft, once
+### 4.2 Prepare: draft and settle, in one operation
+
+This is the one operation a person starts after an upload. It drafts the template once (R4), then settles the
+draft by itself. Asked for a template that has patterns, it does not draft: it is then the repair of 4.5.
 
 ```ts
 const draft = await draftManifest(pptx, { llm: capped(llm, CEILING), name, slideImage, onProgress, signal });
+if (draft.manifest.patterns.length === 0) throw new Error('no layout was found in this file'); // store nothing
+
+// hasIcons: whether the chat side gives presentationTools an icon set for this template
+// layout: the layout mode it gives presentationTools, 'strict' when it gives none
+const prepared = prepareManifest(loadTemplate(pptx, draft.manifest, fonts ? { fonts } : {}), { icons: hasIcons, layout });
 ```
 
-Keep `rows` at its default, `'fit'`, so that a row takes what its slide has room for. Leave `variants` and
-`widen` to the review, and `slideImage` out unless the app can make a PNG or JPEG of a slide. `onProgress`
-fires only for slides that get a call, so finish on the promise, not on `done === total`. A draft with no
-patterns is a failed attempt: store nothing. Otherwise commit `draft.manifest` as revision 1, keep `skipped`
-and `notes` with it, and show both with `issues` and the sample.
+`prepareManifest` calls no model. It takes every suggestion that is a fact of the slide (`icon`, `row`,
+`row-max`), lets rows widen, adds the mirrored and text-only variants and settles their rows, sets the
+measured budget where a budget lets text run over its box, and takes out a pattern that cannot be used: one
+for which `checkManifest` reports an error, or whose own sample does not render. With `icons: false` it keeps
+the template's own pictogram in every icon slot the planner would have to fill, so that layouts with icons are
+still offered; `layout` tells it which slots those are: a required one always, and with `'strict'` also one
+that may be left out. It renames nothing, and a second run with the same options changes nothing. It leaves
+`without` variants alone: there is one for every optional text.
+
+Commit `prepared.manifest` as revision 1, not yet published. Keep with it `draft.skipped`, the sentences of
+`draft.notes` and `prepared.done`, `prepared.left` and `prepared.kept`. Store `prepared.fields` as the first
+value of each deck field, where the chat side reads its `fields`: it is the text the template itself shows
+there, and without a value the planner is offered no layout that has that field.
+
+**Answer with a summary, not with lists.** The response to this operation holds, in this order:
+
+1. numbers: layouts made, how many of them are added variants (`prepared.added.length`), slides skipped
+   (`draft.skipped.length`);
+2. `prepared.left`: the few sentences only a person can settle, such as the deck's own texts and the
+   descriptions to read. When a layout was taken out, its first sentence says which and why;
+3. the deck fields with their first values (`prepared.fields`), for the person to replace with their own;
+4. where to get the sample at the fewest and at the most items (4.8);
+5. whether it may be published: `prepared.sound`, and the patterns the planner would not be offered (R6).
+
+`prepared.done`, `draft.skipped`, the `issues` and the suggestions that remain are returned only when asked
+for. A person who has read `left` and looked at the sample can publish.
+
+**Publish** is an operation of its own, started by a person. It works out R6 on the newest revision as it is
+stored at that moment, not from a `sound` kept at prepare, which says nothing about a manifest changed since.
+It refuses a revision that is not sound and says why.
+
+When `prepared.sound` is false the revision stays unpublished, and `left` says why. After a draft that is
+rare, because a pattern that cannot be used was taken out. The way on is 4.4: the sentence names the pattern,
+the person corrects it or removes it with `{ op: 'removePattern', pattern }`, and publish is tried again. The
+last pattern of a manifest cannot be removed. After a draft that is the usual case of an unsound result,
+because every other pattern that cannot be used was taken out: the person then corrects it, or uploads the
+file as a new template.
+
+Keep `rows` at its default, `'fit'`. Leave `slideImage` out unless the app can make a PNG or JPEG of a slide.
+`onProgress` fires only for slides that get a call, so finish on the promise, not on `done === total`. To take
+fewer things by itself, pass `variants: []` or `widen: false` to `prepareManifest`.
 
 A slide added later becomes a pattern with `addPattern` and `addSlot`, not with a draft of `slides: [n]`,
 which would name the deck fields anew.
 
-### 4.3 Review
+### 4.3 Looking closer
 
-`suggestChanges(template, { kinds })` calls no model and changes nothing; `changeManifest` accepts each
-suggestion's `changes` whole. `icon`, `row` and `row-max` are facts of the slide; `row-widen` and `variant`
-are choices. Settle facts first and ask again after applying: a found row is then asked how many items it
-takes, and a variant copies its pattern's row as it is at that moment.
-
-```ts
-const FACTS: SuggestionKind[] = ['icon', 'row', 'row-max'];
-
-function settleFacts(template: Template, kinds = FACTS) {
-  const messages: string[] = [];
-  for (let round = 0; round < 5; round++) {
-    const facts = suggestChanges(template, { kinds });
-    const result = changeManifest(template, facts.flatMap((s) => s.changes));
-    if (result.applied.length === 0) break;
-    messages.push(...result.applied.map((a) => a.message));
-    template = { ...template, manifest: result.manifest }; // keeps pkg and fonts
-  }
-  return { manifest: template.manifest, messages };
-}
-```
-
-An icon slot is filled from the `icons` passed to `presentationTools`. Where the chat side passes none, leave
-`'icon'` out of `kinds` and send `{ op: 'setSlot', pattern, slot, empty: 'keep' }` in place of each `icon`
-suggestion's change, and for each icon slot of a new draft: the template's own pictogram stays, and the
-pattern is still offered.
-
-Then show a person:
+For the person who wants more than the summary. None of it is needed before publishing a revision that is
+sound.
 
 - **Each `description`**, with its picture (`patternPreviews`). It must describe structure ("a row of cards,
   each with an icon and a short text"), not the filler's subject ("four team member profiles with photos"), or
-  the planner passes the layout over for every other subject. Only a person can repair it, with `{ op:
-  'setPattern', pattern, description }`. A variant copies it, so correct it before variants are offered.
-- **Each choice** (`kinds: ['row-widen', 'variant']`, sent in that order) with its `message`, `pattern` and
-  `slide`. If any change of an accepted one is rejected, store none. Remember declined ones by `kind`,
+  the planner passes the layout over for every other subject. A draft made with this version is told so; a
+  manifest drafted earlier may not be. Only a person can repair it, with `{ op: 'setPattern', pattern,
+  description }`. A variant made earlier has its own copy.
+- **What is still suggested.** `suggestChanges(template)` calls no model and changes nothing. After
+  `prepareManifest` with its default options it lists the `without` variants and nothing else; with `widen:
+  false` or fewer `variants`, also what those left out. `changeManifest` accepts each suggestion's `changes`
+  whole; if any change of an accepted one is rejected, store none. Remember declined ones by `kind`,
   `pattern`, `variant` and `slot`.
+- **What was done.** The sentences of `prepared.done`, for a person who asks why a layout is as it is.
+- **Preparing again.** `prepareManifest` does not know what a person declined or undid: it adds a variant that
+  was removed again, and widens a row that was set back to its drawn width. On a template a person has worked
+  on, call it with `variants: []` and `widen: false`, or with the variants and the factor they chose.
+
+An icon slot is filled from the `icons` passed to `presentationTools`. `prepareManifest` is told with `icons`
+whether there are any. Without, it sets the icon slots the planner would have to fill to keep the template's
+pictogram, and lists them in `prepared.kept` with what each was before (`was`). Keep that list with the
+template. When an icon set is added later, those are the slots to give back to it, each with `{ op: 'setSlot',
+pattern, slot, empty: was }`. A slot a person set to keep is not in the list and stays kept.
 
 ### 4.4 Change
 
@@ -219,8 +278,16 @@ example on the first request that finds no revision) and keeps the original unti
 Record the ids of the plans and decks already in the storage behind the tools' store, or R5 sees none. A
 stored manifest without patterns is an undrafted template and gets no revision.
 
-Show `settleFacts(template).messages`, a dry run; on agreement commit its manifest once. Never run it unasked
-at start-up. Then a person reads the descriptions (4.3).
+Then it is the call of 4.2, told that the manifest is in use: `prepareManifest(template, { icons: hasIcons,
+layout, remove: false, fields: storedFields })`. With `remove: false` nothing a stored deck depends on is
+taken away: no pattern is taken out, so it loses no pattern id and no slot name, and a grid said to take more
+items than it draws keeps its number. A pattern that cannot be used stays in: `sound` is then false and `left`
+names it and says what is wrong with it, for a person to correct through 4.4. `fields` are the values the app
+has for the deck fields; only a missing one is asked about, and on agreement its value in `prepared.fields` is
+stored as its first value (4.2). Show its `left` and the number of things in `done` as a dry run, with the
+lists of R5, which are empty unless something is wrong; on agreement commit its manifest once, and R6 decides
+whether it is published. To repair the facts only and add no layouts, pass `variants: [], widen: false` as
+well. Never run it unasked at start-up. Then a person reads the descriptions (4.3).
 
 ### 4.6 Replace the pptx
 
@@ -347,29 +414,47 @@ Use a template from the app's test data, or stop and ask for one. `sampleDeck(te
 'drawn'` and numbered names (`card1Text`, `card2Text`) gives rows as 0.2.0 drafted them; `{ op: 'setSlot',
 pattern, slot, imageKind: 'photo' }` on a pictogram's slot then gives its photo slots.
 
+The first test to write is the main path, end to end, started by the same call an upload makes in the app:
+upload, prepare with the scripted model, publish, and then the tools built the way the chat side builds them,
+with the `fields`, `icons` and `layout` it would pass. The prompt of the next `plan_presentation` call lists
+the prepared layouts, among them one with a deck field and one with an icon slot: a template that is published
+and offers the planner next to nothing fails this test. In it, check also that the response to prepare holds
+the numbers, `left`, the deck fields, the sample and `sound`, and no list of suggestions or issues; that the
+revision is not published before the person says so, also after a change was committed to it; that publish is
+refused for a revision whose only pattern has a slot on a shape its slide does not have; and that
+`prepareManifest` on the stored manifest returns an empty `done`.
+
 Every *Check* of section 3 is a test. Add these:
 
 1. A draft of N slides makes at most N + 1 calls. Every request, also of `editManifest`, has `maxOutputTokens`
    at or under the ceiling, and the `signal`.
 2. A draft aborted midway, or whose model throws on its third call or never answers before the time limit,
    stores nothing, and the request count stops growing.
-3. After repair, `max` has risen, `lostNames` is empty, `suggestChanges` with the fact kinds returns `[]`, and
-   a deck stored before still passes `validateDeck`.
+3. After repair, `max` has risen, `lostNames` is empty, `suggestChanges` lists nothing but `without` variants,
+   and a deck stored before still passes `validateDeck`. With a pattern added whose slot is on a shape that
+   does not exist, the repair still loses no name, the pattern is reported, and the revision is not published.
 4. An instruction answered with one valid and one invalid operation makes two requests, stores nothing before
    acceptance, and returns the reason.
 5. Every sample response carries the sample mark.
 6. An id is not reused after a delete. The repair of 4.6 loses no name, and a restore serves its revision's
-   pptx. A held lock stops a second model operation before any call. Without an icon set a repair excludes no
-   pattern that was offered, and a missing `fields` value is reported.
+   pptx. A held lock stops a second model operation before any call, and prepare on a template that has
+   patterns makes no model call. Without an icon set a repair excludes no pattern that was offered, with the
+   `layout` the chat side plans with. After the repair of a template whose deck field had no value, the
+   catalogue built the way the chat side builds it names a layout with that deck field.
 
 ## 8. Order of work, and done
 
-With no studio yet, build section 4 in its order. With one that exists: the upgrade, then storage (R1 to R3),
-then the draft guard (R4), then the repair of 4.5, which a person runs for each template, then the rest.
+With no studio yet, build the main path first (4.1, 4.2, 4.8, publishing, 4.9), then the rest of section 4.
+With one that exists: the upgrade; then the prepare operation and its summary, in the place of today's draft
+operation and in front of whatever lists the studio shows today, because that is what makes it usable. Every
+template the chat uses today stays in use: adoption (4.5) publishes it as it is; then the draft guard (R4) and
+storage (R1 to R3); then the repair of 4.5, which a person runs for each template; then the rest.
 
 You are done when:
 
 - the report of section 1 was given and agreed;
+- the main path has a passing test from upload to a published template that the planner is offered layouts of,
+  and the response to prepare holds a summary and no list of suggestions;
 - every rule has a passing test, no test calls a live model, and no operation writes around the commit;
 - the repair of 4.5 is a tested operation, and your final message says which templates a person must still
   repair and whose descriptions to read;
