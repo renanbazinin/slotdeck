@@ -3,6 +3,23 @@
 What changed in each version, newest first, with what to do when upgrading. The version you have installed is
 in `node_modules/slotdeck/package.json`.
 
+## 0.3.2
+
+A prompt for a studio that cannot yet add a variant of one layout. No code changed.
+
+### Added
+
+- **[prompts/layout-variants.md](prompts/layout-variants.md)**: a prompt for a coding agent, to add two
+  operations to a template studio: list the variants a layout allows, with the reason for each one it does not
+  (`patternVariants`), and make one (`changeManifest` with `derivePattern`): the mirror image, a text-only
+  version, or a version without an optional text. It covers a template that the chat already uses: the check
+  before storing, taking a variant away again, and prepare adding variants back. Server logic only; a screen
+  only where the studio already shows one layout with actions beside it.
+
+### Upgrading from 0.3.1
+
+- Nothing to do. The library is the same as in 0.3.1.
+
 ## 0.3.1
 
 One step from a draft to a manifest that can be used. A studio built on 0.3.0 could show a person every
