@@ -19,9 +19,10 @@ import type {
 
 1. **Draft** with `draftManifest`. A model labels the shapes; the code measures everything, and settles what
    measurement decides: how many items each row takes, and which small pictures are icons.
-2. **Prepare** with `prepareManifest`. In one call and without a model it takes what the slides allow, solves
-   the issues that have one answer, and returns the few sentences that are left for a person. A studio can
-   stop here: draft, prepare, look at the sample, use it. The steps below are for looking closer.
+2. **Prepare** with `prepareManifest`. In one call and without a model it takes what the slides allow, adds
+   the mirrored and text-only variants, solves the issues that have one answer, and returns the few sentences
+   that are left for a person. A studio can stop here: draft, prepare, look at the sample, use it. The steps
+   below are for looking closer.
 3. **Check** with `checkManifest`. It should report nothing.
 4. **Look** at a sample: `sampleDeck` then `renderDeck`, and open the file. Every slot is filled to its budget,
    so text that overflows here will overflow in real decks, and shapes that should not be there are easy to see.
@@ -171,9 +172,11 @@ settled for the room the variant has, which without the picture can be more than
 
 This is off by default, for three reasons. Every variant is one more layout to review in the sample deck.
 Whether a mirrored slide suits a design is for a person to say. And a variant is only as good as the labels it
-is derived from, which a draft has not had reviewed yet. The usual order is therefore: draft, review, then add
-the variants you want with `derivePattern`. Use `variants` when a studio should show everything a template can
-do in one pass. The `without` variant is never added by a draft, because it needs a slot to be named.
+is derived from, which a draft has not had reviewed yet. So the draft leaves them out, and they are added
+after it: by `prepareManifest` in a studio that prepares a template in one step, or one by one with
+`derivePattern` in a studio where a person reviews each layout first. Use `variants` only when the draft itself
+should show everything a template can do. The `without` variant is never added by a draft, because it needs a
+slot to be named.
 
 ### Roles
 
@@ -563,42 +566,76 @@ const prepared = prepareManifest(loadTemplate(pptxBytes, draft.manifest), { icon
 //                     "Text was not measured with the template's fonts, so budgets are estimates. Look at the sample deck for text that runs over its box.",
 //                     'Read the description of each layout once. The planner chooses a layout by it, so it should say what the layout holds and not what the sample is about.']
 // prepared.done      what was done, a sentence for each change
-// prepared.added     ids of the variants that were added
-// prepared.removed   ids of patterns that were taken out because they cannot be rendered
+// prepared.added     ids the manifest has now and did not have: the variants that were added
+// prepared.removed   ids the manifest had and no longer has: patterns that could not be used
+// prepared.kept      [{ pattern, slot }]: icon slots set to keep the template's pictogram, with icons: false
 // prepared.fields    { department: 'Department name' }
 ```
 
 Prepares a manifest for use in one step, for a studio that puts one control where a list of suggestions and a
-list of issues would be. No model, and the template passed in is not touched. It works on a manifest a draft
-has just made and on one that has been in use for months, and it renames nothing, so stored decks keep
-working. A second run finds nothing to do.
+list of issues would be. No model, and the template passed in is not touched. It renames no pattern and no
+slot. A second run with the same options changes nothing and has an empty `done`.
 
 What it does, in this order:
 
-1. Takes every suggestion that is a fact of the slide: `icon`, `row`, `row-max` (see `suggestChanges` below).
-2. Lets rows and grids widen, by the factor in `widen`.
-3. Adds the variants in `variants` wherever a slide allows them, then settles the rows of those variants: a
-   layout without its picture has room its pattern did not have.
-4. With `icons: false`, sets every icon slot to keep the template's own pictogram. A layout with a required
-   icon slot and no icon set is not offered to the planner at all; this keeps it offered.
-5. Solves the issues that have one answer. A budget that lets text run over its box gets the measured budget
-   (reported, and so solved, only when the template is loaded with fonts). A grid said to take more than it
-   draws takes what it draws. A pattern with an error cannot be rendered: it is taken out, and `done` says why.
-6. Works out a value for each deck field: the text the template itself shows in that place. The manifest does
-   not hold deck-field values; pass `prepared.fields` to the planner as `fields` until a person sets their own.
+1. Repairs a row whose items hold a slot that is not the row's, as an earlier draft made one where the
+   pictogram of each card was labelled a decoration. On a slide with fewer items that slot's shape is gone
+   with its item, and the slide cannot be rendered. Where every item has such a slot under its own number and
+   no deck fills it (`empty: 'keep'` or `'drop'`), the slot becomes part of the row. Otherwise the row takes
+   no fewer items than the one the slot is in. Every deck that rendered still does.
+2. Takes out a pattern for which `checkManifest` reports an error, unless `remove` is `false`. Two patterns
+   with one id are left for a person: nothing says which is meant. A grid said to take more than it draws
+   takes what it draws.
+3. Takes the `icon` suggestions (see `suggestChanges` below). Then, with `icons: false`, sets every required
+   icon slot to keep the template's own pictogram, and lists those slots in `kept`. A layout with a required
+   icon slot and no icon set is not offered to the planner at all; this keeps it offered. An icon slot a deck
+   may leave out stays as it is.
+4. Takes `row` and `row-max`, lets rows and grids widen by the factor in `widen`, adds the variants in
+   `variants` wherever a slide allows them, and settles the rows of those variants: a layout without its
+   picture has room its pattern did not have.
+5. With fonts, sets the measured budget where a budget lets text run over its box. The items of a row get one
+   budget, the smallest any of them measures. Without fonts no such issue is reported, and none is solved.
+6. Renders the sample deck at the fewest and at the most items. A pattern whose own sample cannot be rendered
+   is taken out, unless `remove` is `false`.
+7. Works out a value for each deck field: the one given in `fields`, or the text the template itself shows in
+   that place. The manifest does not hold deck-field values; pass `prepared.fields` to the planner as `fields`
+   until a person sets their own.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `icons` | required | Whether the app has an icon set for this template, which it gives the planner as `icons`. |
 | `variants` | `['mirror', 'text-only']` | The variants to add. `[]` adds none. `'without'` is not in the default: there is one for every optional text, and an optional text can be left empty anyway. |
 | `widen` | `2` | The factor rows may widen by, above 1 and at most 4. `false` leaves them at their drawn width. |
+| `remove` | `true` | Whether a pattern that cannot be used may be taken out. `false` for a manifest that stored decks were made with. |
+| `fields` | none | The values the app already has for deck fields. A field that has one is not asked about in `left`. |
 
-`left` is the short list a studio shows first. It holds what code cannot decide: errors that could not be
-solved, warnings with no single answer, the deck's own texts, whether text was measured, and a reminder to
-read the descriptions. `sound` says whether the result is fit to use. Throws when `icons` is not `true` or
-`false`, and for a `widen` or a variant that does not exist.
+`left` is the short list a studio shows first. It holds what code cannot decide, in this order: patterns that
+were taken out, errors that could not be solved, a sample that does not render, warnings with no single
+answer, the deck fields that have no value of their own yet, whether text was measured, and a reminder to read
+the descriptions. `sound` says whether the result is fit to use. Throws when `icons` is not `true` or `false`,
+and for a `widen` or a variant that does not exist.
 
-After it, `suggestChanges` lists only the variants it leaves to a person.
+### After a draft, and for a manifest in use
+
+After a draft nothing depends on the manifest yet, and the defaults are right. A pattern that cannot be used
+is taken out; `done` and the first sentence of `left` say which and why. The last pattern of a manifest is
+never taken out.
+
+A manifest that stored decks were made with must keep every pattern: a deck whose pattern is gone can no
+longer be changed. Pass `remove: false`. A pattern that cannot be used then stays, `sound` is `false`, and
+`left` says what is wrong with it, so that a person decides. With `variants: []` and `widen: false` as well,
+no layout is added and no look changes: it settles the facts only.
+
+`prepareManifest` does not know what a person undid by hand. A variant that was removed is added again, and a
+row that was left at its drawn width widens again. For a later run on a manifest a person has worked on, pass
+`variants: []` and `widen: false`, or the variants and the factor they chose.
+
+`kept` is for the day the app gets an icon set: those are the slots to give back to it, each with
+`{ op: 'setSlot', pattern, slot, empty: 'error' }`. A slot a person set to keep by hand is not in the list.
+
+After it, with its default options, `suggestChanges` lists only the `without` variants, which are left to a
+person. With `widen: false` it lists `row-widen` as well, and with fewer `variants` the ones that were left
+out.
 
 ## `suggestChanges(template, options?)`
 
@@ -653,9 +690,10 @@ A studio screen can show each suggestion as a line of text with a button that se
 ### Repairing a manifest that is in use
 
 A manifest drafted with an earlier version keeps every row at what the template draws, and may have photo
-slots where the slide has pictograms. `prepareManifest(template, { icons })` repairs it in one call, and with
-`variants: [], widen: false` it adds no layouts and changes no look. The same repair by hand takes three
-lines, with no model and with every pattern id and slot name unchanged, so stored decks keep working:
+slots where the slide has pictograms. `prepareManifest(template, { icons, remove: false })` repairs it in one
+call, and with `variants: [], widen: false` as well it adds no layouts and changes no look. The same repair by
+hand takes three lines, with no model and with every pattern id and slot name unchanged, so stored decks keep
+working:
 
 ```ts
 const template = loadTemplate(pptxBytes, savedManifest);

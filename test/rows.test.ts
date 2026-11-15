@@ -317,3 +317,41 @@ test('a slot that points at a shape the slide does not have makes no row, and no
   assert.deepEqual(suggestChanges(template), []);
   assert.match(changeManifest(template, [{ op: 'setRepeat', pattern: 'cards' }]).rejected[0]?.reason ?? '', /has no row of like items/);
 });
+
+test('a slot whose shape lies in an item is part of the row when every item has one, and holds the row otherwise', () => {
+  type Slots = TemplateManifest['patterns'][number]['slots'];
+  const made = (slots: Slots, slide = 4) => {
+    const manifest: TemplateManifest = { ...fixtureManifest, patterns: [...fixtureManifest.patterns, { id: 'cards', sourceSlide: slide, description: 'Cards.', slots: [{ name: 'title', kind: 'text', shapeId: '2', size: 26, maxChars: 30 }, ...slots] }] };
+    const result = changeManifest(loadTemplate(pptx, manifest), [{ op: 'setRepeat', pattern: 'cards' }]);
+    return { manifest: result.manifest, repeat: result.manifest.patterns.find((pattern) => pattern.id === 'cards')?.repeat, reason: result.rejected[0]?.reason ?? '' };
+  };
+  const text = (n: number, name = `card${n}Text`): Slots[number] => ({ name, kind: 'text', shapeId: `${n}1`, size: 9, maxChars: 20 });
+  const icon = (n: number, name: string, empty?: 'keep' | 'drop'): Slots[number] => ({ name, kind: 'image', imageKind: 'icon', shapeId: `${n}2`, ...(empty ? { empty } : {}) });
+  const rendersAt = (manifest: TemplateManifest, items: 'min' | 'max') => {
+    const template = loadTemplate(pptx, manifest);
+    const { deck, assets } = sampleDeck(template, { items });
+    return renderDeck(template, deck, { assets, layout: 'adaptive' }).pptx.length > 1000;
+  };
+
+  // A pictogram kept as designed in each card, which no deck fills: it goes where its card goes.
+  // Left out of the row, a slide with two cards could not be rendered: the third pictogram is gone with its card.
+  const kept = made([1, 2, 3].flatMap((n) => [text(n), icon(n, `card${n}Icon`, 'keep')]));
+  assert.deepEqual([kept.repeat?.slots, kept.repeat?.min], [['card{n}Text', 'card{n}Icon'], 2]);
+  assert.ok(rendersAt(kept.manifest, 'min') && rendersAt(kept.manifest, 'max'));
+
+  // Named by its kind and not by its card: step1 and icon1.
+  const steps = made([1, 2, 3].flatMap((n) => [text(n, `step${n}`), icon(n, `icon${n}`)]));
+  assert.deepEqual([steps.repeat?.item, steps.repeat?.slots, steps.repeat?.min], ['step', ['step{n}', 'icon{n}'], 2]);
+  assert.ok(rendersAt(steps.manifest, 'min') && rendersAt(steps.manifest, 'max'));
+
+  // A slot only one item has: the row takes no fewer items than that one.
+  const third = made([...[1, 2, 3, 4].map((n) => text(n)), icon(3, 'badge')], 5);
+  assert.deepEqual([third.repeat?.slots, third.repeat?.min, third.repeat?.max], [['card{n}Text'], 3, 4]);
+  assert.ok(rendersAt(third.manifest, 'min') && rendersAt(third.manifest, 'max'));
+
+  // In the last item there is no row: a further item would be a copy of that one, and a slide with fewer has lost it.
+  const last = made([...[1, 2, 3].map((n) => text(n)), icon(3, 'badge')]);
+  assert.equal(last.repeat, undefined);
+  assert.match(last.reason, /has no row of like items/);
+  assert.deepEqual(suggestChanges(loadTemplate(pptx, last.manifest), { kinds: ['row'] }), []);
+});

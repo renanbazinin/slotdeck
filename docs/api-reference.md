@@ -503,6 +503,8 @@ interface PrepareOptions {
   icons: boolean;                         // whether the app has an icon set for this template
   variants?: readonly PatternVariant[];   // default ['mirror', 'text-only']; [] adds none
   widen?: number | false;                 // default 2; above 1, at most 4; false leaves rows as drawn
+  remove?: boolean;                       // default true; false for a manifest that stored decks use
+  fields?: Record<string, string>;        // the deck-field values the app already has
 }
 
 interface PreparedManifest {
@@ -510,16 +512,19 @@ interface PreparedManifest {
   sound: boolean;                  // no error, and the sample deck renders at the fewest and at the most items
   done: string[];                  // what was done, in sentences
   left: string[];                  // what only a person can settle, in sentences
-  added: string[];                 // ids of the variants that were added
-  removed: string[];               // ids of patterns taken out because they cannot be rendered
-  fields: Record<string, string>;  // a value for each deck field: the text the template shows there
+  added: string[];                 // ids the manifest has now and did not have: variants
+  removed: string[];               // ids the manifest had and no longer has: patterns that could not be used
+  kept: Array<{ pattern: string; slot: string }>;  // icon slots set to keep the template's pictogram
+  fields: Record<string, string>;  // a value for each deck field: the one given, or the text the template shows there
 }
 ```
 
 Synchronous, no model, the template passed in is not touched. Takes what `suggestChanges` offers (the facts,
-widening, the variants named), keeps the template's pictograms when `icons` is `false`, and solves the issues
-that have one answer. Renames nothing; a second run changes nothing. Throws when `icons` is not a boolean, and
-for a `widen` or a variant that does not exist. See [template-studio.md](template-studio.md).
+widening, the variants named), repairs a row whose items hold a slot that is not the row's, keeps the
+template's pictograms in required icon slots when `icons` is `false`, and solves the issues that have one
+answer. A pattern that cannot be used is taken out unless `remove` is `false`; then it stays and `sound` is
+`false`. Renames nothing; a second run with the same options changes nothing. Throws when `icons` is not a
+boolean, and for a `widen` or a variant that does not exist. See [template-studio.md](template-studio.md).
 
 ### `suggestChanges`, `SUGGESTION_KINDS`
 

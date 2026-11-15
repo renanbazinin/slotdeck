@@ -12,21 +12,32 @@ suggestion and every issue, thirty and more for one template, and nobody got to 
 
 - **`prepareManifest(template, { icons })`** prepares a manifest in one call and without a model. It takes
   every suggestion that is a fact of the slide (`icon`, `row`, `row-max`), lets rows widen, adds the mirrored
-  and text-only variants and settles their rows, keeps the template's own pictograms where the app has no icon
-  set, sets the measured budget where a budget lets text run over its box, and takes out a pattern that cannot
-  be rendered. It returns the manifest, whether it is fit to use (`sound`), what was done (`done`), the few
-  sentences that are left for a person (`left`), and a value for each deck field taken from the template's own
-  text (`fields`). It renames nothing, so it is also the repair for a manifest that is in use, and a second run
-  changes nothing. `variants: []` and `widen: false` make it take less. See "prepareManifest" in
+  and text-only variants and settles their rows, keeps the template's own pictograms in required icon slots
+  where the app has no icon set, sets the measured budget where a budget lets text run over its box, and takes
+  out a pattern that cannot be used. It returns the manifest, whether it is fit to use (`sound`), what was
+  done (`done`), the few sentences that are left for a person (`left`), and a value for each deck field taken
+  from the template's own text (`fields`). It renames nothing, and a second run changes nothing.
+  `variants: []` and `widen: false` make it take less. With `remove: false` it takes no pattern out, which is
+  how to run it on a manifest that stored decks were made with. See "prepareManifest" in
   [template-studio.md](template-studio.md).
 - **[prompts/one-step-preparation.md](prompts/one-step-preparation.md)**: a short prompt for a coding agent, to
-  put one operation in front of a studio's lists: upload, prepare, look at a summary and a sample, publish.
+  change what an upload leads to in a studio: prepare, a summary and a sample to look at, publish.
 
 ### Changed
 
 - **[prompts/template-studio.md](prompts/template-studio.md)** now starts with that path and asks for it to
   be built first. Its prepare operation is `draftManifest` followed by `prepareManifest`, and answers with a
   summary instead of lists; going through suggestions one by one has become "looking closer".
+
+### Fixed
+
+- **A row is no longer made of items that hold a slot the row does not have.** An item takes everything in it
+  along: with fewer items its shapes are gone, and a slide with fewer items than drawn could not be rendered
+  when a card held, say, a pictogram that was labelled a decoration, or an icon named `icon1` beside a text
+  named `step1`. A draft, `setRepeat` without numbers and the `row` suggestion now make such a slot part of
+  the row when every item has one under its own number. A slot only one item has holds the row to no fewer
+  items than that one, and in the last item it means there is no row. `prepareManifest` repairs a manifest
+  that already has such a row.
 
 ### Measured
 
@@ -37,10 +48,14 @@ three columns the cards now fill the row.
 
 ### Upgrading from 0.3.0
 
-- Nothing changes for code that does not call `prepareManifest`.
+- Nothing changes for code that does not call `prepareManifest`, except that a draft and `setRepeat` find the
+  rows described under "Fixed". A stored manifest is not touched by the upgrade.
 - A studio that shows the result of `suggestChanges` and `checkManifest` to a person can call
   `prepareManifest` after the draft and show its `left` first. An app whose chat side has no icon set passes
   `icons: false`.
+- For a manifest that is in use, call it with `remove: false`. A manifest drafted with 0.3.0 can have a row
+  that renders only with as many items as the template draws; this repairs it, and every deck that rendered
+  still does.
 
 ## 0.3.0
 
