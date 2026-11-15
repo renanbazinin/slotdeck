@@ -70,6 +70,7 @@ slotdeck makes new PowerPoint files from an existing PowerPoint template.
 | Have drafts checked for design while a deck is written | `review: designReview(template)` on the planner | none of its own; each repair is one writing call |
 | Change a manifest by operations | `changeManifest` | none |
 | Add a mirrored or text-only variant of a pattern | `changeManifest` with `derivePattern`; `patternVariants` lists what is possible | none |
+| Make a drafted manifest ready to use in one step, or repair one that is in use | `prepareManifest` | none |
 | Find what a template's slides allow that its manifest does not use (rows that take more, icons, variants) | `suggestChanges`, then `changeManifest` with the changes it returns | none |
 | Change a manifest by instruction | `editManifest` | 1 or 2 |
 | List the shapes of a template | `inspectTemplate`, `studioView` | none |
@@ -82,8 +83,8 @@ slotdeck makes new PowerPoint files from an existing PowerPoint template.
 - All binary data is `Uint8Array`. In Node a `Buffer` is a `Uint8Array`, so `fs.readFileSync(path)` can be
   passed directly.
 - Functions that call a model are `async`. `renderDeck`, `validateDeck`, `slideAlternatives`, `checkManifest`,
-  `sampleDeck`, `changeManifest`, `suggestChanges`, `patternVariants`, `inspectTemplate` and `studioView` are
-  synchronous.
+  `sampleDeck`, `changeManifest`, `prepareManifest`, `suggestChanges`, `patternVariants`, `inspectTemplate` and
+  `studioView` are synchronous.
 - A deck never contains binary data. Pictures are referenced by an **asset id** and passed to the renderer as
   a map from id to bytes.
 - Nothing is written to disk and nothing is sent anywhere by slotdeck itself, except what your own provider

@@ -3,6 +3,45 @@
 What changed in each version, newest first, with what to do when upgrading. The version you have installed is
 in `node_modules/slotdeck/package.json`.
 
+## 0.3.1
+
+One step from a draft to a manifest that can be used. A studio built on 0.3.0 could show a person every
+suggestion and every issue, thirty and more for one template, and nobody got to the end of the list.
+
+### Added
+
+- **`prepareManifest(template, { icons })`** prepares a manifest in one call and without a model. It takes
+  every suggestion that is a fact of the slide (`icon`, `row`, `row-max`), lets rows widen, adds the mirrored
+  and text-only variants and settles their rows, keeps the template's own pictograms where the app has no icon
+  set, sets the measured budget where a budget lets text run over its box, and takes out a pattern that cannot
+  be rendered. It returns the manifest, whether it is fit to use (`sound`), what was done (`done`), the few
+  sentences that are left for a person (`left`), and a value for each deck field taken from the template's own
+  text (`fields`). It renames nothing, so it is also the repair for a manifest that is in use, and a second run
+  changes nothing. `variants: []` and `widen: false` make it take less. See "prepareManifest" in
+  [template-studio.md](template-studio.md).
+- **[prompts/one-step-preparation.md](prompts/one-step-preparation.md)**: a short prompt for a coding agent, to
+  put one operation in front of a studio's lists: upload, prepare, look at a summary and a sample, publish.
+
+### Changed
+
+- **[prompts/template-studio.md](prompts/template-studio.md)** now starts with that path and asks for it to
+  be built first. Its prepare operation is `draftManifest` followed by `prepareManifest`, and answers with a
+  summary instead of lists; going through suggestions one by one has become "looking closer".
+
+### Measured
+
+On one 36-slide template, a draft left 30 suggestions for a person. `prepareManifest` took 21 of them in about
+two seconds and left three sentences: 24 layouts became 41, with no name changed. A brief for five slides with
+2, 3, 4, 5 and 6 columns then got the asked number on one line on 5 of 5 slides, as before, and with two or
+three columns the cards now fill the row.
+
+### Upgrading from 0.3.0
+
+- Nothing changes for code that does not call `prepareManifest`.
+- A studio that shows the result of `suggestChanges` and `checkManifest` to a person can call
+  `prepareManifest` after the draft and show its `left` first. An app whose chat side has no icon set passes
+  `icons: false`.
+
 ## 0.3.0
 
 A draft that can be used as it comes, and the studio's review step as a function. A row of cards now takes as

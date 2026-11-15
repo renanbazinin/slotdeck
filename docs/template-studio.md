@@ -5,12 +5,12 @@ manifest with a model, checking it, seeing whether its budgets hold, and changin
 
 ```ts
 import {
-  draftManifest, checkManifest, sampleDeck, changeManifest, editManifest, suggestChanges, SUGGESTION_KINDS,
+  draftManifest, prepareManifest, checkManifest, sampleDeck, changeManifest, editManifest, suggestChanges, SUGGESTION_KINDS,
   patternVariants, VARIANTS, studioView, describeManifest, describeSlot, inspectTemplate, ROLES, PptxPackage,
   loadTemplate, renderDeck,
 } from 'slotdeck';
 import type {
-  ManifestChange, SlotPatch, ChangeResult, ManifestIssue, ManifestSuggestion, SuggestionKind, PatternVariant,
+  ManifestChange, SlotPatch, ChangeResult, ManifestIssue, ManifestSuggestion, SuggestionKind, PatternVariant, PreparedManifest,
   Role, StudioView, VariantOption,
 } from 'slotdeck';
 ```
@@ -19,13 +19,16 @@ import type {
 
 1. **Draft** with `draftManifest`. A model labels the shapes; the code measures everything, and settles what
    measurement decides: how many items each row takes, and which small pictures are icons.
-2. **Check** with `checkManifest`. It should report nothing.
-3. **Look** at a sample: `sampleDeck` then `renderDeck`, and open the file. Every slot is filled to its budget,
+2. **Prepare** with `prepareManifest`. In one call and without a model it takes what the slides allow, solves
+   the issues that have one answer, and returns the few sentences that are left for a person. A studio can
+   stop here: draft, prepare, look at the sample, use it. The steps below are for looking closer.
+3. **Check** with `checkManifest`. It should report nothing.
+4. **Look** at a sample: `sampleDeck` then `renderDeck`, and open the file. Every slot is filled to its budget,
    so text that overflows here will overflow in real decks, and shapes that should not be there are easy to see.
-4. **Take suggestions** with `suggestChanges`: what the slides allow that the manifest does not use yet, each
-   ready to apply. No model.
-5. **Change** what is wrong: `changeManifest` with operations, or `editManifest` with an instruction.
-6. Repeat 2 to 5 until the sample looks right. Store the manifest as JSON next to the pptx.
+5. **Take suggestions** one by one with `suggestChanges`: what the slides allow that the manifest does not use
+   yet, each ready to apply. No model. `prepareManifest` has taken most of them already.
+6. **Change** what is wrong: `changeManifest` with operations, or `editManifest` with an instruction.
+7. Repeat 3 to 6 until the sample looks right. Store the manifest as JSON next to the pptx.
 
 A draft can be used as it is: a deck may ask it for two cards or for six, and gets them. It is still worth a
 review. What a draft does not contain, and a person adds: budgets tuned by eye, a native chart, picture areas,
@@ -549,6 +552,54 @@ that are slots, and on a click offers the shape's `roles` (sending `addSlot`) or
 
 `describeSlot(slot)` gives a slot in a few words, such as `text, up to 40 characters, required`.
 
+## `prepareManifest(template, options)`
+
+```ts
+const draft = await draftManifest(pptxBytes, { llm });
+const prepared = prepareManifest(loadTemplate(pptxBytes, draft.manifest), { icons: true });
+// prepared.manifest  the manifest to store
+// prepared.sound     true: no error, and the sample deck renders at the fewest and at the most items
+// prepared.left      ['One text is the same on every slide and shows what the template shows until you set your own: department ("Department name").',
+//                     "Text was not measured with the template's fonts, so budgets are estimates. Look at the sample deck for text that runs over its box.",
+//                     'Read the description of each layout once. The planner chooses a layout by it, so it should say what the layout holds and not what the sample is about.']
+// prepared.done      what was done, a sentence for each change
+// prepared.added     ids of the variants that were added
+// prepared.removed   ids of patterns that were taken out because they cannot be rendered
+// prepared.fields    { department: 'Department name' }
+```
+
+Prepares a manifest for use in one step, for a studio that puts one control where a list of suggestions and a
+list of issues would be. No model, and the template passed in is not touched. It works on a manifest a draft
+has just made and on one that has been in use for months, and it renames nothing, so stored decks keep
+working. A second run finds nothing to do.
+
+What it does, in this order:
+
+1. Takes every suggestion that is a fact of the slide: `icon`, `row`, `row-max` (see `suggestChanges` below).
+2. Lets rows and grids widen, by the factor in `widen`.
+3. Adds the variants in `variants` wherever a slide allows them, then settles the rows of those variants: a
+   layout without its picture has room its pattern did not have.
+4. With `icons: false`, sets every icon slot to keep the template's own pictogram. A layout with a required
+   icon slot and no icon set is not offered to the planner at all; this keeps it offered.
+5. Solves the issues that have one answer. A budget that lets text run over its box gets the measured budget
+   (reported, and so solved, only when the template is loaded with fonts). A grid said to take more than it
+   draws takes what it draws. A pattern with an error cannot be rendered: it is taken out, and `done` says why.
+6. Works out a value for each deck field: the text the template itself shows in that place. The manifest does
+   not hold deck-field values; pass `prepared.fields` to the planner as `fields` until a person sets their own.
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `icons` | required | Whether the app has an icon set for this template, which it gives the planner as `icons`. |
+| `variants` | `['mirror', 'text-only']` | The variants to add. `[]` adds none. `'without'` is not in the default: there is one for every optional text, and an optional text can be left empty anyway. |
+| `widen` | `2` | The factor rows may widen by, above 1 and at most 4. `false` leaves them at their drawn width. |
+
+`left` is the short list a studio shows first. It holds what code cannot decide: errors that could not be
+solved, warnings with no single answer, the deck's own texts, whether text was measured, and a reminder to
+read the descriptions. `sound` says whether the result is fit to use. Throws when `icons` is not `true` or
+`false`, and for a `widen` or a variant that does not exist.
+
+After it, `suggestChanges` lists only the variants it leaves to a person.
+
 ## `suggestChanges(template, options?)`
 
 ```ts
@@ -602,8 +653,9 @@ A studio screen can show each suggestion as a line of text with a button that se
 ### Repairing a manifest that is in use
 
 A manifest drafted with an earlier version keeps every row at what the template draws, and may have photo
-slots where the slide has pictograms. Three lines repair it, with no model and with every pattern id and slot
-name unchanged, so stored decks keep working:
+slots where the slide has pictograms. `prepareManifest(template, { icons })` repairs it in one call, and with
+`variants: [], widen: false` it adds no layouts and changes no look. The same repair by hand takes three
+lines, with no model and with every pattern id and slot name unchanged, so stored decks keep working:
 
 ```ts
 const template = loadTemplate(pptxBytes, savedManifest);

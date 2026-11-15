@@ -494,6 +494,33 @@ function changeManifest(template: Template, changes: ManifestChange[]): ChangeRe
 function editManifest(template: Template, instruction: string, options: ManifestEditOptions): Promise<ManifestEditResult>;
 ```
 
+### `prepareManifest`
+
+```ts
+function prepareManifest(template: Template, options: PrepareOptions): PreparedManifest;
+
+interface PrepareOptions {
+  icons: boolean;                         // whether the app has an icon set for this template
+  variants?: readonly PatternVariant[];   // default ['mirror', 'text-only']; [] adds none
+  widen?: number | false;                 // default 2; above 1, at most 4; false leaves rows as drawn
+}
+
+interface PreparedManifest {
+  manifest: TemplateManifest;
+  sound: boolean;                  // no error, and the sample deck renders at the fewest and at the most items
+  done: string[];                  // what was done, in sentences
+  left: string[];                  // what only a person can settle, in sentences
+  added: string[];                 // ids of the variants that were added
+  removed: string[];               // ids of patterns taken out because they cannot be rendered
+  fields: Record<string, string>;  // a value for each deck field: the text the template shows there
+}
+```
+
+Synchronous, no model, the template passed in is not touched. Takes what `suggestChanges` offers (the facts,
+widening, the variants named), keeps the template's pictograms when `icons` is `false`, and solves the issues
+that have one answer. Renames nothing; a second run changes nothing. Throws when `icons` is not a boolean, and
+for a `widen` or a variant that does not exist. See [template-studio.md](template-studio.md).
+
 ### `suggestChanges`, `SUGGESTION_KINDS`
 
 ```ts
