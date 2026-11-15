@@ -45,7 +45,8 @@ Change nothing yet. Report:
 2. Where each template's `.pptx`, manifest, fonts and icons are stored; where plans and decks are, and what
    ties them to a template; whether a write can be read half done; what storage server instances share.
 3. Every `loadTemplate` call, hand-built `{ pkg, manifest }` and `presentationTools` call: from which
-   manifest, with which `icons` and `fields`, when it runs (build, start-up, request), and what is cached.
+   manifest, with which `icons`, `fields` and `layout` (`'strict'` when none is given), when it runs (build,
+   start-up, request), and what is cached.
 4. Which studio operations exist (upload, draft, change, instruct, import, export, replace the pptx, delete,
    undo), and what guards each on the server. And what a person is given after an upload and a draft: how many
    suggestions, issues and other items they must go through before a template can be used.
@@ -75,7 +76,8 @@ Store for each template:
 - which revision is published, meaning the chat side uses it;
 - a value for each `deckField`, passed as `fields` to `presentationTools`: a draft makes every text that
   repeats across slides a required slot with one (R6). Its first value is the template's own text (4.2), until
-  a person sets theirs;
+  a person sets theirs. Setting it is an operation of the app: it writes where the chat side reads its
+  `fields` and changes no manifest;
 - the ids of its plans and decks. The tools' `BlobStore` has only `get` and `set` and cannot be listed: record
   `plan_id` and `presentation_id` from each tool result's `output`, and read with `storeKeys.plan(id)` and
   `storeKeys.deck(id)`.
@@ -178,16 +180,18 @@ const draft = await draftManifest(pptx, { llm: capped(llm, CEILING), name, slide
 if (draft.manifest.patterns.length === 0) throw new Error('no layout was found in this file'); // store nothing
 
 // hasIcons: whether the chat side gives presentationTools an icon set for this template
-const prepared = prepareManifest(loadTemplate(pptx, draft.manifest, fonts ? { fonts } : {}), { icons: hasIcons });
+// layout: the layout mode it gives presentationTools, 'strict' when it gives none
+const prepared = prepareManifest(loadTemplate(pptx, draft.manifest, fonts ? { fonts } : {}), { icons: hasIcons, layout });
 ```
 
 `prepareManifest` calls no model. It takes every suggestion that is a fact of the slide (`icon`, `row`,
 `row-max`), lets rows widen, adds the mirrored and text-only variants and settles their rows, sets the
 measured budget where a budget lets text run over its box, and takes out a pattern that cannot be used: one
 for which `checkManifest` reports an error, or whose own sample does not render. With `icons: false` it keeps
-the template's own pictograms in required icon slots, so that layouts with icons are still offered. It renames
-nothing, and a second run with the same options changes nothing. It leaves `without` variants alone: there is
-one for every optional text.
+the template's own pictogram in every icon slot the planner would have to fill, so that layouts with icons are
+still offered; `layout` tells it which slots those are: a required one always, and with `'strict'` also one
+that may be left out. It renames nothing, and a second run with the same options changes nothing. It leaves
+`without` variants alone: there is one for every optional text.
 
 Commit `prepared.manifest` as revision 1, not yet published. Keep with it `draft.skipped`, the sentences of
 `draft.notes` and `prepared.done`, `prepared.left` and `prepared.kept`. Store `prepared.fields` as the first
@@ -213,7 +217,10 @@ It refuses a revision that is not sound and says why.
 
 When `prepared.sound` is false the revision stays unpublished, and `left` says why. After a draft that is
 rare, because a pattern that cannot be used was taken out. The way on is 4.4: the sentence names the pattern,
-the person corrects it or removes it with `{ op: 'removePattern', pattern }`, and publish is tried again.
+the person corrects it or removes it with `{ op: 'removePattern', pattern }`, and publish is tried again. The
+last pattern of a manifest cannot be removed. After a draft that is the usual case of an unsound result,
+because every other pattern that cannot be used was taken out: the person then corrects it, or uploads the
+file as a new template.
 
 Keep `rows` at its default, `'fit'`. Leave `slideImage` out unless the app can make a PNG or JPEG of a slide.
 `onProgress` fires only for slides that get a call, so finish on the promise, not on `done === total`. To take
@@ -243,10 +250,10 @@ sound.
   on, call it with `variants: []` and `widen: false`, or with the variants and the factor they chose.
 
 An icon slot is filled from the `icons` passed to `presentationTools`. `prepareManifest` is told with `icons`
-whether there are any. Without, it sets the required icon slots to keep the template's pictogram and lists
-them in `prepared.kept`; an icon slot that may be left out stays as it is. Keep that list with the template.
-When an icon set is added later, those are the slots to give back to it, each with `{ op: 'setSlot', pattern,
-slot, empty: 'error' }`. A slot a person set to keep is not in the list and stays kept.
+whether there are any. Without, it sets the icon slots the planner would have to fill to keep the template's
+pictogram, and lists them in `prepared.kept` with what each was before (`was`). Keep that list with the
+template. When an icon set is added later, those are the slots to give back to it, each with `{ op: 'setSlot',
+pattern, slot, empty: was }`. A slot a person set to keep is not in the list and stays kept.
 
 ### 4.4 Change
 
@@ -272,14 +279,15 @@ Record the ids of the plans and decks already in the storage behind the tools' s
 stored manifest without patterns is an undrafted template and gets no revision.
 
 Then it is the call of 4.2, told that the manifest is in use: `prepareManifest(template, { icons: hasIcons,
-remove: false, fields: storedFields })`. With `remove: false` no pattern is taken out, so it loses no pattern
-id and no slot name, and stored decks keep working. A pattern that cannot be used stays in: `sound` is then
-false and `left` says what is wrong with it, for a person to correct through 4.4. `fields` are the values the
-app has for the deck fields; only a missing one is asked about. Show its `left` and the number of things in
-`done` as a dry run, with the lists of R5, which are empty unless something is wrong; on agreement commit its
-manifest once, and R6 decides whether it is published. To repair the facts only and add no layouts, pass
-`variants: [], widen: false` as well. Never run it unasked at start-up. Then a person reads the descriptions
-(4.3).
+layout, remove: false, fields: storedFields })`. With `remove: false` nothing a stored deck depends on is
+taken away: no pattern is taken out, so it loses no pattern id and no slot name, and a grid said to take more
+items than it draws keeps its number. A pattern that cannot be used stays in: `sound` is then false and `left`
+names it and says what is wrong with it, for a person to correct through 4.4. `fields` are the values the app
+has for the deck fields; only a missing one is asked about, and on agreement its value in `prepared.fields` is
+stored as its first value (4.2). Show its `left` and the number of things in `done` as a dry run, with the
+lists of R5, which are empty unless something is wrong; on agreement commit its manifest once, and R6 decides
+whether it is published. To repair the facts only and add no layouts, pass `variants: [], widen: false` as
+well. Never run it unasked at start-up. Then a person reads the descriptions (4.3).
 
 ### 4.6 Replace the pptx
 
@@ -408,10 +416,10 @@ pattern, slot, imageKind: 'photo' }` on a pictogram's slot then gives its photo 
 
 The first test to write is the main path, end to end, started by the same call an upload makes in the app:
 upload, prepare with the scripted model, publish, and then the tools built the way the chat side builds them,
-with the `fields` and `icons` it would pass. The prompt of the next `plan_presentation` call lists the
-prepared layouts, among them one with a deck field and one with an icon slot: a template that is published and
-offers the planner next to nothing fails this test. In it, check also that the response to prepare holds the
-numbers, `left`, the deck fields, the sample and `sound`, and no list of suggestions or issues; that the
+with the `fields`, `icons` and `layout` it would pass. The prompt of the next `plan_presentation` call lists
+the prepared layouts, among them one with a deck field and one with an icon slot: a template that is published
+and offers the planner next to nothing fails this test. In it, check also that the response to prepare holds
+the numbers, `left`, the deck fields, the sample and `sound`, and no list of suggestions or issues; that the
 revision is not published before the person says so, also after a change was committed to it; that publish is
 refused for a revision whose only pattern has a slot on a shape its slide does not have; and that
 `prepareManifest` on the stored manifest returns an empty `done`.
@@ -430,8 +438,9 @@ Every *Check* of section 3 is a test. Add these:
 5. Every sample response carries the sample mark.
 6. An id is not reused after a delete. The repair of 4.6 loses no name, and a restore serves its revision's
    pptx. A held lock stops a second model operation before any call, and prepare on a template that has
-   patterns makes no model call. Without an icon set a repair excludes no pattern that was offered, and a
-   missing `fields` value is reported.
+   patterns makes no model call. Without an icon set a repair excludes no pattern that was offered, with the
+   `layout` the chat side plans with. After the repair of a template whose deck field had no value, the
+   catalogue built the way the chat side builds it names a layout with that deck field.
 
 ## 8. Order of work, and done
 

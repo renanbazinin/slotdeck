@@ -103,8 +103,11 @@ something that does not exist.
 `slideImage` is optional. With it, the model sees the slide; without it, it judges from the measurements alone.
 Any PNG or JPEG of the slide works; 480 pixels wide is enough.
 
-To redo one slide after changing the pptx, call `draftManifest` with `slides: [n]` and add the pattern it
-returns to your manifest.
+To redo one slide after changing the pptx, do not draft it again. A draft of `slides: [n]` asks the model to
+name the deck's repeated texts anew, so the pattern it returns carries deck fields under other names than the
+rest of your manifest, and the planner is not offered it until the app has a value under the new name. Correct
+the pattern with `removeSlot` and `addSlot`, or make a new one with `addPattern`, which takes the deck fields
+the other patterns have, followed by `addSlot`. `slides` is for a template that has no manifest yet.
 
 ### What a draft settles by itself
 
@@ -275,8 +278,7 @@ returns to the designed size.
 ```
 
 Makes a slide a pattern with no content slots yet. Texts that other patterns already treat as deck fields are
-filled in as deck-field slots. Follow it with `addSlot` operations, or use `draftManifest` with `slides: [n]`
-instead to get a complete pattern.
+filled in as deck-field slots. Follow it with `addSlot` operations.
 
 #### `copyPattern`
 
@@ -568,7 +570,7 @@ const prepared = prepareManifest(loadTemplate(pptxBytes, draft.manifest), { icon
 // prepared.done      what was done, a sentence for each change
 // prepared.added     ids the manifest has now and did not have: the variants that were added
 // prepared.removed   ids the manifest had and no longer has: patterns that could not be used
-// prepared.kept      [{ pattern, slot }]: icon slots set to keep the template's pictogram, with icons: false
+// prepared.kept      [{ pattern, slot, was }]: icon slots set to keep the template's pictogram, with icons: false
 // prepared.fields    { department: 'Department name' }
 ```
 
@@ -583,37 +585,42 @@ What it does, in this order:
    with its item, and the slide cannot be rendered. Where every item has such a slot under its own number and
    no deck fills it (`empty: 'keep'` or `'drop'`), the slot becomes part of the row. Otherwise the row takes
    no fewer items than the one the slot is in. Every deck that rendered still does.
-2. Takes out a pattern for which `checkManifest` reports an error, unless `remove` is `false`. Two patterns
-   with one id are left for a person: nothing says which is meant. A grid said to take more than it draws
-   takes what it draws.
-3. Takes the `icon` suggestions (see `suggestChanges` below). Then, with `icons: false`, sets every required
-   icon slot to keep the template's own pictogram, and lists those slots in `kept`. A layout with a required
-   icon slot and no icon set is not offered to the planner at all; this keeps it offered. An icon slot a deck
-   may leave out stays as it is.
-4. Takes `row` and `row-max`, lets rows and grids widen by the factor in `widen`, adds the variants in
-   `variants` wherever a slide allows them, and settles the rows of those variants: a layout without its
-   picture has room its pattern did not have.
+2. Finds the patterns that cannot be used: `checkManifest` reports an error for one, or its own sample cannot
+   be rendered. They are taken out, unless `remove` is `false`; then they stay, and no variant is made of
+   them. Two patterns with one id are left for a person: nothing says which is meant. A grid said to take
+   more than it draws takes what it draws, unless `remove` is `false`: a stored deck may have that many.
+3. Takes what the slides allow, as `suggestChanges` (below) lists it: `icon`, `row` and `row-max`, widening by
+   the factor in `widen`, the variants in `variants`, and then the rows of those variants, because a layout
+   without its picture has room its pattern did not have.
+4. With `icons: false`, sets every icon slot that would have to be filled to keep the template's own
+   pictogram, those of the variants too, and lists them in `kept` with what they were. A layout with such a
+   slot and no icon set is not offered to the planner at all; this keeps it offered. Which slots have to be
+   filled depends on `layout`: a required one always, and one a deck may leave out when the planner plans
+   with `'strict'`, its default. With `'adaptive'` such a slot stays as it is.
 5. With fonts, sets the measured budget where a budget lets text run over its box. The items of a row get one
    budget, the smallest any of them measures. Without fonts no such issue is reported, and none is solved.
-6. Renders the sample deck at the fewest and at the most items. A pattern whose own sample cannot be rendered
-   is taken out, unless `remove` is `false`.
+6. Renders the sample deck at the fewest and at the most items. A variant made in this run whose own sample
+   cannot be rendered is dropped again, and is not mentioned. Any other pattern whose sample fails is taken
+   out, or with `remove: false` named in `left`.
 7. Works out a value for each deck field: the one given in `fields`, or the text the template itself shows in
    that place. The manifest does not hold deck-field values; pass `prepared.fields` to the planner as `fields`
-   until a person sets their own.
+   until a person sets their own. A field with neither is not in `fields`, and `left` asks for it.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `icons` | required | Whether the app has an icon set for this template, which it gives the planner as `icons`. |
+| `layout` | `'strict'` | The layout mode the app gives the planner as `layout`. It decides which icon slots must be filled, and matters only with `icons: false`. |
 | `variants` | `['mirror', 'text-only']` | The variants to add. `[]` adds none. `'without'` is not in the default: there is one for every optional text, and an optional text can be left empty anyway. |
-| `widen` | `2` | The factor rows may widen by, above 1 and at most 4. `false` leaves them at their drawn width. |
-| `remove` | `true` | Whether a pattern that cannot be used may be taken out. `false` for a manifest that stored decks were made with. |
+| `widen` | `2` | The factor given to rows and grids that have none yet, above 1 and at most 4. A row that already widens keeps its factor. `false` gives none: rows stay as they are. |
+| `remove` | `true` | Whether a pattern that cannot be used may be taken out. `false` for a manifest that stored decks were made with: nothing a stored deck depends on is then taken away. |
 | `fields` | none | The values the app already has for deck fields. A field that has one is not asked about in `left`. |
 
 `left` is the short list a studio shows first. It holds what code cannot decide, in this order: patterns that
-were taken out, errors that could not be solved, a sample that does not render, warnings with no single
-answer, the deck fields that have no value of their own yet, whether text was measured, and a reminder to read
-the descriptions. `sound` says whether the result is fit to use. Throws when `icons` is not `true` or `false`,
-and for a `widen` or a variant that does not exist.
+were taken out, errors that could not be solved, a sample that does not render and the pattern it is, a grid
+left with more than it draws, warnings with no single answer, the deck fields that show the template's text,
+the deck fields with no value at all, whether text was measured, and a reminder to read the descriptions.
+`sound` says whether the result is fit to use. Throws when `icons` is not `true` or `false`, and for a
+`layout`, a `widen` or a variant that does not exist.
 
 ### After a draft, and for a manifest in use
 
@@ -623,19 +630,21 @@ never taken out.
 
 A manifest that stored decks were made with must keep every pattern: a deck whose pattern is gone can no
 longer be changed. Pass `remove: false`. A pattern that cannot be used then stays, `sound` is `false`, and
-`left` says what is wrong with it, so that a person decides. With `variants: []` and `widen: false` as well,
-no layout is added and no look changes: it settles the facts only.
+`left` names it and says what is wrong with it, so that a person decides. With `variants: []` and
+`widen: false` as well, no layout is added and no row is widened: it settles the facts only. A slide with no
+more items than the template draws looks as before. Where `row-max` gives a row a `span`, a stored slide with
+more items than drawn is laid out across that room the next time it is rendered.
 
 `prepareManifest` does not know what a person undid by hand. A variant that was removed is added again, and a
-row that was left at its drawn width widens again. For a later run on a manifest a person has worked on, pass
+row whose widening was taken away widens again. For a later run on a manifest a person has worked on, pass
 `variants: []` and `widen: false`, or the variants and the factor they chose.
 
 `kept` is for the day the app gets an icon set: those are the slots to give back to it, each with
-`{ op: 'setSlot', pattern, slot, empty: 'error' }`. A slot a person set to keep by hand is not in the list.
+`{ op: 'setSlot', pattern, slot, empty: was }`. A slot a person set to keep by hand is not in the list.
 
 After it, with its default options, `suggestChanges` lists only the `without` variants, which are left to a
-person. With `widen: false` it lists `row-widen` as well, and with fewer `variants` the ones that were left
-out.
+person, and the variants of a pattern that cannot be used. With `widen: false` it lists `row-widen` as well,
+and with fewer `variants` the ones that were left out.
 
 ## `suggestChanges(template, options?)`
 
@@ -691,7 +700,7 @@ A studio screen can show each suggestion as a line of text with a button that se
 
 A manifest drafted with an earlier version keeps every row at what the template draws, and may have photo
 slots where the slide has pictograms. `prepareManifest(template, { icons, remove: false })` repairs it in one
-call, and with `variants: [], widen: false` as well it adds no layouts and changes no look. The same repair by
+call, and with `variants: [], widen: false` as well it adds no layouts and widens no row. The same repair by
 hand takes three lines, with no model and with every pattern id and slot name unchanged, so stored decks keep
 working:
 

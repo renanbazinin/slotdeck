@@ -78,12 +78,12 @@ test('without an icon set, icon slots keep the template\'s pictograms, so their 
   assert.deepEqual(patternOf(prepared.manifest, 'cards').slots.filter((slot) => slot.kind === 'image').map((slot) => [slot.imageKind, slot.empty]), [['icon', 'keep'], ['icon', 'keep'], ['icon', 'keep']]);
   assert.equal(prepared.sound, true);
   // It says which slots it set, so that they can be filled again when the app gets an icon set.
-  assert.deepEqual(prepared.kept, [1, 2, 3].map((n) => ({ pattern: 'cards', slot: `card${n}Icon` })));
+  assert.deepEqual(prepared.kept, [1, 2, 3].map((n) => ({ pattern: 'cards', slot: `card${n}Icon`, was: 'error' })));
   assert.deepEqual(prepareManifest(loadTemplate(pptx, asDrafted), { icons: true }).kept, []);
 
-  // An icon slot a deck may leave out is left as it is: the layout is offered anyway, and decks that left it out look as before.
+  // For a chat side that plans adaptively, an icon slot a deck may leave out is left as it is: decks that left it out look as before.
   const optional: TemplateManifest = { ...asDrafted, patterns: asDrafted.patterns.map((pattern) => ({ ...pattern, slots: pattern.slots.map((slot) => (slot.kind === 'image' && pattern.id === 'cards' ? { ...slot, imageKind: 'icon' as const, empty: 'remove' as const } : slot)) })) };
-  const left = prepareManifest(loadTemplate(pptx, optional), { icons: false });
+  const left = prepareManifest(loadTemplate(pptx, optional), { icons: false, layout: 'adaptive' });
   assert.deepEqual(patternOf(left.manifest, 'cards').slots.filter((slot) => slot.kind === 'image').map((slot) => slot.empty), ['remove', 'remove', 'remove']);
   assert.deepEqual(left.kept, []);
 
@@ -176,10 +176,11 @@ test('for a manifest in use, remove: false keeps every pattern and says what is 
   assert.deepEqual(namesOf(prepared.manifest), namesOf(faulty), 'every pattern and every slot a stored deck may name is still there');
   assert.equal(prepared.sound, false);
   assert.equal(prepared.left[0], 'One error could not be solved: broken.gone points at shape #99, which is not on slide 1.');
-  assert.match(prepared.left[1] ?? '', /^The sample deck does not render: /);
-  // What can be done without it is done all the same.
+  assert.equal(prepared.left[1], 'The sample deck does not render: "broken" (Pattern "broken": slot "gone" points at shape #99, which is not on template slide 1)');
+  // What can be done without it is done all the same. What a stored deck may depend on is not: the grid keeps its number.
   assert.equal(patternOf(prepared.manifest, 'cards').repeat?.max, 6);
-  assert.equal(patternOf(prepared.manifest, 'grid').repeat?.max, 4);
+  assert.equal(patternOf(prepared.manifest, 'grid').repeat?.max, 6);
+  assert.match(prepared.left[2] ?? '', /^"grid" says its grid takes up to 6 cards, and the template draws 4/);
 
   // Two patterns with one id: nothing says which of them is meant, so both stay, also when patterns may be taken out.
   const [content, closing] = fixtureManifest.patterns as [PatternDef, PatternDef];
@@ -230,7 +231,7 @@ test('a pattern whose sample cannot be rendered is taken out, though no error is
 
   const stays = prepareManifest(template, { icons: true, remove: false });
   assert.deepEqual([stays.removed, stays.sound], [[], false]);
-  assert.ok(stays.left.some((sentence) => sentence.startsWith('The sample deck does not render: ')), stays.left.join(' | '));
+  assert.equal(stays.left[0], 'The sample deck does not render: "odd" (shape has no text body to fill)');
 });
 
 test('a row whose items hold a slot that is not the row\'s is repaired, and every deck that rendered still does', () => {
@@ -277,7 +278,7 @@ test('a row whose items hold a slot that is not the row\'s is repaired, and ever
   const filled = inUse();
   assert.deepEqual([2, 3, 4].map((items) => renders(filled, deckOf(items, true))), [false, true, true]);
   const held = prepareManifest(loadTemplate(pptx, filled), settle);
-  assert.deepEqual([patternOf(held.manifest, 'cards').repeat?.slots, patternOf(held.manifest, 'cards').repeat?.min], [['card{n}Text'], 3]);
+  assert.deepEqual([patternOf(held.manifest, 'cards').repeat?.slots, patternOf(held.manifest, 'cards').repeat?.min, patternOf(held.manifest, 'cards').repeat?.max], [['card{n}Text'], 3, 5], 'and no more than it took');
   assert.equal(held.done[0], '"cards": the row of cards takes no fewer than 3, because "card3Icon" lies in card 3 and is not part of the row. A slide with fewer could not be rendered.');
   assert.deepEqual([3, 4].map((items) => renders(held.manifest, deckOf(items, true))), [true, true]);
   assert.ok(validateDeck(held.manifest, deckOf(2, true), { assets: ['i'] }).some((issue) => issue.severity === 'error'), 'two cards are refused before rendering now');

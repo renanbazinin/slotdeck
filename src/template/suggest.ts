@@ -12,7 +12,7 @@ import type { Box, SlideInfo, TemplateInfo } from './inspect.ts';
 import { widenFactor } from './manifest.ts';
 import type { PatternDef, SlotDef, TemplateManifest } from './manifest.ts';
 import { isPictogram } from './measure.ts';
-import { detectRepeat, droppedShapes, rowCapacity, rowComfort } from './rows.ts';
+import { detectRepeat, droppedShapes, rowCapacity, rowComfort, strandedSlots } from './rows.ts';
 import { rowRoom } from './measure.ts';
 
 export const SUGGESTION_KINDS = ['icon', 'row', 'row-max', 'row-widen', 'variant'] as const;
@@ -87,7 +87,7 @@ export function suggestChanges(template: Template, options: SuggestOptions = {})
     const repeat = pattern.repeat;
     const removed = droppedShapes(pattern.slots);
     // The row a pattern has, or the one its slot names describe and a `row` suggestion would make.
-    const row = repeat ?? detectRepeat(pattern.slots.filter((slot) => !(slot.kind === 'text' && slot.deckField)), slide);
+    const row = repeat ?? detectRepeat(pattern.slots, slide);
 
     if (kinds.has('icon')) {
       // Pictures are judged by the row they are in or are about to be in, so that taking `icon`
@@ -129,8 +129,11 @@ export function suggestChanges(template: Template, options: SuggestOptions = {})
       const drawn = repeat.shapes.length;
       const most = repeat.max ?? drawn;
       const fewest = repeat.min ?? drawn;
+      // A further item is a copy of the last. Where the last item holds a slot that is not the
+      // row's and that a deck fills or removes, a copy would show the template's own sample there.
+      const copies = !strandedSlots(pattern, slide).some((entry) => entry.item === drawn && pattern.slots.find((slot) => slot.name === entry.slot)?.empty !== 'keep');
       // A grid takes what it draws; one that takes fewer was set so by a person.
-      if (kinds.has('row-max') && repeat.columns === undefined) {
+      if (kinds.has('row-max') && repeat.columns === undefined && copies) {
         const comfort = rowComfort(slide, repeat, removed);
         const physical = rowCapacity(slide, repeat, removed);
         if (comfort.most > most) {

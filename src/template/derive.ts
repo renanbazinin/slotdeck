@@ -146,9 +146,17 @@ function freeName(pattern: PatternDef, base: string): string {
   for (let n = 1; ; n++) if (!names.has(`${base}${n}`)) return `${base}${n}`;
 }
 
+/**
+ * A shape with no place of its own on the slide: a placeholder that takes its position from the
+ * slide's layout, which is not read. It is read as nothing at the corner, and the renderer cannot
+ * give it a box.
+ */
+const placeless = (unit: Unit) => !(unit.shape.box.w > 0 || unit.shape.box.h > 0);
+
 /** Shows a unit in another place: through its own slot, or through a slot that keeps it as designed. */
 function place(pattern: PatternDef, unit: Unit, box: Box, what: string): void {
   if (unit.inRow) refuse(`${what} is part of the row of ${pattern.repeat?.item ?? 'item'}s, which the software lays out itself and cannot move`);
+  if (placeless(unit)) refuse(`${what} takes its place from the slide's layout and has none of its own on the slide, so it cannot be moved`);
   const own = unit.own;
   if (own?.kind === 'table') refuse(`the table "${own.name}" cannot be moved`);
   if (own) {
@@ -308,7 +316,7 @@ function textOnly(pattern: PatternDef, units: Unit[], context: VariantContext): 
   let columnRight = side === 'left' ? far : found.blockRight;
   // The items of a row are laid out by the software as one row. Widening one of them would give
   // it a place of its own, and items beyond the drawn ones are copies of the last.
-  const texts = block.filter((unit): unit is Unit & { own: TextSlotDef } => !unit.inRow && unit.own?.kind === 'text' && unit.own.empty !== 'keep' && unit.own.empty !== 'drop');
+  const texts = block.filter((unit): unit is Unit & { own: TextSlotDef } => !unit.inRow && !placeless(unit) && unit.own?.kind === 'text' && unit.own.empty !== 'keep' && unit.own.empty !== 'drop');
   // Lines that run the width of a slide are hard to read, so the column is no wider than a
   // comfortable line of the slot with the most text. It keeps the edge where reading starts,
   // which lines up with the other slides, and gives up room at the far edge.

@@ -12,14 +12,14 @@ suggestion and every issue, thirty and more for one template, and nobody got to 
 
 - **`prepareManifest(template, { icons })`** prepares a manifest in one call and without a model. It takes
   every suggestion that is a fact of the slide (`icon`, `row`, `row-max`), lets rows widen, adds the mirrored
-  and text-only variants and settles their rows, keeps the template's own pictograms in required icon slots
-  where the app has no icon set, sets the measured budget where a budget lets text run over its box, and takes
-  out a pattern that cannot be used. It returns the manifest, whether it is fit to use (`sound`), what was
-  done (`done`), the few sentences that are left for a person (`left`), and a value for each deck field taken
-  from the template's own text (`fields`). It renames nothing, and a second run changes nothing.
-  `variants: []` and `widen: false` make it take less. With `remove: false` it takes no pattern out, which is
-  how to run it on a manifest that stored decks were made with. See "prepareManifest" in
-  [template-studio.md](template-studio.md).
+  and text-only variants and settles their rows, keeps the template's own pictograms where the app has no
+  icon set (`kept` lists those slots, to give back later), sets the measured budget where a budget lets text
+  run over its box, and takes out a pattern that cannot be used. It returns the manifest, whether it is fit to
+  use (`sound`), what was done (`done`), the few sentences that are left for a person (`left`), and a value
+  for each deck field taken from the template's own text (`fields`). It renames nothing, and a second run
+  changes nothing. `variants: []` and `widen: false` make it take less. With `remove: false` it takes nothing
+  away that a stored deck depends on, which is how to run it on a manifest that is in use. See
+  "prepareManifest" in [template-studio.md](template-studio.md).
 - **[prompts/one-step-preparation.md](prompts/one-step-preparation.md)**: a short prompt for a coding agent, to
   change what an upload leads to in a studio: prepare, a summary and a sample to look at, publish.
 
@@ -36,20 +36,29 @@ suggestion and every issue, thirty and more for one template, and nobody got to 
   when a card held, say, a pictogram that was labelled a decoration, or an icon named `icon1` beside a text
   named `step1`. A draft, `setRepeat` without numbers and the `row` suggestion now make such a slot part of
   the row when every item has one under its own number. A slot only one item has holds the row to no fewer
-  items than that one, and in the last item it means there is no row. `prepareManifest` repairs a manifest
-  that already has such a row.
+  items than that one, and in the last item it means there is no row. A text of the whole deck inside an
+  item counts the same way. `prepareManifest` repairs a manifest that already has such a row.
+- **`row-max` is no longer suggested for a row whose last item holds a slot that is not the row's** and that
+  a deck fills. A further item is a copy of the last, and would show the template's own sample in that place.
+- **A shape that takes its place from the slide's layout is not moved.** The usual title of a real template is
+  a placeholder with no position of its own on the slide. `derivePattern` gave it a box when mirroring, and
+  the variant could not be rendered. It now refuses with the reason, `suggestChanges` no longer lists such a
+  variant, and the text-only variant leaves that shape where the layout puts it.
+- **[template-studio.md](template-studio.md) no longer says to draft one slide again** with `slides: [n]`: the
+  pattern it returns names the deck's repeated texts anew. Use `addPattern` and `addSlot`.
 
 ### Measured
 
 On one 36-slide template, a draft left 30 suggestions for a person. `prepareManifest` took 21 of them in about
-two seconds and left three sentences: 24 layouts became 41, with no name changed. A brief for five slides with
+three seconds and left three sentences: 24 layouts became 41, with no name changed. A brief for five slides with
 2, 3, 4, 5 and 6 columns then got the asked number on one line on 5 of 5 slides, as before, and with two or
 three columns the cards now fill the row.
 
 ### Upgrading from 0.3.0
 
-- Nothing changes for code that does not call `prepareManifest`, except that a draft and `setRepeat` find the
-  rows described under "Fixed". A stored manifest is not touched by the upgrade.
+- Nothing changes for code that does not call `prepareManifest`, except what is described under "Fixed": a
+  draft and `setRepeat` find rows by the new rule, and `derivePattern` refuses a mirror that could not be
+  rendered. A stored manifest is not touched by the upgrade.
 - A studio that shows the result of `suggestChanges` and `checkManifest` to a person can call
   `prepareManifest` after the draft and show its `left` first. An app whose chat side has no icon set passes
   `icons: false`.

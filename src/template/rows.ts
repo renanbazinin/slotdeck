@@ -50,7 +50,8 @@ export function detectRepeat(slots: SlotDef[], slide: SlideInfo): RepeatDef | un
     const itemOf = (id: string) => shapes.findIndex((ids) => chain(id).some((part) => ids.includes(part))) + 1;
     const others = slots.filter((slot) => !own.has(slot) && itemOf(slot.shapeId) > 0);
     const nameOf = (slot: SlotDef) => {
-      const numbered = NUMBERED.exec(slot.name);
+      // A value of the whole deck is one text, whatever its name: it is never a slot of the row.
+      const numbered = slot.kind === 'text' && slot.deckField ? null : NUMBERED.exec(slot.name);
       return numbered && Number(numbered[2]) === itemOf(slot.shapeId) ? `${numbered[1]}{n}${numbered[3] ?? ''}` : undefined;
     };
     const joins = (name: string | undefined): name is string => name !== undefined && others.filter((slot) => nameOf(slot) === name).length === count;
