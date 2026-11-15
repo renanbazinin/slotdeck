@@ -761,9 +761,13 @@ How it is made:
    the cells the frame takes. It lists every distinct text style the template's layouts use (size, weight,
    typeface, colour, alignment, bullets, a filled or outlined box, what it is used for) and every decoration
    (rules, panels that cards are made of, circles), each with a key: `T1`, `T2`, ... and `D1`, `D2`, ...
+   Layouts composed earlier are left out (their slide is named `composed <id>` in the pptx), so the kit, and
+   with it a design's keys, stay the same when more layouts are composed.
 2. **The design** (one model call). The model answers with parts: which style, which cells, what role, a slot
    name and a sample text. It cannot name a colour, a font or a size, only a style the template has. Items
-   that repeat get numbered names (`point1Heading`, `point1Text`, `point2Heading`, ...).
+   that repeat get numbered names (`point1Heading`, `point1Text`, `point2Heading`, ...). The role `number` is
+   kept for figures that measure something; the number of a step or an item is a `caption`, so that a deck
+   without figures can use the layout.
 3. **The check** (no model). A part that lies on another text, crosses the frame or the kept title, reaches over
    the edge of the panel it sits on, is too low for one line of its style, or names a style or name that does
    not exist is a problem. So is a slide left half empty: a free column at a side, more than two free columns,

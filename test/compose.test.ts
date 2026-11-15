@@ -130,6 +130,16 @@ test('buildPattern adds a slide made of the frame and copies of the template\'s 
   assert.ok(!slide.includes('Point number 3'), 'the third card is gone with two items');
 });
 
+test('a layout composed earlier does not change the kit, so a design is built the same after another was added', () => {
+  const template = demo();
+  const first = buildPattern(template, threeCards(template, 'first-cards'));
+  const extended = loadTemplate(first.pptx, first.manifest);
+  assert.deepEqual(designKit(extended), designKit(template), 'the same base, grid and style keys');
+  const second = buildPattern(extended, threeCards(template, 'second-cards'));
+  assert.deepEqual(second.manifest.patterns.map((pattern) => pattern.id).slice(-2), ['first-cards', 'second-cards']);
+  assert.equal(second.slide, first.slide + 1);
+});
+
 test('a composed budget is what the box holds, not what the model\'s sample was', () => {
   const template = demo();
   const design = threeCards(template);

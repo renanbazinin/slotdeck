@@ -280,8 +280,25 @@ interface KitParts {
   stays: Set<string>;
 }
 
+/** The name a composed slide carries in the pptx, so that a kit leaves it out. */
+const COMPOSED = 'composed ';
+const COMPOSED_SLIDE = /<(?:\w+:)?cSld\b[^>]*\bname="composed /;
+
+/** Numbers of the slides that were composed: they copy the template's styles and would only repeat them. */
+function composedSlides(pkg: PptxPackage): Set<number> {
+  const out = new Set<number>();
+  readPresentation(pkg).slides.forEach((ref, index) => {
+    if (pkg.has(ref.part) && COMPOSED_SLIDE.test(pkg.readText(ref.part))) out.add(index + 1);
+  });
+  return out;
+}
+
 function kitWith(template: Template, info: TemplateInfo): KitParts | undefined {
-  const { manifest } = template;
+  // Layouts composed earlier are left out, so that composing one more never changes the kit: a
+  // design made for the template is built the same way after another layout was added.
+  const composed = composedSlides(template.pkg);
+  const manifest = { ...template.manifest, patterns: template.manifest.patterns.filter((pattern) => !composed.has(pattern.sourceSlide)) };
+  template = { ...template, manifest };
   const picked = pickBase(manifest, info);
   if (!picked) return undefined;
   const { pattern: base, slide, title } = picked;
@@ -695,6 +712,7 @@ function assemble(template: Template, design: PatternDesign, parts: KitParts, pl
   }
   // Animations name shapes that are gone.
   for (const timing of childElements(root, NS.p, 'timing')) removeNode(timing);
+  path(root, [NS.p, 'cSld'])?.setAttribute('name', `${COMPOSED}${design.id}`);
 
   let nextId = Math.max(1, ...descendants(root, NS.p, 'cNvPr').map((props) => Number(props.getAttribute('id') ?? 0)).filter(Number.isFinite)) + 1;
   const sources = new Map<number, Map<string, Element>>();
@@ -904,7 +922,8 @@ const SYSTEM = [
 const GUIDE = `How to design it:
 - Keep the template's title where every title is: put "title" in "keep" unless the person asks for a slide without the usual title. Keep "subtitle" too when the template's content slides have one.
 - Fill the content area. The parts together should reach from column 1 to column ${GRID} and use most of the free rows. A layout that leaves half the slide empty is wrong. Make text boxes large rather than small: a deck writes into them.
-- Use the template's styles for what they are used for: heading styles for headings, body styles for text, a style with bullets for a list, a big number style only for figures.
+- Use the template's styles for what they are used for: heading styles for headings, body styles for text, a style with bullets for a list.
+- The role "number" is only for a figure that measures something (85%, 2.4M, 12 days), and only when the person asks for figures. The number of a step or an item (01, 02, 03) is a "caption", even in a big number style: a deck without figures cannot use a layout whose role is "number".
 - Use the template's decorations as it does: a panel behind a heading and its text makes a card, a rule separates. Give every panel the same size in a set of cards. List a panel before the texts that sit on it.
 - Repeated items (columns, cards, steps) get numbered names: point1Heading, point1Text, point2Heading, point2Text. Make the items the same size and spread them evenly.
 - Align parts to each other: items in a row start on the same row and are equally high; a column of parts shares its edges.

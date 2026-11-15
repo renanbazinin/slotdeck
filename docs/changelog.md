@@ -21,6 +21,8 @@ the text where it was and leaves half the slide empty; a new layout fills it.
   lists the grid, the base slide and the styles. **`DesignError`** carries every reason a design cannot be built.
 - **[prompts/compose-layout.md](prompts/compose-layout.md)**: a prompt for a coding agent, to add "a new layout
   from words" to a template studio: compose, look at the sample, keep or discard.
+- A composed slide is named `composed <id>` in the pptx and left out of the kit, so composing a second layout
+  does not change the keys a first design was made with.
 - `keepCorners` keeps a rounded panel's corners when it is resized (used inside; not exported).
 
 ### Measured
