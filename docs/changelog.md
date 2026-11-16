@@ -3,6 +3,35 @@
 What changed in each version, newest first, with what to do when upgrading. The version you have installed is
 in `node_modules/slotdeck/package.json`.
 
+## 0.5.2
+
+Hebrew text that PowerPoint underlined as misspelled.
+
+### Fixed
+
+- **Red underlines under new text.** PowerPoint saves the result of its spelling check on each run of text:
+  `err="1"` says a mistake was found in it, `dirty="0"` says it needs no new check. A filled text took its
+  formatting from the template's sample run, and with it that saved result. Where the template's sample was
+  Hebrew typed while the text was marked English, PowerPoint had saved it as misspelled, so it underlined the
+  whole new text in red without checking it, until someone right-clicked a word. A filled text now drops both,
+  and PowerPoint checks it in its own language when the deck is opened.
+- **Hebrew that starts with an English word was marked English.** A text such as "AI בשירות הלקוחות" kept the
+  template's English language on its run, so PowerPoint checked its Hebrew words as English. A run is now marked
+  with a right-to-left language when most of its letters are right to left, not only when the first one is. The
+  paragraph's direction still comes from the first letter, and text fitting measures such a run as the
+  renderer marks it.
+
+### Measured
+
+On the right-to-left template, a sample deck of its 35 layouts plus a layout made from the template slide whose
+sample PowerPoint had saved as misspelled, on two slides: with 0.5.1, 4 filled texts carried `err="1"` and 14
+carried `dirty="0"`; with 0.5.2, none. The `err="1"` runs left are in that slide's texts that are not slots,
+as the template has them.
+
+### Upgrading from 0.5.1
+
+- Nothing to do. Render a deck again to drop the saved results from it.
+
 ## 0.5.1
 
 Fixes for templates that repeat a sample text under their titles, and for lines on composed layouts.

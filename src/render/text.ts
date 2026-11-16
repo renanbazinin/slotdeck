@@ -23,6 +23,23 @@ export function detectDirection(text: string): Direction | undefined {
 }
 
 /**
+ * Whether the run holding a text is marked with a right-to-left language: when the text starts
+ * with a right-to-left letter, or when most of its letters are right to left, as in
+ * "AI בשירות הלקוחות". PowerPoint checks the spelling of a run in its language, so Hebrew words
+ * in a run marked English are all underlined as misspelled.
+ */
+export function marksRightToLeft(text: string): boolean {
+  if (detectDirection(text) === 'rtl') return true;
+  let rtl = 0;
+  let other = 0;
+  for (const [letter] of text.matchAll(/\p{L}/gu)) {
+    if (RTL_LETTER.test(letter)) rtl++;
+    else other++;
+  }
+  return rtl > other;
+}
+
+/**
  * Replaces the text of a shape. Each new paragraph takes its formatting from the
  * template paragraph in the same position (the last one is reused when there are more).
  */
@@ -139,6 +156,8 @@ function buildParagraph(proto: Element, text: string, options: TextOptions): Ele
     run.appendChild(textNode);
   }
   textNode.textContent = text;
+  forgetProofing(childElement(run, NS.a, 'rPr'));
+  forgetProofing(endProps);
   if (options.style) applyStyle(run, options.style, prefix);
 
   // Drop every run, line break and field of the template paragraph, then put ours back.
@@ -149,6 +168,17 @@ function buildParagraph(proto: Element, text: string, options: TextOptions): Ele
 
   applyDirection(paragraph, text, options, prefix);
   return paragraph;
+}
+
+/**
+ * PowerPoint saves the result of its spelling check on each run: `err="1"` says a mistake was
+ * found in it, `dirty="0"` says it was checked and needs no new check. Both describe the
+ * template's sample text, not ours. Kept, they make PowerPoint underline the new text as
+ * misspelled without checking it, until someone right-clicks it. Without them it checks the text.
+ */
+function forgetProofing(props: Element | null | undefined): void {
+  props?.removeAttribute('err');
+  props?.removeAttribute('dirty');
 }
 
 function applyStyle(run: Element, style: TableTextStyle, prefix: string): void {
@@ -206,7 +236,7 @@ function applyDirection(paragraph: Element, text: string, options: TextOptions, 
     if (align === 'r') props.setAttribute('algn', 'l');
     else if (align === 'l') props.setAttribute('algn', 'r');
   }
-  if (direction === 'rtl') markRightToLeftLanguage(paragraph, text, prefix);
+  if (marksRightToLeft(text)) markRightToLeftLanguage(paragraph, text, prefix);
 }
 
 const RTL_LANGUAGE = /^(he|iw|yi|ar|fa|ur|ps|ug|sd|ckb|syr|dv)\b/i;
@@ -214,8 +244,9 @@ const RTL_LANGUAGE = /^(he|iw|yi|ar|fa|ur|ps|ug|sd|ckb|syr|dv)\b/i;
 /**
  * PowerPoint places punctuation and spaces by the language of their run, not only by the
  * paragraph's direction: in a run marked English, "contact: name@example.org" after Hebrew words
- * puts the colon on the far side of the address. A right-to-left text therefore gets a
- * right-to-left language on its run, unless the template already gave it one.
+ * puts the colon on the far side of the address. PowerPoint also checks spelling in the run's
+ * language. A right-to-left text (see {@link marksRightToLeft}) therefore gets a right-to-left
+ * language on its run, unless the template already gave it one.
  */
 function markRightToLeftLanguage(paragraph: Element, text: string, prefix: string): void {
   const doc = paragraph.ownerDocument;

@@ -2,7 +2,7 @@
 // size, and whether they fit the box. Works from font files, with no PowerPoint and no browser.
 import type { PptxPackage } from '../pptx/package.ts';
 import type { Template } from '../render/render.ts';
-import { detectDirection } from '../render/text.ts';
+import { detectDirection, marksRightToLeft } from '../render/text.ts';
 import { inspectTemplate } from '../template/inspect.ts';
 import type { ShapeInfo, TemplateInfo } from '../template/inspect.ts';
 import { rowTextIds } from '../render/repeat.ts';
@@ -273,9 +273,10 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
       const style = frame.paragraphs[Math.min(index, frame.paragraphs.length - 1)] as ParagraphStyle;
       const points = size(style) * frame.fontScale;
       if (index === 0) laid.firstSize = points;
-      // The renderer marks a paragraph that starts with a right-to-left letter with such a language.
+      // The renderer marks a paragraph that starts with a right-to-left letter, or is mostly
+      // right-to-left letters, with such a language.
       const direction = detectDirection(text);
-      const measure = runMeasure(metrics, style.run, points, direction === 'rtl' || RTL_LANGUAGE.test(style.run.lang), flags);
+      const measure = runMeasure(metrics, style.run, points, marksRightToLeft(text) || RTL_LANGUAGE.test(style.run.lang), flags);
       const rest = inner - style.marginStart - style.marginEnd;
       const first = rest - (style.bullet && style.indent < 0 ? 0 : style.indent);
       // The space after a line hangs outside it, unless it sits inside text that runs against the paragraph.

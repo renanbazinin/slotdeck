@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import { placeholderPhoto } from '../examples/placeholder.ts';
 import { PptxPackage, inspectTemplate } from '../src/index.ts';
 import { relativeTarget, relsOwner, relsPath, resolveTarget } from '../src/pptx/package.ts';
-import { detectDirection } from '../src/render/text.ts';
+import { NS, descendants, parseXml, rootElement } from '../src/pptx/xml.ts';
+import { detectDirection, marksRightToLeft, setBodyText } from '../src/render/text.ts';
 import { readImageInfo } from '../src/util/image.ts';
 import { buildFixturePptx } from './fixture.ts';
 
@@ -53,6 +54,28 @@ test('text direction detection', () => {
   assert.equal(detectDirection('مرحبا'), 'rtl');
   assert.equal(detectDirection('78%'), undefined);
   assert.equal(detectDirection(''), undefined);
+
+  assert.equal(marksRightToLeft('שלום world'), true);
+  assert.equal(marksRightToLeft('AI בשירות הלקוחות'), true);
+  assert.equal(marksRightToLeft('Meeting with דני'), false);
+  assert.equal(marksRightToLeft('78%'), false);
+});
+
+test('filled text: no saved spelling check, and a Hebrew language on mostly Hebrew text', () => {
+  const a = 'http://schemas.openxmlformats.org/drawingml/2006/main';
+  // The run as a template saved it after PowerPoint checked Hebrew words as English.
+  const run = '<a:r><a:rPr lang="en-GB" sz="1038" b="1" dirty="0" err="1"/><a:t>משימת</a:t></a:r>';
+  const fill = (text: string) => {
+    const doc = parseXml(`<a:txBody xmlns:a="${a}"><a:bodyPr/><a:p>${run}<a:endParaRPr lang="en-GB" dirty="0"/></a:p></a:txBody>`);
+    setBodyText(rootElement(doc), [text], { flipAlign: false });
+    const props = descendants(doc, NS.a, 'rPr')[0];
+    const end = descendants(doc, NS.a, 'endParaRPr')[0];
+    return { lang: props?.getAttribute('lang'), err: props?.hasAttribute('err'), dirty: props?.hasAttribute('dirty') || end?.hasAttribute('dirty') };
+  };
+
+  assert.deepEqual(fill('תוכנית העבודה לרבעון הבא'), { lang: 'he-IL', err: false, dirty: false });
+  assert.deepEqual(fill('AI בשירות הלקוחות'), { lang: 'he-IL', err: false, dirty: false });
+  assert.deepEqual(fill('Meeting with דני'), { lang: 'en-GB', err: false, dirty: false });
 });
 
 test('inspector lists shapes with slide-relative boxes through groups', () => {
