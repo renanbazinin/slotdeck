@@ -21,7 +21,7 @@ import { inspectTemplate } from './inspect.ts';
 import type { Box, ShapeInfo, SlideInfo, TemplateInfo } from './inspect.ts';
 import type { PatternDef, SlotDef, TemplateManifest } from './manifest.ts';
 import { measuredBudgets } from './budgets.ts';
-import { frameFacts, isFramePlaceholder, shapeText } from './measure.ts';
+import { frameFacts, inFrameBand, isFramePlaceholder, shapeText } from './measure.ts';
 import { sampleDeck } from './sample.ts';
 
 /** The columns and rows of the grid a design is drawn on. */
@@ -188,18 +188,56 @@ function pickBase(manifest: TemplateManifest, info: TemplateInfo, wanted?: strin
   return { pattern: best.pattern, slide: best.slide, title: best.title };
 }
 
-/** Shape ids of a slide that stay on a composed slide whatever the design: the frame and the deck's own texts. */
-function staying(base: PatternDef, slide: SlideInfo, info: TemplateInfo): Set<string> {
+/**
+ * Shape ids of a slide that stay on a composed slide whatever the design: the frame and the deck's
+ * own texts. And the shapes the grid is laid around (see {@link contentArea}): those that stayed in
+ * 0.5.0, when a sample the template repeats under its titles stayed too, so that a layout made
+ * then is built in the same place after the manifest was put right.
+ */
+function staying(base: PatternDef, slide: SlideInfo, info: TemplateInfo): { stays: Set<string>; laid: Set<string> } {
   const frame = frameFacts(info);
   const stays = new Set<string>();
+  const laid = new Set<string>();
   // A text the pattern fills is content, even when its sample is the same on many slides.
   const filled = new Set(base.slots.filter((slot) => slot.kind === 'text' && !slot.deckField && slot.empty !== 'drop').map((slot) => slot.shapeId));
   for (const shape of slide.shapes) {
+    const text = shape.kind === 'text' ? shapeText(shape) : '';
+    const repeated = frame.repeatedTexts.includes(text);
+    // A sample repeated in the content, such as "Subtitle", which a draft made a deck field and prepareManifest a slot.
+    if (repeated && !frame.fieldTexts.includes(text)) laid.add(shape.id);
     if (filled.has(shape.id)) continue;
-    if (frame.isFrame(shape) || (shape.kind === 'text' && frame.repeatedTexts.includes(shapeText(shape)))) stays.add(shape.id);
+    if (frame.isFrame(shape) || repeated) laid.add(shape.id);
+    if (frame.isFrame(shape) || frame.fieldTexts.includes(text)) stays.add(shape.id);
   }
-  for (const slot of base.slots) if (slot.kind === 'text' && slot.deckField) stays.add(slot.shapeId);
-  return stays;
+  // A deck field stays where the frame shows it. One in the content is a sample the template
+  // repeats under its titles, which a draft made a field: it goes with the rest of the content.
+  for (const slot of base.slots) {
+    const shape = slot.kind === 'text' && slot.deckField ? slide.shapes.find((candidate) => candidate.id === slot.shapeId) : undefined;
+    if (!shape) continue;
+    laid.add(slot.shapeId);
+    if (inFrameBand(shape.box)) stays.add(slot.shapeId);
+  }
+  return { stays, laid };
+}
+
+/**
+ * Whether a thin shape of the frame runs through the content area, as a divider beside a column of
+ * titles does on some slides. It belongs to how those slides lay out their content: the grid does
+ * not see a line, so the parts of a new layout would lie across it.
+ */
+function runsThrough(shape: ShapeInfo, area: Box): boolean {
+  if (shape.kind !== 'line' && shape.kind !== 'shape') return false;
+  const margin = 0.01;
+  const along = (from: number, size: number, start: number, length: number) => Math.min(from + size, start + length) - Math.max(from, start);
+  if (shape.box.w <= 0.005) {
+    const x = shape.box.x + shape.box.w / 2;
+    return x > area.x + margin && x < right(area) - margin && along(shape.box.y, shape.box.h, area.y, area.h) > area.h * 0.25;
+  }
+  if (shape.box.h <= 0.005) {
+    const y = shape.box.y + shape.box.h / 2;
+    return y > area.y + margin && y < bottom(area) - margin && along(shape.box.x, shape.box.w, area.x, area.w) > area.w * 0.25;
+  }
+  return false;
 }
 
 /** The area the composed content may use: within the margins the template's content keeps, under the header and above the footer. */
@@ -319,9 +357,10 @@ function kitWith(template: Template, info: TemplateInfo, wanted?: string): KitPa
   const picked = pickBase(manifest, info, wanted);
   if (!picked) return undefined;
   const { pattern: base, slide, title } = picked;
-  const stays = staying(base, slide, info);
+  const { stays, laid } = staying(base, slide, info);
   const titleShape = slide.shapes.find((shape) => shape.id === title.shapeId) as ShapeInfo;
-  const area = contentArea(manifest, info, slide, stays, slotBox(title, titleShape));
+  const area = contentArea(manifest, info, slide, laid, slotBox(title, titleShape));
+  for (const shape of slide.shapes) if (stays.has(shape.id) && runsThrough(shape, area)) stays.delete(shape.id);
 
   const taken = Array.from({ length: GRID }, () => Array.from({ length: GRID }, () => false));
   for (const shape of slide.shapes) {
@@ -599,8 +638,41 @@ function review(design: PatternDesign, parts: KitParts, manifest: TemplateManife
     const panel = part.element.role === 'decoration' ? undefined : placed.find((other) => other.element.role === 'decoration' && other.style.shape === 'area' && inside(part.cells, other.cells))?.cells;
     part.box = boxOf(part.cells, kit.area, parts.info.slideWidth / parts.info.slideHeight, panel);
   }
-  if (problems.length === 0) evenItems(placed);
+  if (problems.length === 0) {
+    evenItems(placed);
+    // Where everything is drawn, a rule may not run through a text or cut through a panel, as one
+    // between cards does when the cards are spaced evenly and it was not in a gap. It is left out.
+    for (const rule of placed.filter((part) => part.element.role === 'decoration' && part.style.shape !== 'area')) {
+      const hit = placed.find((other) => other !== rule && (other.element.role === 'decoration' ? other.style.shape === 'area' && cuts(rule, other.box) : runsAcross(rule, other.box)));
+      if (!hit) continue;
+      placed.splice(placed.indexOf(rule), 1);
+      const what = hit.element.role === 'decoration' ? `the panel ${hit.style.key} (${describeCells(hit.cells)})` : `the text "${hit.element.name}" (${describeCells(hit.cells)})`;
+      soft.push(`The rule ${rule.style.key} (${describeCells(rule.cells)}) runs through ${what} where they are drawn, so it is left out. Put a rule in the gap between two items, or beside them, or leave it out.`);
+    }
+  }
   return { problems, soft, placed };
+}
+
+/** The line a rule is drawn as: along the middle of its box, as {@link placeCopy} draws it. */
+function ruleLine(rule: Placed): Box {
+  const { x, y, w, h } = rule.box;
+  return rule.style.shape === 'down' ? { x: x + w / 2, y, w: 0, h } : { x, y: y + h / 2, w, h: 0 };
+}
+
+/** Whether a rule runs through the inside of a box, and not only along its edge. */
+function runsAcross(rule: Placed, box: Box): boolean {
+  const line = ruleLine(rule);
+  const tol = 0.002;
+  if (line.w === 0) return line.x > box.x + tol && line.x < right(box) - tol && Math.min(bottom(line), bottom(box)) - Math.max(line.y, box.y) > tol;
+  return line.y > box.y + tol && line.y < bottom(box) - tol && Math.min(right(line), right(box)) - Math.max(line.x, box.x) > tol;
+}
+
+/** Whether a rule cuts through a panel: it runs through the inside and out past its edge. A rule within a card is part of the card. */
+function cuts(rule: Placed, panel: Box): boolean {
+  if (!runsAcross(rule, panel)) return false;
+  const line = ruleLine(rule);
+  const tol = 0.005;
+  return line.w === 0 ? line.y < panel.y - tol || bottom(line) > bottom(panel) + tol : line.x < panel.x - tol || right(line) > right(panel) + tol;
 }
 
 const union = (boxes: Box[]): Box => {
@@ -628,13 +700,19 @@ function evenItems(placed: Placed[]): void {
   const texts = groups.map((group) => union(group.map((part) => part.box)));
   const loose: Placed[] = [];
   const tol = 0.01;
+  const holds = (outer: Box, inner: Box) => outer.x <= inner.x + tol && right(outer) >= right(inner) - tol && outer.y <= inner.y + tol && bottom(outer) >= bottom(inner) - tol;
+  // First the panels that hold an item's texts; then what lies within an item with its panel, such
+  // as a rule across a card, which reaches nearer the card's edge than the texts on it do.
+  const rest: Placed[] = [];
   for (const part of placed) {
     if (part.element.role !== 'decoration') continue;
-    const owner = texts.findIndex((box) => {
-      const holds = part.box.x <= box.x + tol && right(part.box) >= right(box) - tol && part.box.y <= box.y + tol && bottom(part.box) >= bottom(box) - tol;
-      const within = part.box.x >= box.x - tol && right(part.box) <= right(box) + tol && part.box.y >= box.y - tol && bottom(part.box) <= bottom(box) + tol;
-      return holds || within;
-    });
+    const owner = texts.findIndex((box) => holds(part.box, box));
+    if (owner >= 0) (groups[owner] as Placed[]).push(part);
+    else rest.push(part);
+  }
+  const owned = groups.map((group) => union(group.map((part) => part.box)));
+  for (const part of rest) {
+    const owner = owned.findIndex((box) => holds(box, part.box));
     if (owner >= 0) (groups[owner] as Placed[]).push(part);
     else loose.push(part);
   }

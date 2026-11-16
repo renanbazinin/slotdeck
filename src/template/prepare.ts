@@ -13,7 +13,7 @@ import { VARIANTS } from './derive.ts';
 import type { PatternVariant } from './derive.ts';
 import { inspectTemplate } from './inspect.ts';
 import type { PatternDef, TemplateManifest } from './manifest.ts';
-import { shapeText } from './measure.ts';
+import { frameFacts, shapeText } from './measure.ts';
 import { detectRepeat, strandedSlots } from './rows.ts';
 import { sampleDeck } from './sample.ts';
 import { suggestChanges } from './suggest.ts';
@@ -91,8 +91,10 @@ const quote = (names: string[]) => names.map((name) => `"${name}"`).join(', ');
  * fact of the slide (`icon`, `row`, `row-max`), lets rows widen, adds the mirrored and text-only
  * variants, and then settles the rows of those variants. It keeps the template's own pictograms
  * where the app has no icon set, sets the measured budget where a budget lets text run over its
- * box, and takes out a pattern that cannot be used. No pattern and no slot is renamed, and a
- * second run with the same options changes nothing.
+ * box, and takes out a pattern that cannot be used. A deck field whose text the template repeats
+ * in the content of its slides, such as "Subtitle" under every title, becomes a text of each slide
+ * that a slide may leave out. No pattern and no slot is renamed, and a second run with the same
+ * options changes nothing.
  *
  * The template passed in is not touched. Use it after `draftManifest`. For a manifest that is in
  * use, pass `remove: false`, so that every pattern stored decks were made with stays. What it
@@ -157,7 +159,37 @@ export function prepareManifest(template: Template, options: PrepareOptions): Pr
       .filter(([, message]) => message !== '');
   const faulty = (issue: ManifestIssue) => issue.severity === 'error' && issue.pattern !== undefined && issue.message !== 'another pattern has the same id';
 
-  // 1. A row whose items hold a slot that is not the row's, as an earlier draft made one where the
+  // 1. A deck field whose text the template repeats in the content of its slides, not in a header
+  // or footer: a sample such as "Subtitle" under every title, which a draft before 0.5.1 made one
+  // value for the whole deck, so that every slide showed the sample. It becomes a text of each
+  // slide that a slide may leave out. A field the template shows in its frame stays.
+  const frame = frameFacts(info);
+  const samples = new Map<string, string>();
+  for (const pattern of current.manifest.patterns) {
+    const shapes = info.slides[pattern.sourceSlide - 1]?.shapes ?? [];
+    for (const slot of pattern.slots) {
+      const shape = slot.kind === 'text' && slot.deckField ? shapes.find((candidate) => candidate.id === slot.shapeId) : undefined;
+      const text = shape ? shapeText(shape) : '';
+      if (slot.kind === 'text' && slot.deckField && frame.repeatedTexts.includes(text) && !frame.fieldTexts.includes(text)) samples.set(slot.deckField, text);
+    }
+  }
+  if (samples.size > 0) {
+    const fieldSlots = current.manifest.patterns.flatMap((pattern) =>
+      pattern.slots.flatMap((slot) => (slot.kind === 'text' && slot.deckField !== undefined && samples.has(slot.deckField) ? [{ pattern: pattern.id, slot: slot.name, field: slot.deckField }] : [])),
+    );
+    const result = changeWith(
+      current,
+      fieldSlots.map((entry): ManifestChange => ({ op: 'setSlot', pattern: entry.pattern, slot: entry.slot, deckField: null, empty: 'remove' })),
+      info,
+    );
+    current = { ...current, manifest: result.manifest };
+    const changed = new Set(result.applied.map((entry) => fieldSlots[entry.index]?.field));
+    for (const [field, text] of samples) {
+      if (changed.has(field)) done.push(`"${field}" was one value for the whole deck, so every slide showed the template's sample "${clip(text)}". It lies in the content, not in a header or footer: each slide now has its own, and may leave it out.`);
+    }
+  }
+
+  // 2. A row whose items hold a slot that is not the row's, as an earlier draft made one where the
   // pictogram of each card was labelled a decoration. On a slide with fewer items that slot's
   // shape is gone with its item, and the slide cannot be rendered. Where every item has such a
   // slot under its own number and no deck fills it, it becomes part of the row. Otherwise the row
@@ -191,7 +223,7 @@ export function prepareManifest(template: Template, options: PrepareOptions): Pr
   });
   if (settled.some((pattern, index) => pattern !== current.manifest.patterns[index])) current = { ...current, manifest: { ...current.manifest, patterns: settled } };
 
-  // 2. A pattern that cannot be used: checkManifest reports an error for it, or its own sample
+  // 3. A pattern that cannot be used: checkManifest reports an error for it, or its own sample
   // cannot be rendered. It is taken out before anything is made of it. Where patterns must stay,
   // nothing is made of it either: a variant of it could not be used any more than it can.
   if (remove) {
@@ -218,7 +250,7 @@ export function prepareManifest(template: Template, options: PrepareOptions): Pr
   const beyond = current.manifest.patterns.filter((pattern) => pattern.repeat?.columns !== undefined && (pattern.repeat.max ?? 0) > pattern.repeat.shapes.length);
   if (remove) apply(beyond.map((pattern): ManifestChange => ({ op: 'setRepeat', pattern: pattern.id, max: pattern.repeat?.shapes.length ?? 1 })));
 
-  // 3. What the slides allow: pictograms as icons, rows, then the variants, then the rows of the
+  // 4. What the slides allow: pictograms as icons, rows, then the variants, then the rows of the
   // variants, because a variant without its picture has room its pattern did not have. Then,
   // without an icon set, an icon slot that must be filled would keep its layout from being
   // offered: the template's own pictogram stays instead. That comes after the rows and the
@@ -252,7 +284,7 @@ export function prepareManifest(template: Template, options: PrepareOptions): Pr
     if (set.length === 0) break;
   }
 
-  // 4. A budget that lets text run over its box, which is reported when the template has its
+  // 5. A budget that lets text run over its box, which is reported when the template has its
   // fonts: the measured budget. The items of a row share one budget, the smallest any of them
   // measures, because a change to a slot of a row is made to that slot of every item.
   if (current.fonts) {
@@ -283,7 +315,7 @@ export function prepareManifest(template: Template, options: PrepareOptions): Pr
     }
   }
 
-  // 5. Does it render. A variant made here that does not is dropped without a word, whatever was
+  // 6. Does it render. A variant made here that does not is dropped without a word, whatever was
   // asked: no deck names it, and the manifest must not come back worse than it came. Any other
   // pattern whose own sample fails is taken out when that is allowed, and named when it is not.
   let failure = sampleOf(current.manifest);
@@ -302,7 +334,7 @@ export function prepareManifest(template: Template, options: PrepareOptions): Pr
     if (failure && named.length > 0) failure = named.map(([id, message]) => `"${id}" (${clip(message, 120)})`).join('; ');
   }
 
-  // 6. A value for each deck field: the one the app has, or the text the template itself shows there.
+  // 7. A value for each deck field: the one the app has, or the text the template itself shows there.
   const fields: Record<string, string> = {};
   const unset: string[] = [];
   const missing: string[] = [];
@@ -325,7 +357,7 @@ export function prepareManifest(template: Template, options: PrepareOptions): Pr
   }
   const valueless = missing.filter((name) => fields[name] === undefined);
 
-  // 7. What is left for a person.
+  // 8. What is left for a person.
   const now = new Set(current.manifest.patterns.map((pattern) => pattern.id));
   const added = [...now].filter((id) => !before.has(id));
   const removed = [...before].filter((id) => !now.has(id));

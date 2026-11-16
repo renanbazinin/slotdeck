@@ -105,7 +105,9 @@ export async function draftManifest(pptx: Uint8Array | PptxPackage, options: Dra
 
   // --- facts shared by the whole deck -----------------------------------------------------
   const frame = frameFacts(info);
-  const repeatedTexts = frame.repeatedTexts;
+  // A text the template repeats in its header or footer may be one value for the whole deck. One it
+  // repeats in the content, such as "Subtitle" under every title, is a sample each slide replaces.
+  const repeatedTexts = frame.fieldTexts;
 
   const letters = info.slides.flatMap((slide) => slide.shapes.map(shapeText)).map(detectDirection);
   const direction: Direction = letters.filter((d) => d === 'rtl').length > letters.filter((d) => d === 'ltr').length ? 'rtl' : 'ltr';
@@ -117,7 +119,11 @@ export async function draftManifest(pptx: Uint8Array | PptxPackage, options: Dra
       'Sample texts from a presentation template:',
       samples.map((text) => `- ${JSON.stringify(text.slice(0, 80))}`).join('\n'),
       repeatedTexts.length > 0
-        ? `These texts appear on many slides, so each is one value for the whole deck (for example the name of a department, or a footer). Give each a short camelCase field name:\n${repeatedTexts.map((text) => `- ${JSON.stringify(text)}`).join('\n')}`
+        ? [
+            'These texts appear in the header or footer of many slides. Most are one value for the whole deck, such as the name of a department, a date or a footer: "each" is "deck".',
+            'A text that is a sample each slide replaces with its own words, such as "Subtitle", "Bottom line: text here" or "Lorem ipsum", is not: "each" is "slide".',
+            `Give each a short camelCase field name:\n${repeatedTexts.map((text) => `- ${JSON.stringify(text)}`).join('\n')}`,
+          ].join('\n')
         : '',
       'Also give the BCP 47 tag of the language the template is written in.',
     ]
@@ -129,17 +135,23 @@ export async function draftManifest(pptx: Uint8Array | PptxPackage, options: Dra
         language: { type: 'string', description: 'BCP 47 language tag, e.g. "he" or "en"' },
         fields: {
           type: 'array',
-          items: { type: 'object', properties: { text: { type: 'string' }, name: { type: 'string' } }, required: ['text', 'name'] },
+          items: {
+            type: 'object',
+            properties: { text: { type: 'string' }, name: { type: 'string' }, each: { type: 'string', enum: ['deck', 'slide'] } },
+            required: ['text', 'name', 'each'],
+          },
         },
       },
       required: ['language', 'fields'],
     },
     // The answer repeats each of these texts, so its ceiling grows with them. Bytes bound tokens from above.
-    300 + repeatedTexts.reduce((sum, text) => sum + 40 + new TextEncoder().encode(text).length, 0),
-  )) as { language?: unknown; fields?: Array<{ text?: unknown; name?: unknown }> } | null;
+    300 + repeatedTexts.reduce((sum, text) => sum + 50 + new TextEncoder().encode(text).length, 0),
+  )) as { language?: unknown; fields?: Array<{ text?: unknown; name?: unknown; each?: unknown }> } | null;
   const fieldOf = new Map<string, string>();
   repeatedTexts.forEach((text, index) => {
     const named = (Array.isArray(deckAnswer?.fields) ? deckAnswer.fields : []).find((field) => normalize(String(field?.text ?? '')) === text);
+    // A sample each slide replaces is listed with the slide's other texts.
+    if (named?.each === 'slide') return;
     let name = slotName(String(named?.name ?? ''), `field${index + 1}`);
     while ([...fieldOf.values()].includes(name)) name = `${name}${index + 1}`;
     fieldOf.set(text, name);

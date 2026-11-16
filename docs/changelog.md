@@ -3,6 +3,55 @@
 What changed in each version, newest first, with what to do when upgrading. The version you have installed is
 in `node_modules/slotdeck/package.json`.
 
+## 0.5.1
+
+Fixes for templates that repeat a sample text under their titles, and for lines on composed layouts.
+
+### Fixed
+
+- **A sample under every title was a deck field.** A draft made every text that repeats across a template's
+  slides one value for the whole deck. A sample such as "Subtitle" under every title repeats too, so every
+  slide of every deck showed it. Now only a text in the header or footer may become a deck field, and the
+  draft's deck call asks the model whether each is one value for the deck or a sample each slide replaces,
+  such as "Bottom line: text here". The rest are listed with each slide's texts, for the model to name.
+- **`prepareManifest` repairs a manifest drafted before.** A deck field whose text the template repeats in the
+  content of its slides becomes a text of each slide that a slide may leave out (`empty: 'remove'`), and
+  `prepared.fields` no longer holds the sample. A field in the header or footer stays. `done` says which.
+- **A line through a composed layout.** A layout composed on a slide whose frame has a line through the
+  content, such as a divider beside a column of titles, kept the line, and the new parts lay across it. Such
+  a line is not kept now. Neither is a deck field that lies in the content, such as a drafted "Subtitle".
+- **A rule through a card.** Where everything is drawn, a rule of a design that runs through a text or cuts
+  through a panel is left out, with a warning. `composePattern` first asks the model once more. This was seen
+  as a green rule down the middle one of three cards.
+- **A rule within a card stayed behind.** When cards were made equally wide, a rule across a card did not move
+  with it and could stick out of the card. It moves with its card now.
+
+### Measured
+
+On the right-to-left template, with a manifest drafted before this version (its "Subtitle" sample a deck field
+on 28 layouts, its department name on 40):
+
+- `prepareManifest` made the sample a text of each slide on the 28 layouts and left the department name a deck
+  field.
+- The grid of each of the 27 layouts a new layout can stand on is the same as in 0.5.0, before and after that
+  repair, so a layout made for a deck with 0.5.0 is built in the same place.
+- The 15 decks with layouts of their own from the 0.5.0 measurements render as before, except in 5, where a
+  rule within a card now moves with the card: by up to a third of a percent of the slide's width, and in one
+  from 4 percent outside the card to inside it.
+
+### Upgrading from 0.5.0
+
+- Decks need nothing: they render as before, with the changes above.
+- For a template drafted before 0.5.1 whose slides show a sample such as "Subtitle" in every deck, run
+  `prepareManifest` on it again, with `remove: false` for a template in use. Its `done` names each field it
+  changed. Stop passing that field in `fields`: it is no longer in `prepared.fields`.
+- After that repair, a stored deck that does not fill that text renders without it with `layout: 'adaptive'`.
+  With `'strict'`, a slide must fill a text it may leave out, and such a deck does not render.
+- A sample in the header or footer, such as a bottom line, stays a deck field in that repair. Where it is one,
+  `{ op: 'setSlot', pattern, slot, deckField: null, empty: 'remove' }` on each layout that has it makes it a
+  text of each slide. A new draft asks the model about it.
+- The draft's deck call has a ceiling of 300 tokens plus 50 for each repeated text, 10 more than before.
+
 ## 0.5.0
 
 New layouts made while a deck is planned. A text-only deck from a template with one plain text layout used that
