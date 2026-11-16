@@ -32,7 +32,7 @@ await generateDeck(template, { prompt: '...', language: 'he' }, options);
 | Rows and grids of items | Filled mirror-wise within each line, so the deck's first item is where its readers start: at the right in a right-to-left deck. Shapes do not move; the values go to the mirrored positions. |
 | Tables | Run in the deck's direction, with text aligned to its start. |
 | Charts | Labels are set right to left. |
-| Run language | Right-to-left text is marked with a right-to-left language. |
+| Run language | Right-to-left text is marked with a right-to-left language: text that starts with a right-to-left letter, or whose letters are mostly right to left. |
 | Shapes | Do not move. A photo on the right stays on the right. Bullets and their indent follow the paragraph direction automatically. |
 
 ## Keeping alignment
@@ -56,9 +56,16 @@ paragraph's direction. In a run marked as English, the text
 שאלות: name@example.org
 ```
 
-is displayed with the colon on the far side of the address. slotdeck therefore marks right-to-left runs with a
-right-to-left language (`he-IL` for Hebrew, `ar-SA` for Arabic) unless the template already gave the run one.
-You do not need to do anything for this.
+is displayed with the colon on the far side of the address. PowerPoint also checks spelling in the run's
+language, so Hebrew words in a run marked as English are all underlined as misspelled.
+
+slotdeck therefore marks right-to-left runs with a right-to-left language (`he-IL` for Hebrew, `ar-SA` for
+Arabic) unless the template already gave the run one. A run counts as right to left when its text starts with a
+right-to-left letter, or when most of its letters are right to left, as in "AI בשירות הלקוחות". The paragraph's
+direction still comes from the first letter. You do not need to do anything for this.
+
+PowerPoint also saves the result of its spelling check on each run. A text that slotdeck writes does not keep the
+template's result: PowerPoint checks it again when the deck is opened.
 
 ## Fonts
 
