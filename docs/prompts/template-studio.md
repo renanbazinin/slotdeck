@@ -75,7 +75,7 @@ Store for each template:
   messages;
 - which revision is published, meaning the chat side uses it;
 - a value for each `deckField`, passed as `fields` to `presentationTools`: a draft makes every text that
-  repeats across slides a required slot with one (R6). Its first value is the template's own text (4.2), until
+  repeats in the header or footer across slides a required slot with one (R6). Its first value is the template's own text (4.2), until
   a person sets theirs. Setting it is an operation of the app: it writes where the chat side reads its
   `fields` and changes no manifest;
 - the ids of its plans and decks. The tools' `BlobStore` has only `get` and `set` and cannot be listed: record
@@ -338,7 +338,7 @@ written it. A running turn keeps its tools. Key icons and previews by revision t
 ## 5. Model calls
 
 - **Ceiling.** `draftManifest` puts `maxOutputTokens` on every request (a slide call asks 400 plus 60 per
-  listed shape, the deck call 300 plus 40 and the bytes of each text that repeats across slides);
+  listed shape, the deck call 300 plus 50 and the bytes of each text that repeats across slides);
   `editManifest` sends none. Wrap the provider so one number, at least 4,096 and above what the largest draft
   request asks, bounds every studio call, and `LIMIT_MS` its time. A request that asks more is refused, not
   cut: a cut answer is broken JSON.

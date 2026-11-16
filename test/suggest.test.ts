@@ -378,5 +378,5 @@ test('the ceiling on the answer about the deck grows with the texts it must repe
   const deckCall = requests.find((request) => request.prompt.startsWith('Sample texts'));
   const repeated = [...(deckCall?.prompt.split('Give each a short camelCase field name:')[1]?.split('Also give')[0] ?? '').matchAll(/^- (".*")$/gm)].map((match) => JSON.parse(match[1] as string) as string);
   assert.ok(repeated.length > 0, 'the demo template has a text that repeats across its slides');
-  assert.equal(deckCall?.maxOutputTokens, 300 + repeated.reduce((sum, text) => sum + 40 + new TextEncoder().encode(text).length, 0));
+  assert.equal(deckCall?.maxOutputTokens, 300 + repeated.reduce((sum, text) => sum + 50 + new TextEncoder().encode(text).length, 0));
 });

@@ -146,13 +146,30 @@ export function isFramePlaceholder(shape: ShapeInfo): boolean {
   return shape.placeholder === 'sldNum' || shape.placeholder === 'dt' || shape.placeholder === 'ftr' || shape.placeholder === 'hdr';
 }
 
+/**
+ * Whether a box lies in the slide's frame: the band of the header or the footer, or a side margin.
+ * A deck's own texts, such as the name of a department or a footer, sit there; a text below the
+ * title is content, even when the template shows the same sample on every slide.
+ */
+export function inFrameBand(box: { x: number; y: number; w: number; h: number }): boolean {
+  const middleY = box.y + box.h / 2;
+  const middleX = box.x + box.w / 2;
+  return middleY < 0.15 || middleY > 0.85 || middleX < 0.06 || middleX > 0.94;
+}
+
 export interface FrameFacts {
   /** On how many slides something must sit in the same place to count as part of the frame. */
   often: number;
   /** A logo, rule, page number or other element that repeats across slides. */
   isFrame(shape: ShapeInfo): boolean;
-  /** Texts that appear on many slides: one value for the whole deck. */
+  /** Texts that appear on many slides, wherever they sit: a deck's own text, or a sample the template repeats. */
   repeatedTexts: string[];
+  /**
+   * The repeated texts that sit in the frame (see {@link inFrameBand}) on most of the slides that
+   * show them: one value for the whole deck. A sample repeated under every title, such as
+   * "Subtitle", is not one of them: each slide has its own.
+   */
+  fieldTexts: string[];
   /** Every distinct sample text, in slide order. */
   texts: string[];
 }
@@ -167,16 +184,23 @@ export function frameFacts(info: TemplateInfo): FrameFacts {
   const placeOf = (shape: ShapeInfo) => `${shape.kind}|${pct(shape.box.x)}|${pct(shape.box.y)}|${pct(shape.box.w)}|${pct(shape.box.h)}|${shape.image?.part ?? ''}`;
   const places = new Map<string, number>();
   const texts = new Map<string, number>();
+  const framed = new Map<string, number>();
   for (const slide of info.slides) {
     for (const key of new Set(slide.shapes.filter((shape) => shape.kind !== 'text').map(placeOf))) places.set(key, (places.get(key) ?? 0) + 1);
-    for (const text of new Set(slide.shapes.filter((shape) => shape.kind === 'text' && !isFramePlaceholder(shape)).map(shapeText))) {
+    const shown = slide.shapes.filter((shape) => shape.kind === 'text' && !isFramePlaceholder(shape));
+    for (const text of new Set(shown.map(shapeText))) {
       if (text) texts.set(text, (texts.get(text) ?? 0) + 1);
     }
+    for (const text of new Set(shown.filter((shape) => inFrameBand(shape.box)).map(shapeText))) {
+      if (text) framed.set(text, (framed.get(text) ?? 0) + 1);
+    }
   }
+  const repeatedTexts = [...texts].filter(([, count]) => count >= often).map(([text]) => text);
   return {
     often,
     isFrame: (shape) => isFramePlaceholder(shape) || (shape.kind !== 'text' && (places.get(placeOf(shape)) ?? 0) >= often),
-    repeatedTexts: [...texts].filter(([, count]) => count >= often).map(([text]) => text),
+    repeatedTexts,
+    fieldTexts: repeatedTexts.filter((text) => (framed.get(text) ?? 0) * 2 > (texts.get(text) ?? 0)),
     texts: [...texts.keys()],
   };
 }

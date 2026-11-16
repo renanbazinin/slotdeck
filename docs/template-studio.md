@@ -65,7 +65,7 @@ const { manifest, skipped, issues } = await draftManifest(pptxBytes, {
 
 Model calls: one about the deck as a whole, then one per slide. Each call carries a ceiling on the size of its
 answer, as `maxOutputTokens` on the request: for a slide, 400 tokens plus 60 for each shape listed; for the
-deck, 300 tokens plus 40 and the size in bytes of each repeated text, which the answer has to repeat. The
+deck, 300 tokens plus 50 and the size in bytes of each repeated text, which the answer has to repeat. The
 ceiling ends a model that runs away inside a text field. A provider should pass it on as its output limit; the
 Gemini adapter does.
 
@@ -78,7 +78,10 @@ What the code works out without the model:
 - **Frame elements**: whatever sits in the same place on many slides (a logo, a rule), and page-number, date,
   footer and header placeholders. They are left alone and not shown to the model. (Spotting what repeats needs
   a template of at least six slides; with fewer, only the placeholders are treated as frame.)
-- **Deck fields**: texts that appear on many slides become one value for the whole deck.
+- **Deck fields**: texts that appear in the header or footer of many slides become one value for the whole
+  deck, such as the name of a department. The deck call asks the model about each, and one it calls a sample
+  that each slide replaces ("Bottom line: text here") is not a field. A text the template repeats in the
+  content, such as "Subtitle" under every title, is never one: it is listed with each slide's texts.
 - The reading direction, from the letters of the sample text.
 - A character budget for each text box, from its size and font size, and never less than its sample text.
 - A table's columns and rows, and how many characters fit a cell before the table leaves the slide.
@@ -580,29 +583,33 @@ slot. A second run with the same options changes nothing and has an empty `done`
 
 What it does, in this order:
 
-1. Repairs a row whose items hold a slot that is not the row's, as an earlier draft made one where the
+1. Makes a deck field whose text the template repeats in the content of its slides, not in a header or
+   footer, a text of each slide that a slide may leave out (`empty: 'remove'`). A draft before 0.5.1 made a
+   sample such as "Subtitle" under every title one value for the whole deck, so every slide showed the sample.
+   A field the template shows in its header or footer stays.
+2. Repairs a row whose items hold a slot that is not the row's, as an earlier draft made one where the
    pictogram of each card was labelled a decoration. On a slide with fewer items that slot's shape is gone
    with its item, and the slide cannot be rendered. Where every item has such a slot under its own number and
    no deck fills it (`empty: 'keep'` or `'drop'`), the slot becomes part of the row. Otherwise the row takes
    no fewer items than the one the slot is in. Every deck that rendered still does.
-2. Finds the patterns that cannot be used: `checkManifest` reports an error for one, or its own sample cannot
+3. Finds the patterns that cannot be used: `checkManifest` reports an error for one, or its own sample cannot
    be rendered. They are taken out, unless `remove` is `false`; then they stay, and no variant is made of
    them. Two patterns with one id are left for a person: nothing says which is meant. A grid said to take
    more than it draws takes what it draws, unless `remove` is `false`: a stored deck may have that many.
-3. Takes what the slides allow, as `suggestChanges` (below) lists it: `icon`, `row` and `row-max`, widening by
+4. Takes what the slides allow, as `suggestChanges` (below) lists it: `icon`, `row` and `row-max`, widening by
    the factor in `widen`, the variants in `variants`, and then the rows of those variants, because a layout
    without its picture has room its pattern did not have.
-4. With `icons: false`, sets every icon slot that would have to be filled to keep the template's own
+5. With `icons: false`, sets every icon slot that would have to be filled to keep the template's own
    pictogram, those of the variants too, and lists them in `kept` with what they were. A layout with such a
    slot and no icon set is not offered to the planner at all; this keeps it offered. Which slots have to be
    filled depends on `layout`: a required one always, and one a deck may leave out when the planner plans
    with `'strict'`, its default. With `'adaptive'` such a slot stays as it is.
-5. With fonts, sets the measured budget where a budget lets text run over its box. The items of a row get one
+6. With fonts, sets the measured budget where a budget lets text run over its box. The items of a row get one
    budget, the smallest any of them measures. Without fonts no such issue is reported, and none is solved.
-6. Renders the sample deck at the fewest and at the most items. A variant made in this run whose own sample
+7. Renders the sample deck at the fewest and at the most items. A variant made in this run whose own sample
    cannot be rendered is dropped again, and is not mentioned. Any other pattern whose sample fails is taken
    out, or with `remove: false` named in `left`.
-7. Works out a value for each deck field: the one given in `fields`, or the text the template itself shows in
+8. Works out a value for each deck field: the one given in `fields`, or the text the template itself shows in
    that place. The manifest does not hold deck-field values; pass `prepared.fields` to the planner as `fields`
    until a person sets their own. A field with neither is not in `fields`, and `left` asks for it.
 
@@ -757,8 +764,10 @@ How it is made:
 
 1. **The kit** (`designKit`, no model). The code picks the slide to stand on: a layout whose title sits where
    most titles do, or the layout named in `base` when it has a title and is not a row of items. The design
-   records it, so that it is built on the same frame again. Its frame stays (background, header, logo, page number, the deck's own texts), and so does
-   its title, where every title is. Over the content area it lays a grid of 12 columns and 12 rows, and marks
+   records it, so that it is built on the same frame again. Its frame stays (background, header, logo, page
+   number, the deck's own texts in the header or footer), and so does its title, where every title is. A line
+   of the frame that runs through the content area, such as a divider beside a column of titles, does not:
+   the parts of the new layout would lie across it. Over the content area it lays a grid of 12 columns and 12 rows, and marks
    the cells the frame takes. It lists every distinct text style the template's layouts use (size, weight,
    typeface, colour, alignment, bullets, a filled or outlined box, what it is used for) and every decoration
    (rules, panels that cards are made of, circles), each with a key: `T1`, `T2`, ... and `D1`, `D2`, ...
@@ -776,8 +785,10 @@ How it is made:
 4. **The slide** (no model). The base slide is copied with only its frame and the kept slots. Every part is a
    copy of the template's own shape for its style, set in its cells: a text keeps its font, colour, alignment
    and direction, a panel keeps its corners, a rule keeps its thickness. Texts on a panel keep a margin from
-   its edges. Numbered items are made equally wide and equally far apart over the room the model gave them.
-   The slide is added after the last one; no other slide changes and no slide number moves.
+   its edges. Numbered items are made equally wide and equally far apart over the room the model gave them,
+   each with its panel and what lies on it. A rule that then runs through a text, or cuts through a panel, is
+   left out, and a warning says so: a rule goes between items or within one. The slide is added after the
+   last one; no other slide changes and no slide number moves.
 5. **The pattern** (no model). The base slide's slots for what stayed are copied (the title, the deck's own
    texts), and each text becomes a slot with `addSlot`. Its budget is what its box holds: measured with the
    template's fonts when it has them, estimated from the box when it does not, never from the sample the model
