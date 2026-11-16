@@ -68,6 +68,18 @@ template stays published.
 **3. Discard.** Drops a candidate. A candidate the person neither keeps nor discards is dropped after a while;
 it holds a whole pptx.
 
+**4. From a presentation (slotdeck 0.5.0 and later).** When the chat makes layouts for a presentation (see
+[deck-layouts.md](deck-layouts.md)), a stored deck carries their designs in `deck.layouts`. Compose takes one of
+those in place of words, and makes the candidate with no model:
+
+```ts
+const made = buildPattern(template, deck.layouts[index]);
+```
+
+The rest is as above: the answer, the sample deck, Keep and Discard. After Keep, presentations that use that
+layout use the template's own. When the template was changed so that the design no longer fits,
+`buildPattern` throws `DesignError`: answer with `error.problems`.
+
 ## Rules
 
 - Nothing reaches the stored template, or the chat, before a person keeps a candidate.

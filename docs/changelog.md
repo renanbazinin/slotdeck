@@ -29,6 +29,10 @@ slides get cards, steps or a timeline, in the template's own look. Off by defaul
 - In the chat tools, a planned slide with a new layout has `new_layout: true` and the new layout's description.
 - A progress event `{ stage: 'layouts' }`. `validateDeck` against a manifest without the deck's layouts says to
   use `withLayouts`.
+- **[prompts/deck-layouts.md](prompts/deck-layouts.md)**: a prompt for a coding agent, to turn this on in the
+  path an app's chat already takes: one setting, a mark in the plan, the deck kept whole. No new tool.
+- [prompts/compose-layout.md](prompts/compose-layout.md) gains a fourth operation: keeping in the template a
+  layout the chat made for a presentation, from its design with `buildPattern`.
 
 ### Changed
 

@@ -300,13 +300,15 @@ test('the chat tools make new layouts for a plan when asked to, mark them, and r
   const content = { s1: { title: 'The year ahead' }, s2: { title: 'Where we stand', body: ['We grew.'] }, s3: goalSlots, s4: { title: 'Costs', body: ['Two hires.'] }, s5: { title: 'Thank you' } };
   const { llm } = planner({ outline: textOnlyOutline, decision: { layouts: [{ instruction: 'Three goals.', slides: [3] }] }, designs: [design], content });
   const { presentationTools, memoryStore, TOOL_NAMES } = await import('../src/index.ts');
-  const tools = presentationTools({ template, llm, store: memoryStore(), fields, layout: 'adaptive', composeLayouts: 1 });
+  const tools = presentationTools({ template, llm, store: memoryStore(), fields, layout: 'adaptive', composeLayouts: 1, thumbnail: (id) => `/thumbnails/${id}.png` });
   const planned = await tools.call(TOOL_NAMES.plan, { topic: brief.prompt, text_only: true, slide_count: 5, language: 'en' });
   const slides = planned.output.slides as Array<{ layout: string; layout_description?: string; new_layout?: boolean }>;
   assert.equal(slides[2]?.layout, 'three-goals');
   assert.equal(slides[2]?.new_layout, true);
   assert.equal(slides[2]?.layout_description, design.description);
   assert.equal(slides[1]?.new_layout, undefined);
+  assert.equal((slides[2] as { thumbnail?: string }).thumbnail, undefined, 'the app has no picture of a layout made for this deck');
+  assert.equal((slides[1] as { thumbnail?: string }).thumbnail, '/thumbnails/text-only.png');
   const created = await tools.call(TOOL_NAMES.create, { plan_id: planned.output.plan_id });
   assert.equal(created.output.error, undefined, String(created.output.error));
   assert.equal(created.deck?.layouts?.[0]?.id, 'three-goals');

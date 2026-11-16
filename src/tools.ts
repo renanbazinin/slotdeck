@@ -209,7 +209,7 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
       };
       // A layout made for this deck has no picture in the app; the model can say it is new.
       if (own) line.new_layout = true;
-      const thumbnail = options.thumbnail?.(slide.pattern);
+      const thumbnail = own ? undefined : options.thumbnail?.(slide.pattern);
       if (thumbnail) line.thumbnail = thumbnail;
       return line;
     }),
