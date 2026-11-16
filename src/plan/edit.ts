@@ -5,6 +5,7 @@ import { isChartValue, isImageRef } from '../deck/spec.ts';
 import type { DeckSpec, SlideSpec, SlotValue } from '../deck/spec.ts';
 import type { JsonSchema } from '../llm/provider.ts';
 import type { Template } from '../render/render.ts';
+import { withLayouts } from '../template/compose.ts';
 import { TEXT_SIZES, effectiveSlots, itemCount, itemRange } from '../template/manifest.ts';
 import type { Direction, PatternDef, TextSize } from '../template/manifest.ts';
 import { measurerFor } from '../text/measure.ts';
@@ -12,6 +13,7 @@ import { budgetScale, buildCatalog, describeCatalog, planPattern, readItems } fr
 import type { CatalogContext, ImageDensity } from './catalog.ts';
 import { PlanError, SLIDE_KIND_RULE, asker, columnsRule, directionOf, hasFigures, planRoom, reviewWith } from './plan.ts';
 import type { PlanOptions } from './plan.ts';
+import { usedLayouts } from './layouts.ts';
 import { cleanText, suppliesText, systemPrompt, writeSlides } from './write.ts';
 import type { WriteJob } from './write.ts';
 
@@ -139,6 +141,8 @@ function planSchemaBase(patternIds: string[], slideCount: number): JsonSchema {
  * instruction is about them.
  */
 export async function planEdit(template: Template, deck: DeckSpec, instruction: string, options: EditOptions): Promise<EditResult> {
+  // The deck's own layouts are built onto the template, so its slides can be rewritten like any other.
+  template = withLayouts(template, deck.layouts);
   const { manifest } = template;
   const measure = measurerFor(template);
   const layout = options.layout ?? 'strict';
@@ -161,6 +165,10 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
   };
   const currentSize = (Object.entries(TEXT_SIZES).find(([, factor]) => factor === context.textScale)?.[0] ?? 'normal') as TextSize;
   if (options.patterns) context.allow = options.patterns;
+  if (deck.layouts?.length) {
+    context.own = deck.layouts.map((design) => design.id);
+    if (context.allow) context.allow = [...context.allow, ...context.own];
+  }
   const offer = buildCatalog(manifest, context);
   const offered = new Map(offer.patterns.map((pattern) => [pattern.def.id, pattern]));
   // An existing slide keeps its pattern even if that pattern would not be offered for a new slide.
@@ -351,6 +359,10 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
     else next.textScale = textScale;
     if (plan.title) next.title = plan.title;
     if (Object.keys(plan.fields).length > 0) next.fields = plan.fields;
+    // A layout made for the deck goes when no slide uses it any more.
+    const layouts = usedLayouts(deck.layouts, slides);
+    if (layouts) next.layouts = layouts;
+    else delete next.layouts;
     return next;
   };
 

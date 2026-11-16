@@ -1,6 +1,7 @@
 // Design problems of a deck that code can see without a picture: every one of them follows from
 // how the deck's text measures in the template's boxes.
 import type { Template } from '../render/render.ts';
+import { withLayouts } from '../template/compose.ts';
 import { effectiveSlots, itemCount, rowLayout, slotSources } from '../template/manifest.ts';
 import type { PatternDef, TextSlotDef } from '../template/manifest.ts';
 import { textMeasurer } from '../text/measure.ts';
@@ -87,6 +88,7 @@ const lines = (count: number) => `${count} ${count === 1 ? 'line' : 'lines'}`;
  * that cannot be rendered: `validateDeck` reports those.
  */
 export function checkDesign(template: Template, deck: DeckSpec, options: DesignOptions = {}): DesignIssue[] {
+  template = withLayouts(template, deck.layouts);
   const measure = textMeasurer(template);
   const { manifest } = template;
   const layout = options.layout ?? 'strict';

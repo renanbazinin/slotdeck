@@ -3,6 +3,70 @@
 What changed in each version, newest first, with what to do when upgrading. The version you have installed is
 in `node_modules/slotdeck/package.json`.
 
+## 0.5.0
+
+New layouts made while a deck is planned. A text-only deck from a template with one plain text layout used that
+layout for every slide, and three goals or a plan in four steps became paragraphs. With `composeLayouts`, those
+slides get cards, steps or a timeline, in the template's own look. Off by default.
+
+### Added
+
+- **`composeLayouts`** in the planner's options (`planOutline`, `planDeck`, `generateDeck`) and in
+  `presentationTools`: up to that many new layouts per deck. After the outline, one light call names the slides
+  of content that none of the offered layouts shows well, and what each needs. The layouts are composed side by
+  side with `composePattern`, on the frame of the layout each slide had, so the title stays where the deck's
+  other titles are. The slides then use them, and the deck is written once. A layout that cannot be made leaves
+  its slides as planned. See "New layouts for a deck" in [generating.md](generating.md).
+- **`composeLayouts(template, plan, options)`**: the same as a step of its own, with what was made and what could
+  not be (`made`, `failed`).
+- **`layouts` in `DeckSpec` and `DeckPlan`**: the designs of the layouts made for the deck. The template file is
+  not changed; the stored deck JSON is all a later render needs, and it needs no model.
+- **`withLayouts(template, layouts)`**: the template with a deck's layouts built onto it, once per template and
+  list. `renderDeck`, `writeDeck`, `editPlan`, `planEdit`, `editDeck`, `checkDesign`, `designReview` and
+  `visionReview` call it themselves. When the template gains a layout of the same id, the template's own is used.
+- **`base`** in `ComposeOptions`, in `PatternDesign` and as the third argument of `designKit`: the layout a new
+  one stands on. `composePattern` records the base it used, so that a design is built on the same frame again.
+- In the chat tools, a planned slide with a new layout has `new_layout: true` and the new layout's description.
+- A progress event `{ stage: 'layouts' }`. `validateDeck` against a manifest without the deck's layouts says to
+  use `withLayouts`.
+- **[prompts/deck-layouts.md](prompts/deck-layouts.md)**: a prompt for a coding agent, to turn this on in the
+  path an app's chat already takes: one setting, a mark in the plan, the deck kept whole. No new tool.
+- [prompts/compose-layout.md](prompts/compose-layout.md) gains a fourth operation: keeping in the template a
+  layout the chat made for a presentation, from its design with `buildPattern`.
+
+### Changed
+
+- A composed text or list whose box holds much more than its sample is described as "Drawn for about N
+  characters", N being the sample's length, so that a deck fills it as the design meant. This holds for layouts
+  composed in a studio too.
+
+### Measured
+
+On Gemini 3.8 Flash, 10 briefs on two templates (a right-to-left template in Hebrew and the demo template; 8
+text-only, 2 with varied layouts), each written from one outline as before and after composing:
+
+- Every deck got one or two new layouts: 17 made, none failed. The text-only decks went from one layout for four
+  slides to rows of cards, numbered steps, a timeline, a comparison, an action list with owners, a quotation
+  and key figures. The decks with varied layouts got one each, for a slide of running text.
+- Composing took 9 to 24 seconds, in two to five light calls. Writing took about as long as before.
+- Rendering the stored deck again, with the template loaded afresh, gave the same file every time.
+- One slide was wrong: a section divider was given cards on its dark frame. Only slides of content may get a
+  new layout now.
+- The writer filled the cards of the Hebrew template to about a third of the design's sample length, which left
+  them mostly empty; with the length the box was drawn for, about three quarters.
+
+Five of the briefs again after these two fixes: 9 layouts made, none failed, in 12 to 25 seconds; the section
+dividers kept their layout. Lists in tall cards are still shorter than the card.
+
+### Upgrading from 0.4.0
+
+- Nothing changes unless `composeLayouts` is set. Decks without `layouts` render as before.
+- Store the deck JSON as before; it may now carry `layouts`. Keep the template as it is.
+- Code that checks decks itself against `template.manifest` (`validateDeck`, `slideAlternatives`) should use
+  `withLayouts(template, deck.layouts).manifest` for a deck with layouts.
+- A slide with `new_layout: true` has no thumbnail in the app.
+- Designs stored from 0.4.0 have no `base` and are built on the same frame as before.
+
 ## 0.4.0
 
 A layout the template does not have, made from its own parts. A text-only variant of a slide with a photo keeps

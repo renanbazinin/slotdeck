@@ -89,6 +89,7 @@ manifest.
 | `direction` | `"ltr"` or `"rtl"` | no | Reading direction. Defaults to the template's. See [languages.md](languages.md). |
 | `fields` | object of strings | no | Values shared by every slide, by field name. See "Deck fields" below. |
 | `textScale` | number | no | Size of body text as a factor on the template's: `1` as designed, `1.25` large, `1.5` extra large. See [layout-freedom.md](layout-freedom.md). |
+| `layouts` | `PatternDesign[]` | no | Layouts made for this deck (see "New layouts for a deck" in [generating.md](generating.md)). Slides use them by their `id`, like the template's patterns. |
 
 ## `SlideSpec`
 
@@ -211,6 +212,18 @@ than the template slide draws, the extra items are copies of the last one and ha
 
 The first item is the first in the deck's reading direction. In a right-to-left deck on a left-to-right
 template, `card1...` appears at the right.
+
+## A deck's own layouts
+
+A deck planned with `composeLayouts` carries the designs of the layouts that were made for it in `layouts`: the
+same `PatternDesign` objects that `composePattern` returns (see [template-studio.md](template-studio.md)). Its
+slides name them in `pattern` and fill their slots like any other.
+
+`renderDeck`, `editDeck`, the planner and the reviews build these layouts onto the template themselves, the same
+way every time, so the stored deck JSON is all that is needed. To check such a deck yourself, check it against
+`withLayouts(template, deck.layouts).manifest`: the bare manifest does not have the deck's layouts, and
+`validateDeck` says so. When the template gains a layout of the same id, as when the design was added to it in a
+studio, the template's own is used. An edit that removes the last slide using a layout removes its design too.
 
 ## Checking a deck
 

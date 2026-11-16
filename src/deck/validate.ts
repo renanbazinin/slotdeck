@@ -169,7 +169,9 @@ export function validateDeck(manifest: TemplateManifest, deck: DeckSpec, options
       issues.push({
         severity: 'error',
         slide: number,
-        message: `unknown pattern "${slide.pattern}" (available: ${[...patterns.keys()].join(', ')})`,
+        message: deck.layouts?.some((design) => design.id === slide.pattern)
+          ? `pattern "${slide.pattern}" is one of the deck's own layouts: check the deck against withLayouts(template, deck.layouts)`
+          : `unknown pattern "${slide.pattern}" (available: ${[...patterns.keys()].join(', ')})`,
       });
       return;
     }

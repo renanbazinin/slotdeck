@@ -39,6 +39,7 @@ const tools = presentationTools({
   fields: { organizationDepartment: 'Acme  |  Operations' }, // optional deck-level values every deck gets
   numberPatterns: 'from-brief',                 // optional
   review,                                       // optional DeckReview: a second look at every draft (design-checks.md)
+  composeLayouts: 2,                            // optional: new layouts for slides the template has none for (generating.md)
   thumbnail: (patternId) => `/static/thumbnails/${patternId}.png`, // optional address of a picture of each layout
   preview,                                      // optional PreviewProvider: draws every presentation the tools make
   newId: (kind) => `${kind}_${crypto.randomUUID()}`, // optional; default is a short random id
@@ -111,7 +112,9 @@ Output:
 }
 ```
 
-`thumbnail` is present only when the `thumbnail` option returns an address.
+`thumbnail` is present only when the `thumbnail` option returns an address. With the `composeLayouts` option, a
+slide that uses a layout made for this presentation has `"new_layout": true` and no thumbnail, since the app has
+no picture of it; its description is the new layout's.
 
 ### `edit_presentation_plan`
 

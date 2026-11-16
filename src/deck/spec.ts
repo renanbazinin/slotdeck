@@ -1,3 +1,4 @@
+import type { PatternDesign } from '../template/compose.ts';
 import type { Direction } from '../template/manifest.ts';
 
 /**
@@ -17,6 +18,12 @@ export interface DeckSpec {
   fields?: Record<string, string>;
   /** Size of body text as a factor on the template's: 1 as designed, 1.25 large, 1.5 extra large. */
   textScale?: number;
+  /**
+   * Layouts made for this deck because the template had none that suited some of its slides (see
+   * `composeLayouts`). They are built onto the template whenever the deck is rendered; the
+   * template file is not changed. Slides use them by their ids like any other pattern.
+   */
+  layouts?: PatternDesign[];
   slides: SlideSpec[];
 }
 

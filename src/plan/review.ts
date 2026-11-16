@@ -11,6 +11,7 @@ import type { JsonRequest, JsonSchema, LlmProvider } from '../llm/provider.ts';
 import type { PreviewProvider, SlidePreview } from '../preview/provider.ts';
 import { renderDeck } from '../render/render.ts';
 import type { Template } from '../render/render.ts';
+import { withLayouts } from '../template/compose.ts';
 import { effectiveSlots } from '../template/manifest.ts';
 import { solidPng } from '../util/png.ts';
 import type { AssetDef, IconDef } from './catalog.ts';
@@ -74,12 +75,13 @@ const short = (text: string) => (text.length > 120 ? `${text.slice(0, 119)}…` 
  * report problems that are not there, so use a provider whose pictures can be trusted.
  */
 export function visionReview(options: VisionReviewOptions): DeckReview {
-  const { template, llm, preview } = options;
+  const { llm, preview } = options;
   const supplied = new Map<string, Uint8Array>([...(options.icons ?? []), ...(options.assets ?? [])].map((item) => [item.id, item.data]));
   const standIn = solidPng(96, 64, [176, 184, 190]);
   const perRequest = Math.max(1, options.slidesPerRequest ?? 6);
 
   return async (deck, { signal }) => {
+    const template = withLayouts(options.template, deck.layouts);
     const assets: Record<string, Uint8Array> = {};
     for (const slide of deck.slides) {
       for (const value of Object.values(slide.slots ?? {})) if (isImageRef(value)) assets[value.asset] = supplied.get(value.asset) ?? standIn;

@@ -18,6 +18,7 @@ import { NS, childElement, childElements, descendants, parseXml, removeNode, roo
 import type { Element } from '../pptx/xml.ts';
 import { bodyTextScale, chartAtScale, defaultFit, effectiveSlots, itemCount, scalesWithText, slotSources, tableAtScale } from '../template/manifest.ts';
 import type { ChartSlotDef, PatternDef, TemplateManifest } from '../template/manifest.ts';
+import { withLayouts } from '../template/compose.ts';
 import { readImageInfo } from '../util/image.ts';
 import type { ImageInfo } from '../util/image.ts';
 import { CHART_CONTENT_TYPE, CHART_REL_TYPE, WORKBOOK_CONTENT_TYPE, WORKBOOK_REL_TYPE, buildChartWorkbook, buildChartXml, chartFrameXml } from './chart.ts';
@@ -80,6 +81,8 @@ export interface RenderResult {
  * and filling its slots. Deterministic: no model calls, no network.
  */
 export function renderDeck(template: Template, deck: DeckSpec, options: RenderOptions = {}): RenderResult {
+  // Layouts made for the deck are built onto the template first.
+  template = withLayouts(template, deck.layouts);
   const { manifest } = template;
   const layout = options.layout ?? 'strict';
   const assets = options.assets ?? {};

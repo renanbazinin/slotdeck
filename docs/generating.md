@@ -51,9 +51,10 @@ It runs `planDeck`, then `resolveAssets`, then `renderDeck`.
 | `numberPatterns` | `"from-brief"`, `"always"`, `"never"` | `from-brief` | When patterns marked `figures` may be used. `from-brief` offers them only if the brief contains digits. |
 | `maxRepairs` | number | 2 | How many times a draft that breaks the template's limits is sent back to the model. |
 | `review` | `DeckReview` | none | A second look at every draft: design checks, a model that looks at pictures of the slides, or a function of your own. What it finds goes back to the model in the repair rounds. See [design-checks.md](design-checks.md). |
+| `composeLayouts` | number | 0 (off) | Up to this many new layouts may be made for the deck, in the template's own look, for slides that none of its layouts shows well. About 10 to 25 seconds more. See "New layouts for a deck" below. |
 | `cache` | `Map<string, Uint8Array>` | none | Generated pictures by asset id. Pass the same map on later calls and pictures whose description did not change are reused. |
 | `imageConcurrency` | number | 3 | How many pictures to generate at once. |
-| `onProgress` | function | none | Called with `{ stage: 'outline' }`, `{ stage: 'write', slides }`, `{ stage: 'repair', attempt, issues }`, `{ stage: 'images', done, total }`, `{ stage: 'render' }`. |
+| `onProgress` | function | none | Called with `{ stage: 'outline' }`, `{ stage: 'layouts' }` (with `composeLayouts`), `{ stage: 'write', slides }`, `{ stage: 'repair', attempt, issues }`, `{ stage: 'images', done, total }`, `{ stage: 'render' }`. |
 | `signal` | `AbortSignal` | none | Cancels the work. |
 
 ### Example
@@ -140,6 +141,48 @@ Two things to know:
   such a deck: `PlanError: Template "x" has no plain text pattern, so a text-only deck cannot be planned from it`.
   Add one as a derived pattern (see [layout-freedom.md](layout-freedom.md)).
 
+### New layouts for a deck
+
+A template has the layouts it has. A text-only deck from a template with one plain text layout uses it for
+every slide, and three goals or a plan in four steps end up as paragraphs. With `composeLayouts` set, the
+planner makes the layouts such slides need, in the template's own look:
+
+```ts
+const plan = await planOutline(template, { prompt: 'Quarterly update: three goals and a plan in four steps', textOnly: true }, { llm, composeLayouts: 2 });
+// before: cover, text-only, text-only, text-only, text-only, closing
+// after:  cover, three-goal-cards, process-cards, process-cards, text-only, closing
+// plan.layouts: the two designs
+```
+
+1. The outline is planned as usual.
+2. One light call looks at it and names the slides whose content none of the offered layouts shows well (points
+   of equal weight, steps, a comparison, an agenda, a timeline, a statement, a few key figures) and what layout
+   each would need. Only slides of content may get one: a cover, a section divider, a quotation and a closing
+   slide keep theirs.
+3. Each layout is composed with `composePattern` (see [template-studio.md](template-studio.md)), side by side, on
+   the frame of the layout its first slide had, so its title sits where the deck's other titles do.
+4. The plan's slides use the new layouts, and the deck is written once, as always.
+
+The designs travel in the plan and the deck (`layouts`, see [deck-format.md](deck-format.md)). Rendering builds
+them onto the template each time, so the template file never changes, and a stored deck renders the same later
+without a model. A layout that cannot be made leaves its slides as planned; the deck is made either way.
+`composeLayouts(template, plan, options)` does steps 2 to 4 on a plan you already have, and says what was made
+and what could not be.
+
+What to expect, from live runs on two templates (one in Hebrew) with `gemini-3.8-flash`:
+
+- Every text-only deck got one or two new layouts, and no layout failed to build. Rows of cards, steps with
+  numbers, a timeline, a comparison, an action list with owners and key figures all came out as real slides in the
+  template's styles.
+- A deck with varied layouts got fewer: one in each of the two runs, for the slide that was running text.
+- It adds 10 to 25 seconds and two to five light calls to a deck.
+- The writer fills a composed box to about the length its design was drawn for; a card can still be roomier than
+  its text.
+
+It is off by default: it costs time, and a template whose own layouts suit its decks gains little from it. A
+layout that keeps being wanted belongs in the template: add it in a studio with `composePattern`, or from the
+deck's design with `buildPattern`. A deck that names that id then uses the template's own.
+
 ### Why numbers are guarded
 
 A model given a slide built around a statistic and no data tends to invent one. So patterns marked `figures` are
@@ -157,7 +200,7 @@ Use these when a person should see and approve a plan before the content is writ
 ```ts
 // 1. Decide the slides. One call, quick, small result: the thing to show a person.
 const plan = await planOutline(template, brief, { llm, icons, layout: 'adaptive' });
-// plan = { version: 1, title, brief, slides: [{ pattern, purpose, items? }] }
+// plan = { version: 1, title, brief, slides: [{ pattern, purpose, items? }], layouts? }
 
 // 2. Change the plan by instruction. One call. Returns a new plan and one sentence on what changed.
 const { plan: revised, summary } = await editPlan(template, plan, 'Add a slide about pricing before the end', { llm, icons, layout: 'adaptive' });
