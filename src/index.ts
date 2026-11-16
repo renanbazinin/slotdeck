@@ -49,6 +49,8 @@ export { SUGGESTION_KINDS, suggestChanges } from './template/suggest.ts';
 export type { ManifestSuggestion, SuggestOptions, SuggestionKind } from './template/suggest.ts';
 export { VARIANTS, patternVariants } from './template/derive.ts';
 export type { PatternVariant, VariantOption } from './template/derive.ts';
+export { DESIGN_GRID, DESIGN_ROLES, DesignError, buildPattern, composePattern, designKit } from './template/compose.ts';
+export type { ComposeOptions, ComposedPattern, DesignElement, DesignKit, DesignRole, KitStyle, PatternDesign } from './template/compose.ts';
 export { describeManifest, editManifest } from './template/instruct.ts';
 export type { ManifestEditOptions, ManifestEditResult } from './template/instruct.ts';
 export { studioView } from './template/view.ts';

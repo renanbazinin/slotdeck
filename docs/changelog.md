@@ -3,6 +3,42 @@
 What changed in each version, newest first, with what to do when upgrading. The version you have installed is
 in `node_modules/slotdeck/package.json`.
 
+## 0.4.0
+
+A layout the template does not have, made from its own parts. A text-only variant of a slide with a photo keeps
+the text where it was and leaves half the slide empty; a new layout fills it.
+
+### Added
+
+- **`composePattern(template, instruction, { llm, effort: 'low' })`** asks the model for a new layout in the
+  template's look and builds it: a new slide after the last one, on the frame of one of the template's own
+  slides (background, header, logo, page number, its title where every title is), made of copies of the
+  template's own text styles and decorations, and a pattern for it with measured budgets. The model designs on
+  a grid of 12 columns and 12 rows and can only name styles the template has; the code checks the design,
+  sends one with problems back once, makes numbered items equal, and proves the result renders. It returns a
+  new pptx and manifest to store together. See "composePattern" in [template-studio.md](template-studio.md).
+- **`buildPattern(template, design)`**: the code half alone, for a design the app has. **`designKit(template)`**
+  lists the grid, the base slide and the styles. **`DesignError`** carries every reason a design cannot be built.
+- **[prompts/compose-layout.md](prompts/compose-layout.md)**: a prompt for a coding agent, to add "a new layout
+  from words" to a template studio: compose, look at the sample, keep or discard.
+- A composed slide is named `composed <id>` in the pptx and left out of the kit, so composing a second layout
+  does not change the keys a first design was made with.
+- `keepCorners` keeps a rounded panel's corners when it is resized (used inside; not exported).
+
+### Measured
+
+On Gemini 3.8 Flash with `effort: 'low'`, 10 requests with this release's code on two templates (a right-to-left
+template of 36 slides and the demo template), such as "create a text only layout", "an agenda with 6 items", "a
+slide with three key figures and a caption under each" and a request in Hebrew: all 10 were built, in 6 to 25
+seconds, 7 of them after the design was sent back once. Twenty earlier requests, made while the code was
+written, were all built as well. With the model's default reasoning one request took 210 seconds.
+
+### Upgrading from 0.3.2
+
+- Nothing changes for code that does not call the new functions.
+- A composed layout changes the template's pptx: store `made.pptx` and `made.manifest` together. Every other
+  pattern points at the same slide as before, so stored decks still render.
+
 ## 0.3.2
 
 A prompt for a studio that cannot yet add a variant of one layout. No code changed.

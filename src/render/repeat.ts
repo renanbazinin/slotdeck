@@ -106,7 +106,11 @@ function canWiden(shape: Element): boolean {
  * The corners of a rounded or cut rectangle are sized by its shorter side. When widening changes
  * which side that is, or how long it is, the corner setting is scaled back so the corners stay as drawn.
  */
-function keepCorners(shape: Element, width: number, wider: number, height: number): void {
+/**
+ * Keeps the corners of a rounded or snipped rectangle as they are drawn when the shape's shorter
+ * side changes: from `min(width, height)` to `min(wider, height)`.
+ */
+export function keepCorners(shape: Element, width: number, wider: number, height: number): void {
   const geometry = path(shape, [NS.p, 'spPr'], [NS.a, 'prstGeom']);
   const preset = geometry?.getAttribute('prst') ?? '';
   const ratio = Math.min(width, height) / Math.min(wider, height);
