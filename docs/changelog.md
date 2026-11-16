@@ -46,7 +46,10 @@ on 28 layouts, its department name on 40):
   `prepareManifest` on it again, with `remove: false` for a template in use. Its `done` names each field it
   changed. Stop passing that field in `fields`: it is no longer in `prepared.fields`.
 - After that repair, a stored deck that does not fill that text renders without it with `layout: 'adaptive'`.
-  With `'strict'`, a slide must fill a text it may leave out, and such a deck does not render.
+  With `'strict'`, a slide must fill a text it may leave out, and such a deck does not render. A studio that
+  compares stored decks before and after a repair should call `validateDeck` with the layout mode the chat
+  uses: with the default, `'strict'`, every such deck is listed as worse.
+- The value an app stored for that field is no longer read. It can stay or be deleted.
 - A sample in the header or footer, such as a bottom line, stays a deck field in that repair. Where it is one,
   `{ op: 'setSlot', pattern, slot, deckField: null, empty: 'remove' }` on each layout that has it makes it a
   text of each slide. A new draft asks the model about it.
