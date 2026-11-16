@@ -37,6 +37,11 @@ export interface CatalogContext {
   templateScale?: number;
   /** Restrict planning to these pattern ids. */
   allow?: string[];
+  /**
+   * Ids of the layouts made for this deck (`DeckSpec.layouts`). They were made for its content,
+   * so they are offered whatever the brief holds, and the list says they were made for the deck.
+   */
+  own?: string[];
 }
 
 /** How one manifest slot is presented to the planning model. */
@@ -54,6 +59,8 @@ export interface UsablePattern {
   needsPhoto: boolean;
   /** For a pattern with a row of items: the number of items these slots are for. */
   items?: number;
+  /** Whether it is one of the layouts made for this deck. */
+  own?: boolean;
 }
 
 export interface Catalog {
@@ -73,7 +80,8 @@ export function planPattern(
   skip: ReadonlySet<string> = new Set(),
   items?: number,
 ): { pattern: UsablePattern } | { reason: string } {
-  if (def.figures && !context.figures) return { reason: 'is built around numbers, and the brief gives none' };
+  const own = context.own?.includes(def.id) ?? false;
+  if (def.figures && !context.figures && !own) return { reason: 'is built around numbers, and the brief gives none' };
   const hasGraphics = context.assets.some((asset) => asset.kind === 'graphic');
   const slots: PlannedSlot[] = [];
   let reason: string | undefined;
@@ -129,6 +137,7 @@ export function planPattern(
   if (reason) return { reason };
   const pattern: UsablePattern = { def, slots, needsPhoto };
   if (def.repeat && items !== undefined) pattern.items = items;
+  if (own) pattern.own = true;
   return { pattern };
 }
 
@@ -225,7 +234,8 @@ export function describeCatalog(catalog: Catalog, textScale = 1): string {
             : `\n  items: always 1 ${repeat.item}, numbered N = 1`;
       // Said in so many words, so that a wish for text-only slides can be met without guessing from the slots.
       const plain = isPlainText(pattern.def) ? ' Plain text.' : '';
-      return `- ${pattern.def.id}: ${pattern.def.description}${plain}\n  slots: ${slots}${count}`;
+      const own = pattern.own ? ' Made for this deck.' : '';
+      return `- ${pattern.def.id}: ${pattern.def.description}${plain}${own}\n  slots: ${slots}${count}`;
     })
     .join('\n');
 }

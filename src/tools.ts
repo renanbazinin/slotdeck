@@ -40,6 +40,11 @@ export interface PresentationToolsOptions {
   numberPatterns?: PlanOptions['numberPatterns'];
   /** A second look at every draft the tools write, as for `planDeck`. Off unless set. */
   review?: PlanOptions['review'];
+  /**
+   * Up to this many new layouts may be made for a new plan, in the template's own look, as for
+   * `planOutline`. They are kept with the plan and the deck. Off (0) unless set.
+   */
+  composeLayouts?: number;
   /** Address of a picture of a pattern's layout, for showing a plan visually. */
   thumbnail?: (patternId: string) => string | undefined;
   /**
@@ -184,6 +189,7 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
     if (options.assets) plan.assets = options.assets;
     if (options.numberPatterns) plan.numberPatterns = options.numberPatterns;
     if (options.review) plan.review = options.review;
+    if (options.composeLayouts && tool === TOOL_NAMES.plan) plan.composeLayouts = options.composeLayouts;
     if (options.onProgress) plan.onProgress = (event) => options.onProgress?.(event, tool);
     if (signal) plan.signal = signal;
     return plan;
@@ -194,12 +200,15 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
     title: plan.title,
     language: plan.brief.language ?? template.manifest.language,
     slides: plan.slides.map((slide, index) => {
+      const own = plan.layouts?.find((design) => design.id === slide.pattern);
       const line: Record<string, unknown> = {
         number: index + 1,
         layout: slide.pattern,
-        layout_description: patterns.get(slide.pattern)?.description,
+        layout_description: own?.description ?? patterns.get(slide.pattern)?.description,
         purpose: slide.purpose,
       };
+      // A layout made for this deck has no picture in the app; the model can say it is new.
+      if (own) line.new_layout = true;
       const thumbnail = options.thumbnail?.(slide.pattern);
       if (thumbnail) line.thumbnail = thumbnail;
       return line;

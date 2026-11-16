@@ -756,7 +756,8 @@ leaves the rest of the slide empty. `composePattern` makes a new slide instead.
 How it is made:
 
 1. **The kit** (`designKit`, no model). The code picks the slide to stand on: a layout whose title sits where
-   most titles do. Its frame stays (background, header, logo, page number, the deck's own texts), and so does
+   most titles do, or the layout named in `base` when it has a title and is not a row of items. The design
+   records it, so that it is built on the same frame again. Its frame stays (background, header, logo, page number, the deck's own texts), and so does
    its title, where every title is. Over the content area it lays a grid of 12 columns and 12 rows, and marks
    the cells the frame takes. It lists every distinct text style the template's layouts use (size, weight,
    typeface, colour, alignment, bullets, a filled or outlined box, what it is used for) and every decoration
@@ -780,7 +781,8 @@ How it is made:
 5. **The pattern** (no model). The base slide's slots for what stayed are copied (the title, the deck's own
    texts), and each text becomes a slot with `addSlot`. Its budget is what its box holds: measured with the
    template's fonts when it has them, estimated from the box when it does not, never from the sample the model
-   wrote. Numbered items become a row with `setRepeat`, so that a deck can ask for fewer of them; a row (not a
+   wrote. A text or list whose box holds much more than its sample is described as "Drawn for about N
+   characters", N being the sample's length, so that a deck fills it as the design meant. Numbered items become a row with `setRepeat`, so that a deck can ask for fewer of them; a row (not a
    grid) widens its items when there are fewer. A layout with a figure gets `figures: true`.
 6. **The proof.** `checkManifest` finds no error in the new pattern, and its sample deck renders with the
    fewest and with the most items. Otherwise nothing is returned and `DesignError` says why.
@@ -807,6 +809,11 @@ with the model's default reasoning and 4 to 28 seconds with `effort: 'low'`, wit
 
 A decoration that holds a picture on its slide, such as the disc behind a card's icon, is not offered: without
 its picture it would be an empty shape.
+
+Layouts made for one deck (`composeLayouts` in the planner, see "New layouts for a deck" in
+[generating.md](generating.md)) are the same designs, kept in the deck instead of the template. To make one part
+of the template, build the deck's design onto it: `buildPattern(template, deck.layouts[0])`, then store the
+result as above. Decks that use that id then use the template's own.
 
 ## `inspectTemplate(pkg)`
 

@@ -9,6 +9,10 @@ import { measurerFor } from '../text/measure.ts';
 import type { Direction, TextSize } from '../template/manifest.ts';
 import { budgetScale, buildCatalog, describeCatalog, isPlainText, itemsProperty, outlineSchema, planPattern, readItems } from './catalog.ts';
 import type { AssetDef, Catalog, CatalogContext, IconDef, ImageDensity, UsablePattern, WriteItem } from './catalog.ts';
+import { withLayouts } from '../template/compose.ts';
+import type { PatternDesign } from '../template/compose.ts';
+import { composeForPlan, usedLayouts } from './layouts.ts';
+import type { ComposeLayoutsResult } from './layouts.ts';
 import type { DeckReview } from './review.ts';
 import { cleanText, suppliesText, systemPrompt, writeSlides } from './write.ts';
 
@@ -39,6 +43,7 @@ export interface Brief {
 
 export type PlanProgress =
   | { stage: 'outline' }
+  | { stage: 'layouts' }
   | { stage: 'write'; slides: number }
   | { stage: 'repair'; attempt: number; issues: number };
 
@@ -66,6 +71,15 @@ export interface PlanOptions {
    * warnings. Nothing reviews a draft unless this is set.
    */
   review?: DeckReview;
+  /**
+   * Up to this many new layouts may be made for the deck, in the template's own look, for slides
+   * whose content none of its layouts shows well: three goals on a slide of running text, a plan
+   * in steps. After the outline, one light call decides; each layout then takes one or two calls,
+   * side by side, about 10 to 20 seconds. The designs are kept in the plan and the deck
+   * (`layouts`); the template is not changed. A layout that cannot be made leaves its slides as
+   * planned. Off (0) by default.
+   */
+  composeLayouts?: number;
   onProgress?: (event: PlanProgress) => void;
   signal?: AbortSignal;
 }
@@ -188,6 +202,8 @@ export interface DeckPlan {
   /** The request, with everything needed to write the deck later. */
   brief: Brief;
   slides: OutlineEntry[];
+  /** Layouts made for this deck (see `composeLayouts`). Slides use them by their ids. */
+  layouts?: PatternDesign[];
 }
 
 interface Planning {
@@ -202,7 +218,7 @@ interface Planning {
 }
 
 /** Everything the planning stages derive from a brief and the caller's options, so they cannot disagree. */
-function planning(template: Template, brief: Brief, options: PlanOptions): Planning {
+function planning(template: Template, brief: Brief, options: PlanOptions, layouts?: PatternDesign[]): Planning {
   const { manifest } = template;
   const layout = options.layout ?? 'strict';
   const language = brief.language ?? manifest.language ?? 'en';
@@ -215,6 +231,11 @@ function planning(template: Template, brief: Brief, options: PlanOptions): Plann
   const textScale = TEXT_SIZES[brief.textSize ?? 'normal'] ?? 1;
   const context: CatalogContext = { layout, fields, icons: options.icons ?? [], assets: options.assets ?? [], imageDensity: density, figures, textScale, templateScale: manifest.textScale ?? 1 };
   if (options.patterns) context.allow = options.patterns;
+  if (layouts?.length) {
+    context.own = layouts.map((design) => design.id);
+    // A deck's own layouts were made for it: a list of allowed patterns does not leave them out.
+    if (context.allow) context.allow = [...context.allow, ...context.own];
+  }
   const catalog = buildCatalog(manifest, context);
   if (catalog.patterns.length === 0) {
     const reasons = catalog.excluded.map((entry) => `${entry.id} ${entry.reason}`).join('; ');
@@ -253,8 +274,7 @@ function readOutline(answer: unknown, byId: Map<string, UsablePattern>): { title
 export async function planOutline(template: Template, brief: Brief, options: PlanOptions): Promise<DeckPlan> {
   const planned = planning(template, brief, options);
   const { language, density, context } = planned;
-  // A text-only deck is offered the plain text patterns and nothing else, so the wish cannot be missed.
-  const catalog = brief.textOnly ? { ...planned.catalog, patterns: planned.catalog.patterns.filter((pattern) => isPlainText(pattern.def)) } : planned.catalog;
+  const catalog = outlineCatalog(planned, brief);
   if (catalog.patterns.length === 0) {
     throw new PlanError(`Template "${template.manifest.name}" has no plain text pattern, so a text-only deck cannot be planned from it`);
   }
@@ -274,7 +294,27 @@ export async function planOutline(template: Template, brief: Brief, options: Pla
     outline = readOutline(await ask(retry, outlineSchema(catalog, count), planRoom(count.max)), byId);
     if (outline.problem) throw new PlanError(`The model did not produce a usable outline: ${outline.problem}`);
   }
-  return { version: 1, title: outline.title, brief, slides: outline.entries };
+  const plan: DeckPlan = { version: 1, title: outline.title, brief, slides: outline.entries };
+  if (!options.composeLayouts) return plan;
+  options.onProgress?.({ stage: 'layouts' });
+  return (await composeForPlan(template, plan, catalog.patterns, { llm: options.llm, max: options.composeLayouts, ...(options.signal ? { signal: options.signal } : {}) })).plan;
+}
+
+/** What an outline may choose from. A text-only deck is offered the plain text patterns and nothing else, so the wish cannot be missed. */
+function outlineCatalog(planned: Planning, brief: Brief): Catalog {
+  return brief.textOnly ? { ...planned.catalog, patterns: planned.catalog.patterns.filter((pattern) => isPlainText(pattern.def) || pattern.own) } : planned.catalog;
+}
+
+/**
+ * Looks at a plan for slides that a layout the template lacks would show better, makes those
+ * layouts in the template's own look, and gives them to their slides. What `composeLayouts` in
+ * {@link PlanOptions} does inside {@link planOutline}, as a step of its own: for a plan that was
+ * already shown, or to learn what was made and what could not be. `max` defaults to 2.
+ */
+export async function composeLayouts(template: Template, plan: DeckPlan, options: PlanOptions & { max?: number }): Promise<ComposeLayoutsResult> {
+  const planned = planning(withLayouts(template, plan.layouts), plan.brief, options, plan.layouts);
+  options.onProgress?.({ stage: 'layouts' });
+  return composeForPlan(template, plan, outlineCatalog(planned, plan.brief).patterns, { llm: options.llm, max: options.max ?? 2, ...(options.signal ? { signal: options.signal } : {}) });
 }
 
 /**
@@ -289,7 +329,7 @@ export async function editPlan(
 ): Promise<{ plan: DeckPlan; summary: string }> {
   const request = instruction.trim();
   const brief: Brief = { ...plan.brief, instructions: [plan.brief.instructions?.trim(), request].filter(Boolean).join('\n') };
-  const { language, density, catalog, byId, context } = planning(template, brief, options);
+  const { language, density, catalog, byId, context } = planning(withLayouts(template, plan.layouts), brief, options, plan.layouts);
 
   options.onProgress?.({ stage: 'outline' });
   const prompt = [
@@ -305,7 +345,7 @@ export async function editPlan(
       '- Choose a pattern only when the content can fill every required slot within its limits.',
       `- ${columnsRule('request')}`,
       `- ${SLIDE_KIND_RULE}`,
-      ...(plan.brief.textOnly ? ['- This deck was asked to be text only: keep to the patterns marked "Plain text." unless the requested change asks for something else.'] : []),
+      ...(plan.brief.textOnly ? ['- This deck was asked to be text only: keep to the patterns marked "Plain text." or "Made for this deck." unless the requested change asks for something else.'] : []),
       `- ${DENSITY_GUIDANCE[density]}`,
     ].join('\n'),
   ].join('\n\n');
@@ -349,7 +389,10 @@ export async function editPlan(
     delete brief.direction; // follows the new language
   }
   delete brief.slideCount; // the plan itself now says how many slides there are
-  return { plan: { version: 1, title: outline.title || plan.title, brief, slides: outline.entries }, summary: cleanText(answer?.summary) };
+  const next: DeckPlan = { version: 1, title: outline.title || plan.title, brief, slides: outline.entries };
+  const layouts = usedLayouts(plan.layouts, outline.entries);
+  if (layouts) next.layouts = layouts;
+  return { plan: next, summary: cleanText(answer?.summary) };
 }
 
 /**
@@ -358,7 +401,10 @@ export async function editPlan(
  */
 export async function writeDeck(template: Template, plan: DeckPlan, options: PlanOptions): Promise<PlanResult> {
   const { brief } = plan;
-  const { layout, language, direction, fields, context, byId } = planning(template, brief, options);
+  const layouts = usedLayouts(plan.layouts, plan.slides);
+  // The deck's own layouts are built onto the template: written, checked and repaired as any other.
+  template = withLayouts(template, layouts);
+  const { layout, language, direction, fields, context, byId } = planning(template, brief, options, layouts);
   const missing = plan.slides.filter((slide) => !byId.has(slide.pattern)).map((slide) => slide.pattern);
   if (missing.length > 0) {
     throw new PlanError(`The plan uses patterns that cannot be filled with what was supplied: ${[...new Set(missing)].join(', ')}`);
@@ -386,6 +432,7 @@ export async function writeDeck(template: Template, plan: DeckPlan, options: Pla
       };
       if (context.textScale !== 1) deck.textScale = context.textScale;
       if (plan.title) deck.title = plan.title;
+      if (layouts) deck.layouts = layouts;
       if (Object.keys(fields).length > 0) deck.fields = fields;
       return deck;
     },

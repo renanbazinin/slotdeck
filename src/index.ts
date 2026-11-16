@@ -9,8 +9,9 @@ export { memoryStore } from './store.ts';
 export type { BlobStore } from './store.ts';
 
 // The steps of generateDeck, usable on their own.
-export { PlanError, directionOf, editPlan, planDeck, planOutline, writeDeck } from './plan/plan.ts';
+export { PlanError, composeLayouts, directionOf, editPlan, planDeck, planOutline, writeDeck } from './plan/plan.ts';
 export type { Brief, DeckPlan, OutlineEntry, PlanOptions, PlanProgress, PlanResult } from './plan/plan.ts';
+export type { ComposeLayoutsResult, FailedLayout, MadeLayout } from './plan/layouts.ts';
 export { planEdit } from './plan/edit.ts';
 export type { EditOptions, EditResult } from './plan/edit.ts';
 export { resolveAssets } from './plan/assets.ts';
@@ -49,7 +50,7 @@ export { SUGGESTION_KINDS, suggestChanges } from './template/suggest.ts';
 export type { ManifestSuggestion, SuggestOptions, SuggestionKind } from './template/suggest.ts';
 export { VARIANTS, patternVariants } from './template/derive.ts';
 export type { PatternVariant, VariantOption } from './template/derive.ts';
-export { DESIGN_GRID, DESIGN_ROLES, DesignError, buildPattern, composePattern, designKit } from './template/compose.ts';
+export { DESIGN_GRID, DESIGN_ROLES, DesignError, buildPattern, composePattern, designKit, withLayouts } from './template/compose.ts';
 export type { ComposeOptions, ComposedPattern, DesignElement, DesignKit, DesignRole, KitStyle, PatternDesign } from './template/compose.ts';
 export { describeManifest, editManifest } from './template/instruct.ts';
 export type { ManifestEditOptions, ManifestEditResult } from './template/instruct.ts';

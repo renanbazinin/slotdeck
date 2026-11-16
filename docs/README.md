@@ -60,6 +60,7 @@ slotdeck makes new PowerPoint files from an existing PowerPoint template.
 | Show a plan first, write later | `planOutline`, `editPlan`, `writeDeck` | 1 each, `writeDeck` plus repairs |
 | Change an existing deck by instruction | `editDeck` (with pictures and pptx) or `planEdit` (JSON only) | 1 or 2 plus repairs |
 | Let a chat model do all of this | `presentationTools` | as above |
+| Give slides that the template has no layout for (goals, steps, a timeline) one made for the deck | `composeLayouts: 2` on the planner or the chat tools | 1, then 1 or 2 per layout |
 | Describe a new template | `draftManifest` | 1 per slide, plus 1 |
 | Verify a manifest against its pptx | `checkManifest` | none |
 | See whether a manifest's budgets hold | `sampleDeck` then `renderDeck` | none |

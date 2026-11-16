@@ -109,6 +109,7 @@ interface DeckSpec {
   direction?: Direction;
   fields?: Record<string, string>;
   textScale?: number;
+  layouts?: PatternDesign[];    // layouts made for this deck, built onto the template when it is rendered
   slides: SlideSpec[];
 }
 interface SlideSpec { pattern: string; items?: number; slots: Record<string, SlotValue> }
@@ -156,7 +157,33 @@ Brief to deck JSON: `planOutline` then `writeDeck`.
 function planOutline(template: Template, brief: Brief, options: PlanOptions): Promise<DeckPlan>;
 ```
 
-Decides which pattern each slide uses and the point it makes. One model call.
+Decides which pattern each slide uses and the point it makes. One model call. With `composeLayouts` set, it
+then makes new layouts for slides that none of the template's layouts shows well, as `composeLayouts` below does.
+
+### `composeLayouts`
+
+```ts
+function composeLayouts(template: Template, plan: DeckPlan, options: PlanOptions & { max?: number }): Promise<ComposeLayoutsResult>;
+```
+
+Looks at a plan for slides whose content none of the template's layouts shows well, such as three goals on a
+slide of running text, and makes up to `max` (default 2) new layouts for them in the template's own look. One
+light model call decides, then each layout is composed with `composePattern`, side by side, on the frame of the
+layout its first slide had. The returned plan has the designs in `layouts` and its slides use them; the
+template is not changed. A layout that cannot be made is listed in `failed`, and its slides keep their layout.
+`planOutline` does the same when `composeLayouts` is set in its options. See "New layouts for a deck" in
+[generating.md](generating.md).
+
+### `withLayouts`
+
+```ts
+function withLayouts(template: Template, layouts: readonly PatternDesign[] | undefined): Template;
+```
+
+The template with a deck's own layouts (`DeckSpec.layouts` or `DeckPlan.layouts`) built onto it, in order: the
+template to check or show such a deck with. `renderDeck`, the planner, the edits and the reviews call it
+themselves. A layout whose id the template already has is not built: the template's own is used. Built once
+for a template object and a list of layouts. Throws `DesignError` when a layout no longer fits the template.
 
 ### `editPlan`
 
@@ -246,17 +273,34 @@ interface PlanOptions {
   numberPatterns?: 'from-brief' | 'always' | 'never';
   maxRepairs?: number;
   review?: DeckReview; // a second look at every draft; see "Design checks and reviews"
+  composeLayouts?: number; // up to this many new layouts for the deck, in the template's own look; off (0) by default
   onProgress?: (event: PlanProgress) => void;
   signal?: AbortSignal;
 }
-type PlanProgress = { stage: 'outline' } | { stage: 'write'; slides: number } | { stage: 'repair'; attempt: number; issues: number };
+type PlanProgress =
+  | { stage: 'outline' }
+  | { stage: 'layouts' }
+  | { stage: 'write'; slides: number }
+  | { stage: 'repair'; attempt: number; issues: number };
 
 interface IconDef { id: string; description: string; data: Uint8Array }
 interface AssetDef { id: string; kind: 'photo' | 'graphic'; description: string; data: Uint8Array }
 
 interface OutlineEntry { pattern: string; purpose: string; items?: number }
-interface DeckPlan { version: 1; title: string; brief: Brief; slides: OutlineEntry[] }
+interface DeckPlan { version: 1; title: string; brief: Brief; slides: OutlineEntry[]; layouts?: PatternDesign[] }
 interface PlanResult { deck: DeckSpec; warnings: Issue[]; outline: OutlineEntry[] }
+
+interface ComposeLayoutsResult {
+  plan: DeckPlan;               // with layouts, and the slides they were made for using them
+  made: MadeLayout[];
+  failed: FailedLayout[];
+}
+interface MadeLayout { pattern: string; slides: number[]; summary: string }
+interface FailedLayout {
+  instruction: string;          // what the layout was to be; '' when the deciding call itself failed
+  slides: number[];             // they keep the layout they had
+  reason: string;
+}
 
 interface EditOptions extends PlanOptions {
   fields?: Record<string, string>;
@@ -572,7 +616,7 @@ the pattern's slide allows it. See [template-studio.md](template-studio.md).
 ```ts
 function composePattern(template: Template, instruction: string, options: ComposeOptions): Promise<ComposedPattern>;
 function buildPattern(template: Template, design: PatternDesign): ComposedPattern;
-function designKit(template: Template, inspected?: TemplateInfo): DesignKit | undefined;
+function designKit(template: Template, inspected?: TemplateInfo, base?: string): DesignKit | undefined;
 const DESIGN_GRID: 12;
 const DESIGN_ROLES: readonly ['title', 'subtitle', 'text', 'list', 'number', 'caption', 'decoration'];
 class DesignError extends Error { readonly problems: string[] }
@@ -584,7 +628,9 @@ decorations (`designKit` lists them), sends a design with problems back once, an
 `buildPattern`: a new slide after the last one, on the frame of an existing layout, and a pattern for it.
 `buildPattern` is the code half alone, for a design the app keeps or a person corrected. Both throw
 `DesignError` with every reason when a design cannot be built. The result carries a new pptx: store it in
-place of the template's. See "composePattern" in [template-studio.md](template-studio.md).
+place of the template's. See "composePattern" in [template-studio.md](template-studio.md). `base` (in the
+options, the design and `designKit`) names the layout to stand on; without it, or when that layout has no title
+or is a row of items, the code picks the one whose title sits where most titles do.
 
 ### `describeManifest`, `describeSlot`
 
@@ -726,6 +772,7 @@ Composing a layout:
 ```ts
 interface ComposeOptions {
   llm: LlmProvider;
+  base?: string;                // the layout whose frame and title the new one stands on
   effort?: 'low';               // light reasoning: about 10 s instead of minutes, and enough in the runs measured
   signal?: AbortSignal;
 }
@@ -742,6 +789,7 @@ interface PatternDesign {
   id: string;
   description: string;
   keep: string[];               // slots of the base slide that stay where they are, such as 'title'
+  base?: string;                // the layout it stands on; recorded, so that it is built on the same frame again
   elements: DesignElement[];    // in drawing order: a panel before the texts on it
 }
 interface DesignElement {

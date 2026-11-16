@@ -58,6 +58,11 @@ export interface PatternDesign {
   description: string;
   /** Slots of the base slide that stay where they are, such as `title`. */
   keep: string[];
+  /**
+   * The layout whose slide gives the frame and the title. Left out, the code picks the one whose
+   * title sits where most titles do. Recorded, so that the design is built on the same frame again.
+   */
+  base?: string;
   /** In drawing order: a decoration listed before a text lies behind it. */
   elements: DesignElement[];
 }
@@ -97,6 +102,11 @@ export interface DesignKit {
 
 export interface ComposeOptions {
   llm: LlmProvider;
+  /**
+   * The layout to stand on, such as the one the new layout replaces in a deck: its frame and its
+   * title stay. It needs a title and no row of items; otherwise the code picks one as usual.
+   */
+  base?: string;
   /** `low` asks the model for light reasoning: much faster, and it was enough in the runs measured. */
   effort?: 'low';
   signal?: AbortSignal;
@@ -152,7 +162,14 @@ function slotBox(slot: SlotDef, shape: ShapeInfo): Box {
 const isTitle = (slot: SlotDef) => slot.kind === 'text' && !slot.deckField && /^(title|heading|slideTitle)$/i.test(slot.name);
 
 /** Picks the slide whose frame and title a composed layout stands on: the one whose title sits where most titles do. */
-function pickBase(manifest: TemplateManifest, info: TemplateInfo): { pattern: PatternDef; slide: SlideInfo; title: SlotDef } | undefined {
+function pickBase(manifest: TemplateManifest, info: TemplateInfo, wanted?: string): { pattern: PatternDef; slide: SlideInfo; title: SlotDef } | undefined {
+  // A layout asked for by name may move its shapes: its title is kept where that layout shows it.
+  const asked = wanted ? manifest.patterns.find((pattern) => pattern.id === wanted) : undefined;
+  if (asked && !asked.repeat) {
+    const slide = info.slides[asked.sourceSlide - 1];
+    const title = asked.slots.find(isTitle);
+    if (slide && title && slide.shapes.some((shape) => shape.id === title.shapeId)) return { pattern: asked, slide, title };
+  }
   const candidates: Array<{ pattern: PatternDef; slide: SlideInfo; title: SlotDef; box: Box }> = [];
   for (const pattern of manifest.patterns) {
     const slide = info.slides[pattern.sourceSlide - 1];
@@ -268,8 +285,8 @@ const ALIGN: Record<string, string> = { l: 'left-aligned', r: 'right-aligned', c
  * model, and nothing is changed. `undefined` when the template has no layout with a title to
  * stand on.
  */
-export function designKit(template: Template, inspected?: TemplateInfo): DesignKit | undefined {
-  return kitWith(template, inspected ?? inspectTemplate(template.pkg))?.kit;
+export function designKit(template: Template, inspected?: TemplateInfo, base?: string): DesignKit | undefined {
+  return kitWith(template, inspected ?? inspectTemplate(template.pkg), base)?.kit;
 }
 
 interface KitParts {
@@ -293,13 +310,13 @@ function composedSlides(pkg: PptxPackage): Set<number> {
   return out;
 }
 
-function kitWith(template: Template, info: TemplateInfo): KitParts | undefined {
+function kitWith(template: Template, info: TemplateInfo, wanted?: string): KitParts | undefined {
   // Layouts composed earlier are left out, so that composing one more never changes the kit: a
   // design made for the template is built the same way after another layout was added.
   const composed = composedSlides(template.pkg);
   const manifest = { ...template.manifest, patterns: template.manifest.patterns.filter((pattern) => !composed.has(pattern.sourceSlide)) };
   template = { ...template, manifest };
-  const picked = pickBase(manifest, info);
+  const picked = pickBase(manifest, info, wanted);
   if (!picked) return undefined;
   const { pattern: base, slide, title } = picked;
   const stays = staying(base, slide, info);
@@ -682,11 +699,42 @@ const ranges = (numbers: number[]): string => {
  */
 export function buildPattern(template: Template, design: PatternDesign): ComposedPattern {
   const info = inspectTemplate(template.pkg);
-  const parts = kitWith(template, info);
+  const parts = kitWith(template, info, design.base);
   if (!parts) throw new DesignError(['The template has no layout with a title to stand on.']);
   const checked = review(design, parts, template.manifest);
   if (checked.problems.length > 0) throw new DesignError(checked.problems);
   return assemble(template, design, parts, checked.placed, checked.soft);
+}
+
+const built = new WeakMap<Template, Map<string, Template>>();
+
+/**
+ * The template with layouts made for one deck built onto it, in order: what a deck that carries
+ * `layouts` is rendered, checked and edited with. The template itself is not changed. A layout
+ * whose id the template already has is not built again: the template's own is used, as after the
+ * layout was added to the template in a studio. Built once for a template and a list of layouts.
+ * Throws {@link DesignError} when a layout no longer fits the template.
+ */
+export function withLayouts(template: Template, layouts: readonly PatternDesign[] | undefined): Template {
+  const wanted = (layouts ?? []).filter((design) => !template.manifest.patterns.some((pattern) => pattern.id === design.id));
+  if (wanted.length === 0) return template;
+  const key = JSON.stringify(wanted);
+  let cache = built.get(template);
+  if (!cache) built.set(template, (cache = new Map()));
+  const known = cache.get(key);
+  if (known) return known;
+  let result = template;
+  for (const design of wanted) {
+    try {
+      const made = buildPattern(result, design);
+      result = loadTemplate(made.pptx, made.manifest, template.fonts ? { fonts: template.fonts } : {});
+    } catch (error) {
+      const reasons = error instanceof DesignError ? error.problems : [error instanceof Error ? error.message : String(error)];
+      throw new DesignError(reasons.map((reason) => `The deck's layout "${design.id}": ${reason}`));
+    }
+  }
+  cache.set(key, result);
+  return result;
 }
 
 function assemble(template: Template, design: PatternDesign, parts: KitParts, placed: Placed[], soft: string[]): ComposedPattern {
@@ -787,7 +835,11 @@ function assemble(template: Template, design: PatternDesign, parts: KitParts, pl
     if (role === 'decoration' || !shape || !result.manifest.patterns.find((candidate) => candidate.id === design.id)?.slots.some((slot) => slot.name === placedPart.element.name)) continue;
     const room = measured.get(placedPart.element.name) ?? estimate(shape, builtInfo, placedPart.style.size ?? shape.fontSizes?.[0] ?? 14);
     const sample = placedPart.element.sample.replace(/\s+/g, ' ').trim().length;
-    budgets.push({ op: 'setSlot', pattern: design.id, slot: placedPart.element.name, maxChars: Math.max(1, role === 'number' ? Math.max(room, sample, 2) : room) });
+    const budget: ManifestChange = { op: 'setSlot', pattern: design.id, slot: placedPart.element.name, maxChars: Math.max(1, role === 'number' ? Math.max(room, sample, 2) : room) };
+    // A box drawn for more than its sample is filled to the sample's length, as the design meant;
+    // a deck that writes a third of that leaves a card mostly empty.
+    if ((role === 'text' || role === 'list') && sample >= 20 && room >= sample * 1.5) budget.description = `Drawn for about ${Math.round(sample / 10) * 10} characters`;
+    budgets.push(budget);
   }
   if (budgets.length > 0) {
     const set = changeWith({ ...built, manifest: result.manifest }, budgets, builtInfo);
@@ -1034,12 +1086,14 @@ function toDesign(raw: unknown): PatternDesign {
 export async function composePattern(template: Template, instruction: string, options: ComposeOptions): Promise<ComposedPattern> {
   if (!instruction.trim()) throw new Error('Say what the new layout should be.');
   const info = inspectTemplate(template.pkg);
-  const parts = kitWith(template, info);
+  const parts = kitWith(template, info, options.base);
   if (!parts) throw new DesignError(['The template has no layout with a title to stand on.']);
   const schema = schemaFor(parts.kit);
   const prompt = designPrompt(template, parts, instruction);
-  const ask = async (text: string) =>
-    toDesign(await options.llm.generateJson({ system: SYSTEM, prompt: text, schema, maxOutputTokens: 6000, ...(options.effort ? { effort: options.effort } : {}), ...(options.signal ? { signal: options.signal } : {}) }));
+  const ask = async (text: string): Promise<PatternDesign> => ({
+    ...toDesign(await options.llm.generateJson({ system: SYSTEM, prompt: text, schema, maxOutputTokens: 6000, ...(options.effort ? { effort: options.effort } : {}), ...(options.signal ? { signal: options.signal } : {}) })),
+    base: parts.kit.base,
+  });
 
   let design = await ask(prompt);
   let checked = review(design, parts, template.manifest);
