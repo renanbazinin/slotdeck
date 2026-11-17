@@ -10,9 +10,9 @@ export type { BlobStore } from './store.ts';
 
 // The steps of generateDeck, usable on their own.
 export { PlanError, composeLayouts, directionOf, editPlan, planDeck, planOutline, writeDeck } from './plan/plan.ts';
-export type { Brief, DeckPlan, OutlineEntry, PlanOptions, PlanProgress, PlanResult } from './plan/plan.ts';
+export type { Brief, DeckPlan, OutlineEntry, PlanOptions, PlanProgress, PlanResult, PlanSettings } from './plan/plan.ts';
 export type { ComposeLayoutsResult, FailedLayout, MadeLayout } from './plan/layouts.ts';
-export { planEdit } from './plan/edit.ts';
+export { planEdit, recolorDeck } from './plan/edit.ts';
 export type { EditOptions, EditResult } from './plan/edit.ts';
 export { resolveAssets } from './plan/assets.ts';
 export type { ResolveOptions } from './plan/assets.ts';
@@ -30,10 +30,19 @@ export type { GeminiImageOptions, GeminiOptions } from './llm/gemini.ts';
 // Decks.
 export { DeckValidationError, validateDeck } from './deck/validate.ts';
 export type { Issue, LayoutMode, ValidateOptions } from './deck/validate.ts';
-export type { ChartType, ChartValue, DeckSpec, ImageRef, SlideSpec, SlotValue, TableValue } from './deck/spec.ts';
+export type { ChartType, ChartValue, DeckColors, DeckSpec, ImageRef, SlideSpec, SlotValue, TableValue } from './deck/spec.ts';
 export { isChartValue, isImageRef, isTableValue } from './deck/spec.ts';
 export { slideAlternatives } from './deck/alternatives.ts';
 export type { AlternativesOptions, SlideAlternative } from './deck/alternatives.ts';
+
+// Free slides, which the software lays out itself, and a deck's own colours.
+export { FREE_BLOCK_KINDS, FREE_PATTERN, isFreeSlide } from './deck/spec.ts';
+export type { FreeArrange, FreeBlockKind } from './deck/spec.ts';
+export { freeContent, freeSlide } from './free/blocks.ts';
+export type { FreeBlockContent, FreeSlideContent } from './free/blocks.ts';
+export { freeBaseRefusal } from './free/kit.ts';
+export { templatePalette } from './color/recolor.ts';
+export type { ColorFamily, TemplatePalette } from './color/palette.ts';
 
 // Templates.
 export { draftManifest } from './template/draft.ts';

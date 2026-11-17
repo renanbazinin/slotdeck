@@ -45,12 +45,15 @@ interface RenderResult {
 
 What it does, for each slide of the deck:
 
-1. Clones the template slide of the slide's pattern, with its layout, background and every shape.
+1. Clones the template slide of the slide's pattern, with its layout, background and every shape. For a free
+   slide (see [free-slides.md](free-slides.md)) it clones the slide of the frame, takes that layout's own
+   content off, and draws the slide's blocks as copies of the template's text boxes, panels and tables.
 2. For a pattern with a row or grid of items, removes or copies items to match `items` and spaces them out.
 3. Fills each slot: text into text shapes, pictures into picture frames, rows into tables, a native chart in
    place of a chart slot's sample picture.
 4. Removes shapes whose slot is left out (optional slots in `adaptive` layout, and slots with `empty: "drop"`).
 5. Sets the page number where the template has one.
+6. Applies the colours the deck or the slide asks for, when it asks for any (see [colors.md](colors.md)).
 
 Then it writes a new package that contains only what the new slides use: template slides, pictures and other
 parts that are not referenced any more are left out, so the output is not bloated by the template's sample
@@ -96,10 +99,10 @@ Other exceptions mean the manifest and the pptx disagree (for example
 `Pattern "x": slot "y" points at shape #12, which is not on template slide 3`). `checkManifest` finds these
 ahead of time.
 
-## `validateDeck(manifest, deck, options?)`
+## `validateDeck(template, deck, options?)`
 
 ```ts
-function validateDeck(manifest: TemplateManifest, deck: DeckSpec, options?: ValidateOptions): Issue[];
+function validateDeck(target: Template | TemplateManifest, deck: DeckSpec, options?: ValidateOptions): Issue[];
 
 interface ValidateOptions {
   layout?: 'strict' | 'adaptive';
@@ -115,14 +118,22 @@ interface Issue {
 }
 ```
 
-It takes the manifest, not the loaded template, so it can run where the pptx is not available (in a browser,
-or before a job is queued). It uses exactly the same rules as the renderer.
+It uses exactly the same rules as the renderer, and takes either of two things:
+
+- **The loaded template.** Everything is checked: a deck's own layouts are built in, its free slides are laid
+  out and their text is checked against the room it gets, and with fonts the text is measured (no `measure`
+  option is needed). Use this wherever the template is at hand.
+- **The manifest alone.** For where the pptx is not available: in a browser, or before a job is queued. A deck
+  of the template's own patterns is checked in full. A free slide is checked for what needs no template (its
+  blocks, their required parts, the kinds of their values) and not for fit; a deck with layouts of its own
+  needs `withLayouts`, as before.
 
 - **Errors** block rendering: unknown pattern, a required slot without a value, a value of the wrong kind, a
   table whose rows do not match its header, a chart whose series do not match its categories, an item count
   outside the pattern's range, an asset that was not provided.
 - **Warnings** do not: text, tables or charts over a slot's soft limits; a slot name the pattern does not have;
-  `items` on a pattern with a fixed number of items; an unknown chart `format`.
+  `items` on a pattern with a fixed number of items; an unknown chart `format`; a colour that is no colour; a
+  free slide so crowded that its text is very small or its charts are drawn bare.
 
 All messages are listed in [troubleshooting.md](troubleshooting.md).
 
@@ -143,6 +154,10 @@ const edited = await editDeck(template, deck, 'Shorten slide 3', { llm, images, 
 
 Only slides that still match the deck are used. If the file was changed by hand (slides added, removed or
 reordered, or a title retyped), those slides are skipped.
+
+The pictures of free slides are found like any others. In a deck with colours (`colors` on the deck or on a
+slide) the icons in the file were recoloured when it was rendered, so they are left out: supply the app's own
+icons again, as for every render.
 
 ## Layout modes in practice
 

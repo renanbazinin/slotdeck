@@ -88,16 +88,24 @@ manifest.
 | `language` | string | no | BCP 47 tag of the deck's text, such as `en` or `he`. |
 | `direction` | `"ltr"` or `"rtl"` | no | Reading direction. Defaults to the template's. See [languages.md](languages.md). |
 | `fields` | object of strings | no | Values shared by every slide, by field name. See "Deck fields" below. |
-| `textScale` | number | no | Size of body text as a factor on the template's: `1` as designed, `1.25` large, `1.5` extra large. See [layout-freedom.md](layout-freedom.md). |
+| `textScale` | number | no | Size of body text as a factor on the template's: `1` as designed, `1.25` large, `1.5` extra large. See [layout-freedom.md](layout-freedom.md). From 0.6.0 a value that is no number, or one outside 0.1 to 300, is an error. `null` is read as not set, and a number written as text, such as `"1.25"`, as that number. A size that this factor times the manifest's `textScale` takes past 4000 pt or under 1 pt, which PowerPoint does not open, is written as 4000 pt or 1 pt. |
 | `layouts` | `PatternDesign[]` | no | Layouts made for this deck (see "New layouts for a deck" in [generating.md](generating.md)). Slides use them by their `id`, like the template's patterns. |
+| `colors` | `DeckColors` | no | Colours in place of the template's, for every slide: `{ "accent": "1565C0" }`. See [colors.md](colors.md). |
+| `patterns` | string[] | no | The only patterns the deck was asked to use, by id. A wish the planner keeps to when the deck is changed later; rendering and validation do not look at it. See "Asking for a kind of slide" in [generating.md](generating.md). |
+
+A deck without `colors`, `patterns` and free slides renders to the same bytes as before 0.6.0, unless that file did not open in PowerPoint.
 
 ## `SlideSpec`
 
 | Field | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `pattern` | string | yes | The `id` of a pattern in the manifest. |
+| `pattern` | string | yes | The `id` of a pattern in the manifest, or `"free"` for a free slide. |
 | `slots` | object | yes | Slot name to value. |
 | `items` | integer | no | Only for a pattern with a row or grid of items: how many items this slide has. Defaults to the number drawn on the template slide. Must be within the pattern's range. |
+| `colors` | `DeckColors` | no | Colours for this slide alone, in place of the deck's. See [colors.md](colors.md). |
+| `blocks` | array of kinds | no | Makes the slide a free slide: one the software lays out itself from these blocks, such as `["chart", "chart", "note"]`. With it go `arrange` and `base`. See "Free slides" below. |
+| `arrange` | `{ columns?, lead? }` | no | A free slide only: wishes about how its blocks are set out. See [free-slides.md](free-slides.md). |
+| `base` | string | no | A free slide only: the id of the pattern whose frame it stands on. Left out, the template's usual one. |
 
 ## Slot values
 
@@ -212,6 +220,30 @@ than the template slide draws, the extra items are copies of the last one and ha
 
 The first item is the first in the deck's reading direction. In a right-to-left deck on a left-to-right
 template, `card1...` appears at the right.
+
+## Free slides
+
+A slide with `blocks` is laid out by the software, not taken from a pattern: any number of texts, cards,
+figures, charts, tables and pictures, in reading order. Its `pattern` is `"free"`, and the content of block
+*n* is in `slots` under `b`*n* and the part's name:
+
+```json
+{
+  "pattern": "free",
+  "blocks": ["chart", "chart", "note"],
+  "slots": {
+    "title": "Rides by station",
+    "b1Chart": { "type": "column", "categories": ["Spring", "Summer"], "series": [{ "name": "2025", "values": [7, 19] }] },
+    "b2Chart": { "type": "column", "categories": ["Spring", "Summer"], "series": [{ "name": "2025", "values": [9, 24] }] },
+    "b3Text": "Both stations grew."
+  }
+}
+```
+
+`freeSlide` writes such a slide from its blocks, so that nobody numbers slot names by hand. The kinds of block,
+their parts, the two optional fields `arrange` and `base`, and how the blocks are set out are in
+[free-slides.md](free-slides.md). `arrange` states wishes: a number of blocks side by side that would leave a
+block under its smallest size is not followed, and `validateDeck` says what the slide holds.
 
 ## A deck's own layouts
 

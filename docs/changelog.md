@@ -3,6 +3,209 @@
 What changed in each version, newest first, with what to do when upgrading. The version you have installed is
 in `node_modules/slotdeck/package.json`.
 
+## 0.6.0
+
+More freedom: slides the software lays out itself, a deck's own colours, and a planner that does what was
+asked about the form of a deck. A deck, a plan and a manifest from 0.5 work unchanged, except a deck whose
+`textScale` is refused (see Upgrading), and a deck that uses none of the new things renders to the same bytes
+as with 0.5.2, unless 0.5.2 rendered it to a file PowerPoint did not open (see Fixed).
+
+### Added
+
+- **Free slides.** A slide may list **blocks** instead of naming a pattern: texts, lists, cards, figures,
+  steps, a quotation, a note, charts, tables and pictures, any number of them. The software lays them out on
+  the frame of one of the template's layouts, with texts, panels and tables copied from shapes the template
+  has, so the slide looks like a slide of that template. One text alone works; so do twelve charts, a chart
+  beside three cards, and two hundred charts. `freeSlide` writes such a slide and `freeContent` reads it back.
+  Nothing has to be set up; a manifest may name the frame and the styles (`free`). See
+  [free-slides.md](free-slides.md).
+- **The planner uses free slides** for content that no layout of the template shows: several charts, tables
+  or pictures on one slide, more items than a layout takes, parts that no layout combines. It names the parts
+  in the plan, and the writer fills them. On by default; `free: false` on the planner or the chat tools turns
+  it off, and so does `"free": false` in a manifest. See "Free slides when a deck is planned" in
+  [free-slides.md](free-slides.md).
+- **Colours.** `colors` on a deck (`{ "accent": "1565C0" }`) gives every slide another colour in place of the
+  template's main colour; its tints and shades follow, greys, photos and the logo stay, text stays readable,
+  icons are recoloured. `colors` on a slide does it for that slide alone. `recolorDeck` sets them with no model
+  call, `templatePalette` shows what the software takes for the template's colours, and a manifest may name
+  them or forbid changes (`colors`). See [colors.md](colors.md).
+- **Colours in the chat tools.** `accent_color` on `plan_presentation`, `edit_presentation_plan` and
+  `edit_presentation`, and `color_slides` on the last for single slides. A colour alone recolours a
+  presentation without a model call. No model reads a colour out of a brief: the chat model passes it.
+- **A list of layouts.** `Brief.patterns` (the `layouts` argument of the chat tools) limits a deck to the
+  layouts a person names: "only the text layout". The list is kept with the plan and the deck
+  (`DeckSpec.patterns`), and a later change keeps to it unless it asks for another layout.
+- **Wishes come first.** The first rule of every prompt that chooses layouts now says that what the brief
+  asks about the form of the deck (how many slides, which kinds, how many things on a slide, how many side by
+  side) comes before variety and before the planner's habits. A deck of one slide is a deck of one slide; the
+  opening and closing slides are for decks of three or more.
+- **`validateDeck` takes the loaded template** as well as the manifest. With the template it builds a deck's
+  own layouts in, lays free slides out and measures text with the template's fonts, so no option is needed.
+- **Chart detail.** A chart slot may say `detail: "compact"` or `"spark"` for a chart drawn small; free slides
+  choose it by the size of each chart.
+- **Studio settings.** `setManifest` takes `colors` and `free`; `editManifest` hears them in a person's words;
+  `checkManifest` reports a setting that points at nothing.
+- **A change to a free slide, part by part.** A change from the chat, `planEdit` or `editDeck` names the parts
+  of a free slide it writes again ("add two charts", "shorten the third card"); the other parts are kept as
+  they are, and so is the slide's arrangement unless the change is about it. Where the plan of a change named
+  no part to write, the slide is left as it was with the warning `slide N: nothing on it was changed: the
+  plan of the change named no part to write again`.
+- **Names.** New exports: `freeSlide`, `freeContent`, `isFreeSlide`, `freeBaseRefusal`, `FREE_PATTERN`,
+  `FREE_BLOCK_KINDS`, `recolorDeck`, `templatePalette`, and the types `DeckColors`, `FreeArrange`,
+  `FreeBlockKind`, `FreeBlockContent`, `FreeSlideContent`, `PlanSettings`, `TemplatePalette`, `ColorFamily`.
+  New fields: `SlideSpec.blocks`, `arrange`, `base`, `colors`; `DeckSpec.colors`, `patterns`; `Brief.colors`,
+  `patterns`; `OutlineEntry.blocks`, `arrange`; `free` in the options of the planner; `colors` and
+  `deckPatterns` in the options of `editPlan`, with `colorSlides` in those of `planEdit` and `editDeck`;
+  `recolored` in their results; `free`, `patterns` and `colors` in the options of `presentationTools`;
+  `TemplateManifest.colors`, `free`; `ChartSlotDef.detail`; `accent_color` (of the deck, and of a slide in its
+  own colours), `layouts`, `free_layout` and a slide's `parts` in the tools' outputs.
+
+### Changed
+
+- The planner's prompts were reworded for the points above. Decks planned from the same brief can come out
+  differently than with 0.5.2, as with any change of prompt.
+- With free slides on offer, `composeLayouts` makes no layouts: a free slide is what a deck gets for content
+  no layout shows. Pass `free: false` to keep composing layouts as in 0.5.
+- `edit_presentation_plan` and `edit_presentation` no longer require `instruction`: a colour alone is a
+  complete request. Called with neither, they answer `"instruction" is required unless a colour is given`.
+  With `colors: false` both are as in 0.5.
+- `tools.definitions` are made for the template and the options the tools were built with: the `layouts`
+  argument lists the layouts those tools can plan with, and the colour arguments are left out where colours
+  are off. They were one constant before.
+- A warning that has no slide is printed by the chat tools as its message alone.
+- The chat tools' `warnings` also carry what the renderer says of the deck as a whole, once, also after a
+  change of colour alone.
+- The chat tools hold a `slide_count` above 30, which their declaration already forbids, to 30.
+- Where the software itself fails on a chat tool's request (a stored plan or presentation that is not what the
+  tools put there), the chat model is told so in a sentence it can pass on (`The stored plan could not be
+  read. Make a new plan with plan_presentation.`), not `Cannot read properties of undefined`. What the app's
+  own model, image provider, store or review throws is passed on as before.
+- Three warnings say `1 line`, `1 character` and `1 row` where they said `1 lines`, `1 characters` and
+  `1 rows`.
+
+### Fixed
+
+- **A file PowerPoint could not open.** A control character in a text, a table cell, a chart label or an
+  alternative text (a vertical tab, which comes with text copied out of a text box, a form feed and the like)
+  was written into the file as it was. Such characters are now left out; a vertical tab breaks the line in a
+  text slot and is a space elsewhere. A deck that has none renders to the same bytes as before.
+- **A number where text belongs.** A text slot given a number, an object or a list holding one made
+  `validateDeck` and `renderDeck` throw a `TypeError`. They answer with the issue `expected text` on the slot.
+- **Layouts built for a deck** (`DeckSpec.layouts`) are built again for a template object that was given
+  another manifest, as a template's other answers are. A manifest object edited in place is still not seen.
+- **The shape a generated picture is asked for.** Where a picture slot states a `box` (a mirrored layout, a
+  wide diagram), the image provider is asked for the aspect ratio of that box, where the picture is placed,
+  not of the sample picture's own frame. Pictures already stored are used as they are.
+- **More files PowerPoint could not open.** Each of these rendered without a word to a file PowerPoint did
+  not open; each is now an error that says what is wrong:
+  - a deck's `textScale` that is no number (`NaN`, an object, `"large"`, `""`) or is outside 0.1 to 300, on a
+    deck with a chart or other text whose size the factor sets (text of 12 pt or less: most layouts of the
+    right-to-left template, only the native chart of the demo template). `null`, which 0.5.2 took as a factor
+    of 0, is now read as not set; a number written as text (`"1.25"`) is read as that number, as before;
+  - a manifest's own `textScale` that is no number (`NaN`, `"abc"`) or is 0 or less: `validateDeck` and
+    `renderDeck` stop the deck, and `checkManifest` reports it;
+  - a chart of more than 255 series;
+  - a size or colour that `changeManifest` took for a chart's or a table's text (`"red"`, `0`, `1e9`), a
+    line colour, a list of chart colours that is no list, or a text slot's `paragraphGap` that is no number:
+    `changeManifest` now refuses each. A manifest that already holds such a value (taken by 0.5.2, or written
+    by hand) is not checked, and a deck with such a slot still renders to a file PowerPoint does not open,
+    except a text size, which is now written inside 1 to 4000 pt (below).
+- **Text larger than PowerPoint takes.** The size written is the template's size times the manifest's
+  `textScale` times the deck's. A product past 4000 pt or under 1 pt (a deck's 300 on a template whose
+  manifest says 1.3, or 0.1 on one that says 0.5) gave a file PowerPoint did not open. Such a size is now
+  written as 4000 pt or 1 pt; every other size is written as before.
+- **Errors of the library where a `TypeError` was thrown.** A deck, slide or `layouts` of another shape
+  (`null`, a string) gets `the deck is no object with a list of slides` and the like from `validateDeck` and
+  `renderDeck`; a brief without a prompt and a plan of another shape get a `PlanError`; `checkManifest`
+  reports patterns or slots that are no lists; an asset whose bytes are no picture is a `DeckValidationError`
+  naming the slot (before: a plain `Error`, `Unsupported image format: expected PNG, JPEG or GIF`, or a
+  `TypeError` for a value that is no `Uint8Array`); the Gemini adapter rejects an answer of the right status
+  and the wrong shape with a `GeminiError`. The messages are in [troubleshooting.md](troubleshooting.md).
+- **Words the planner did not know.** A model's `text_size` or a brief's `textSize` that is not `normal`,
+  `large` or `x-large` keeps the size there is, also names every object has (`"constructor"`); a brief's
+  `imageDensity` outside its four values is planned as `medium`. Before, a `textSize` such as `"constructor"`
+  gave the deck a text size that was no number, and a model's `text_size` dropped the deck's size; an
+  `imageDensity` outside the four values put `undefined` into the model's instructions; an object such as
+  `{ "toString": 1 }` in either threw a `TypeError`.
+- **Time and memory.** A word of 20,000 letters with no space was measured in quadratic time; it takes half a
+  second now. `checkDesign` on a slide whose `items` was `Infinity`, `sampleDeck` with budgets of a billion,
+  `composeLayouts` with thousands of parts and `writeDeck` with item counts of a billion ran for minutes or ran
+  out of memory; they now answer at once, the last with a `PlanError`. A table of more than about 125,000 cells
+  (the number depends on Node's stack) no longer makes `validateDeck` throw a `RangeError`; one of a million
+  cells is reported like any other.
+
+### Measured
+
+- **The same bytes.** 24 decks of 0.5.2 in 31 renders (7 on the demo template, each in both layout modes, and
+  17 on a right-to-left template of 35 layouts), with every kind of slot and larger text, render to the same
+  bytes as with 0.5.2; so do the eleven decks of `test/golden.test.ts`, one of them with a layout of its own.
+- **Free slides in PowerPoint.** 13 decks of free slides on the two templates: cards, steps, figures, tables,
+  charts and quotations, and on each template twenty slides from one sentence to two hundred charts.
+  PowerPoint, asked how it sets the text of every block, finds none outside its box, card or slide. The
+  twenty slides render in 0.7 s on the demo template and 1.3 s on the right-to-left one.
+- **The planner with a stub model.** A deck with twelve charts on one slide, planned, written and changed to
+  add two charts: 5 model calls, each with an output ceiling; the change wrote only the two new charts and
+  kept the twelve as they were. Sixty charts on one slide: 4 calls.
+- **The chat tools with a production model**, every call capped, pictures as placeholders, on both templates:
+  plan with a colour asked for, write, add two charts, change an unrelated title, add a table to the slide of
+  key figures, take a part off a slide, rename one chart. 7 steps, 12 model calls on each template. Every
+  change left the other four slides as they were, and the chart slide kept every chart it was not asked to
+  change. The colour asked for in the first request is on every slide. PowerPoint finds no text of a free
+  slide's blocks outside its box in any of the decks. One step on the right-to-left template failed once: the
+  model ran on to the tight output ceiling of the test, twice. It passed when run again, and in two earlier
+  runs.
+- **Text sizes.** A deck with charts, a table, text and a free slide opens in PowerPoint at every `textScale`
+  from 0.1 to 300 on the demo template. On the right-to-left template, whose manifest says 1.3, 0.5.2 gave
+  files PowerPoint did not open from 219.8 up; with the sizes held, they open.
+
+### Upgrading from 0.5.2
+
+- Stored decks, plans and manifests need nothing, except a deck whose `textScale` is refused (below). Render as
+  before.
+- Warnings without a slide number: free slides (on by default when a deck is planned or changed) and colours
+  give warnings whose `Issue.slide` is not set; the slide is named in the message (`slide 3 holds 9 blocks, as
+  asked; ...`). An app that prints `slide ${issue.slide}: ${issue.message}`, as the chat tools of 0.5.2 did,
+  prints `slide undefined`; print the message alone when `slide` is not set.
+- An app that shows a plan's slides by `layout`: a free slide has the layout `free`, `free_layout: true` and no
+  thumbnail. Show its `layout_description`, which says what the slide holds.
+- An app that walks `SlideSpec.slots` by its manifest's slot names: a free slide's slots are named `b1Text`,
+  `b2Chart`, and so on. `isFreeSlide(slide)` tells; `freeContent(slide)` gives the blocks.
+- An app that passes `patterns` to the planner gets no free slides unless the list names `free`; the tools take
+  the same option from 0.6.0.
+- An app that sets `composeLayouts` gets no new layouts while free slides are on offer; pass `free: false` to
+  have them made as in 0.5. `free: false` offers what 0.5 offered and nothing else; the reworded prompts stay.
+- The chat tools are declared with reworded descriptions, and `plan_presentation`, `edit_presentation_plan`
+  and `edit_presentation` take a `layouts` argument wherever a layout can be named. Both are so whatever
+  `free` and `colors` say; `colors: false` leaves the colour arguments out. Calls made as with 0.5.2 are
+  accepted as before; their answers may hold free slides unless the tools are built with `free: false`.
+- An app that keeps one set of tool declarations for all templates: take `definitions` from the tools built
+  for the template a conversation uses.
+- `presentationTools` now looks at the template's slides when it is called, to see whether the template can
+  carry free slides: about 0.2 s for the demo template and half a second for one of 35 layouts, once for a
+  loaded template. Load the template once and build the tools from that object; an app that loads it anew for every
+  chat turn pays this on every turn. See "Build the tools once for a loaded template" in
+  [chat-tools.md](chat-tools.md).
+- A stored deck whose `textScale` is no number or is outside 0.1 to 300 is now refused with a
+  `DeckValidationError`. Such a deck rendered to a file PowerPoint did not open when it had a chart or other
+  text whose size the factor sets (text of 12 pt or less: most layouts of the right-to-left template, only
+  the native chart of the demo template), for values such as `NaN`, `"large"`, `""`, `false`, `0`, `0.05` and
+  `1000`. A deck without such text opened at any value, and so did every deck with a value 0.5.2 read as a
+  number, such as `true` or `[1.5]`. All of them are refused now: render it without the value, or with a
+  number.
+- A manifest whose chart or table text, line colour, chart colours or `paragraphGap` 0.5.2's `changeManifest`
+  took with a value that is no colour or number still gives files PowerPoint does not open: set those values
+  again with `changeManifest`, which now refuses what does not work. A manifest whose own `textScale` is no
+  number stops every deck with an error: set it again, or remove it.
+- Code that caught a `TypeError` for input of the wrong shape gets the library's own error now:
+  `DeckValidationError` from `renderDeck`, an error issue from `validateDeck`, `PlanError` from the planner,
+  `GeminiError` from the adapter. Code that caught `Unsupported image format` from `renderDeck` gets a
+  `DeckValidationError`.
+- Where none of the template's patterns can be filled with what was supplied, a deck is now planned from free
+  slides when they are on offer. `No pattern of template "x" can be used` comes only when they are not: the
+  template cannot carry them, the deck fields their frame shows were not supplied, `free: false` (on the
+  planner or the tools, or `"free": false` in the manifest), a list of patterns that does not name `free`, or a
+  template that has a pattern of its own called `free`.
+
 ## 0.5.2
 
 Hebrew text that PowerPoint underlined as misspelled.

@@ -133,9 +133,10 @@ test('patterns built around numbers are offered only when the brief has figures'
     return offered(requests[0]);
   };
 
-  assert.deepEqual(await ask('A deck about dogs'), ['closing']);
-  assert.deepEqual(await ask('We served 2341 customers this year'), ['content', 'closing']);
-  assert.deepEqual(await ask('A deck about dogs', { instructions: 'Mention the 15% growth' }), ['content', 'closing']);
-  assert.deepEqual(await ask('A deck about dogs', { numberPatterns: 'always' }), ['content', 'closing']);
-  assert.deepEqual(await ask('We served 2341 customers', { numberPatterns: 'never' }), ['closing']);
+  // `free`, a slide the software lays out itself, is on offer either way: what the figures decide there is which parts it may have.
+  assert.deepEqual(await ask('A deck about dogs'), ['closing', 'free']);
+  assert.deepEqual(await ask('We served 2341 customers this year'), ['content', 'closing', 'free']);
+  assert.deepEqual(await ask('A deck about dogs', { instructions: 'Mention the 15% growth' }), ['content', 'closing', 'free']);
+  assert.deepEqual(await ask('A deck about dogs', { numberPatterns: 'always' }), ['content', 'closing', 'free']);
+  assert.deepEqual(await ask('We served 2341 customers', { numberPatterns: 'never' }), ['closing', 'free']);
 });

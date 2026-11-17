@@ -2,12 +2,14 @@
 // how the deck's text measures in the template's boxes.
 import type { Template } from '../render/render.ts';
 import { withLayouts } from '../template/compose.ts';
-import { effectiveSlots, itemCount, rowLayout, slotSources } from '../template/manifest.ts';
+import { effectiveSlots, itemCount, itemRange, rowLayout, slotSources } from '../template/manifest.ts';
 import type { PatternDef, TextSlotDef } from '../template/manifest.ts';
 import { textMeasurer } from '../text/measure.ts';
 import type { TextFit } from '../text/measure.ts';
+import { freeFor } from '../free/resolve.ts';
+import { isFreeSlide } from './spec.ts';
 import type { DeckSpec } from './spec.ts';
-import { fitOptions, overflowMessage, resolveSlot } from './validate.ts';
+import { deckShapeIssues, fitOptions, freeTextFloor, overflowMessage, resolveSlot } from './validate.ts';
 import type { Issue, LayoutMode } from './validate.ts';
 
 /**
@@ -88,8 +90,13 @@ const lines = (count: number) => `${count} ${count === 1 ? 'line' : 'lines'}`;
  * that cannot be rendered: `validateDeck` reports those.
  */
 export function checkDesign(template: Template, deck: DeckSpec, options: DesignOptions = {}): DesignIssue[] {
-  template = withLayouts(template, deck.layouts);
+  const loaded = template;
+  // A deck that is no deck (no object, a slide that is none, layouts that are none) cannot be
+  // rendered either: `validateDeck` says why, and there is nothing to measure.
+  const readable = deckShapeIssues(deck).length === 0;
+  if (readable) template = withLayouts(template, deck.layouts);
   const measure = textMeasurer(template);
+  if (!readable) return [];
   const { manifest } = template;
   const layout = options.layout ?? 'strict';
   const kinds = new Set<DesignKind>(options.kinds ?? ['overflow', 'empty', 'uneven', 'orphan']);
@@ -100,9 +107,16 @@ export function checkDesign(template: Template, deck: DeckSpec, options: DesignO
 
   (deck.slides ?? []).forEach((slide, index) => {
     const number = index + 1;
-    const pattern = manifest.patterns.find((entry) => entry.id === slide.pattern);
+    // A slide the software laid out is sized to its text: only text that still runs over, or a
+    // heading that ends in a lone word, is worth saying of it.
+    const free = isFreeSlide(slide) ? freeFor(loaded, deck, slide) : undefined;
+    const pattern = free === undefined ? manifest.patterns.find((entry) => entry.id === slide.pattern) : typeof free === 'string' ? undefined : free.plan.pattern;
     if (!pattern) return;
+    // A number of items the row does not take is a slide that cannot be rendered: passed over, like the others.
+    const range = itemRange(pattern);
+    if (range && slide.items !== undefined && !(Number.isInteger(slide.items) && slide.items >= range.min && slide.items <= range.max)) return;
     const report = (kind: DesignKind, slot: string, message: string) => {
+      if (free && kind !== 'overflow' && kind !== 'orphan') return;
       if (kinds.has(kind)) issues.push({ severity: 'warning', slide: number, slot, kind, message });
     };
     const sources = slotSources(pattern, mirrored, slide.items);
@@ -111,10 +125,10 @@ export function checkDesign(template: Template, deck: DeckSpec, options: DesignO
     for (const slot of effectiveSlots(pattern, slide.items)) {
       if (slot.kind !== 'text') continue;
       const source = sources.get(slot.name) ?? slot.name;
-      const resolved = resolveSlot(slot, { ...slide, slots: slide.slots ?? {} }, deck, layout, source);
+      const resolved = resolveSlot(slot, { ...slide, slots: slide.slots ?? {} }, deck, free ? 'adaptive' : layout, source);
       if ('error' in resolved || resolved.action.type !== 'text') continue;
       const { paragraphs } = resolved.action;
-      const fit = measure.fit(pattern, slot, paragraphs, fitOptions(manifest, deck, slide));
+      const fit = measure.fit(pattern, slot, paragraphs, fitOptions(manifest, deck, slide, freeTextFloor(typeof free === 'string' ? undefined : free, slot, paragraphs, manifest, slide, measure)));
       if (!fit) continue;
       const entry: Measured = { source, slot, fit, chars: paragraphs.reduce((sum, paragraph) => sum + paragraph.length, 0), paragraphs: paragraphs.length };
       measured.set(source, entry);

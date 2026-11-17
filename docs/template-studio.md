@@ -268,11 +268,47 @@ Every change is an object with `op`. `pattern` is a pattern id, `slot` a slot na
 #### `setManifest`
 
 ```ts
-{ op: 'setManifest', name?: string, language?: string, direction?: 'ltr' | 'rtl', alignOnDirectionChange?: 'flip' | 'keep', textScale?: number | null }
+{
+  op: 'setManifest',
+  name?: string,
+  language?: string,
+  direction?: 'ltr' | 'rtl',
+  alignOnDirectionChange?: 'flip' | 'keep',
+  textScale?: number | null,
+  colors?: { accent?: string | null, accent2?: string | null } | false | null,
+  free?: boolean | null | { base?: string | null, styles?: Record<string, { slide: number, shape: string } | null> },
+}
 ```
 
 `textScale` enlarges the body text of every deck made from the template (`1.3` for 30% larger); `null` or `1`
 returns to the designed size.
+
+`colors` names the template's main and second colour, six hex digits each, for decks that ask for other
+colours: a deck's `accent` takes the place of this one. `null` has the software find them by how much each
+colour is used, which is also what happens when nothing is set. `false` keeps every deck in the template's own
+colours, whatever it asks for. See [colors.md](colors.md).
+
+`free` is about free slides, which the software lays out itself (see [free-slides.md](free-slides.md)).
+`false` stops them being offered when a deck is planned; `true` or `null` offers them with the software's own
+choices. An object names the pattern whose frame they stand on (`base`), and for a part of a free slide
+(`body`, `heading`, `figure`, `caption`, `list`, `quote`, `note`, `panel`) the template shape it is a copy of;
+`null` for either gives that choice back to the software. A frame that cannot carry a free slide and a shape
+that cannot be the part are refused with the reason. A frame needs a title that leaves room under it, at least
+45% of the slide's height for the blocks, and no row of items: a cover, a section divider and a closing slide
+are refused as `the layout "cover" has its title low on the slide: ...`. On a template none of whose layouts
+leaves that much, free slides stand on the one that leaves most: that one can be named, and another is refused
+by comparison with it (`... and "section" leaves them 40%`). A part is a copy of a text box that a pattern of
+the manifest fills, not of a placeholder, which takes its look from the slide layout. The copy keeps the line
+spacing of that text box, and the text of a free slide is counted at it: a body text with a line spacing of
+130% leaves a card less text.
+
+A manifest that was changed takes effect for free slides at once, on the package that is open as after a fresh
+load. When a pattern is removed later, a `free.styles` entry may be left pointing at a shape that no pattern
+fills any more: the software's own choice is then used, and `issues` (from `checkManifest`) says so.
+
+By instruction (`editManifest`) the same settings are reached in a person's words: "our colour is 0E7C7B",
+"decks must keep our colours", "do not let the software lay slides out itself", "stand free slides on the
+text slide".
 
 #### `addPattern`
 

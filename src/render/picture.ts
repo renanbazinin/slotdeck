@@ -1,4 +1,4 @@
-import { NS, childElement, childElements, descendants, isElement, path, removeNode } from '../pptx/xml.ts';
+import { NS, childElement, childElements, descendants, escapeXmlAttr, isElement, path, removeNode } from '../pptx/xml.ts';
 import type { Element, Node } from '../pptx/xml.ts';
 
 export interface PictureFill {
@@ -104,6 +104,20 @@ export function setPicture(pic: Element, fill: PictureFill): void {
     props.removeAttribute('title');
     props.setAttribute('descr', fill.alt ?? '');
   }
+}
+
+/**
+ * An empty picture frame at an area of the slide (EMU), for a slide that the software lays out
+ * itself: {@link setPicture} then puts a picture in it. It names no image yet.
+ */
+export function pictureFrameXml(shapeId: string, name: string, area: { x: number; y: number; cx: number; cy: number }): string {
+  return (
+    `<p:pic xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
+    `<p:nvPicPr><p:cNvPr id="${escapeXmlAttr(shapeId)}" name="${escapeXmlAttr(name)}" descr=""/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>` +
+    `<p:blipFill><a:blip r:embed=""/><a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
+    `<p:spPr><a:xfrm><a:off x="${Math.round(area.x)}" y="${Math.round(area.y)}"/><a:ext cx="${Math.round(area.cx)}" cy="${Math.round(area.cy)}"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`
+  );
 }
 
 /** Combined scale of every group the element sits in (child units to slide units). */

@@ -87,6 +87,9 @@ on its own line is not reported: it is meant to stand there.
 ### What it does not see
 
 - Tables, charts and pictures. Only text slots are measured.
+- The look of a free slide. The software sizes the boxes of a free slide to its text, so an empty box or an
+  uneven row is not something its text can cause; a free slide is checked for text that runs over (`overflow`)
+  and for a lone last word (`orphan`), and for nothing else.
 - Slots set in a typeface that was not supplied. They are passed over (see `missingFonts` in
   [text-fit.md](text-fit.md)).
 - Anything that needs a picture to judge: colours, contrast, a photo that does not suit the text.

@@ -1,6 +1,8 @@
 // Changes to a manifest, one small operation at a time. A studio's own controls send them
 // directly; `editManifest` has a model turn an instruction into the same operations. Either way
 // each change is checked against the pptx before it is kept, so a manifest cannot be broken here.
+import { parseHex } from '../color/space.ts';
+import { FREE_STYLE_ROLES, freeBaseRefusal, freeKitOrReason } from '../free/kit.ts';
 import type { Template } from '../render/render.ts';
 import type { PptxPackage } from '../pptx/package.ts';
 import { checkManifest } from './check.ts';
@@ -61,7 +63,27 @@ export interface SlotPatch {
 }
 
 export type ManifestChange =
-  | { op: 'setManifest'; name?: string; language?: string; direction?: Direction; alignOnDirectionChange?: AlignPolicy; textScale?: number | null }
+  | {
+      op: 'setManifest';
+      name?: string;
+      language?: string;
+      direction?: Direction;
+      alignOnDirectionChange?: AlignPolicy;
+      textScale?: number | null;
+      /**
+       * The template's main and second colour, as six hex digits; `null` leaves it to the software
+       * to find them, and `false` keeps every deck in the template's own colours.
+       */
+      colors?: { accent?: string | null; accent2?: string | null } | false | null;
+      /**
+       * Free slides, which the software lays out itself. `false` stops them being offered when a
+       * deck is planned; `true` or `null` offers them on the frame the software chooses. An object
+       * names the layout whose frame they stand on (`base`), and for a part of a free slide
+       * (`body`, `heading`, `figure`, `caption`, `list`, `quote`, `note`, `panel`) the shape of
+       * the template it is a copy of; `null` gives a choice back to the software.
+       */
+      free?: boolean | null | { base?: string | null; styles?: Record<string, { slide: number; shape: string } | null> };
+    }
   /** Makes a slide a pattern, with no content slots yet. Header texts known from other patterns are filled in. */
   | { op: 'addPattern'; slide: number; id: string; description?: string }
   /** A second pattern from the same slide, to be changed into a variant. */
@@ -186,6 +208,77 @@ function apply(manifest: TemplateManifest, change: ManifestChange, info: Templat
           manifest.textScale = change.textScale;
           done.push(`shows body text at ${change.textScale} times its designed size in every deck, with budgets to match`);
         }
+      }
+      if (change.colors === false) {
+        manifest.colors = false;
+        done.push('keeps its own colours in every deck');
+      } else if (change.colors !== undefined) {
+        const asked = change.colors;
+        const next: { accent?: string; accent2?: string } = asked === null ? {} : { ...(manifest.colors || {}) };
+        for (const name of ['accent', 'accent2'] as const) {
+          const value = asked?.[name];
+          if (value === undefined) continue;
+          if (value === null || value === '') delete next[name];
+          else next[name] = parseHex(value) ?? reject(`a colour is six hex digits such as "0E7C7B", not ${JSON.stringify(value)}`);
+        }
+        if (next.accent === undefined && next.accent2 === undefined) {
+          delete manifest.colors;
+          done.push('has its main colours found by how much each is used');
+        } else {
+          manifest.colors = next;
+          const named = [next.accent ? `${next.accent} as its main colour` : '', next.accent2 ? `${next.accent2} as its second colour` : ''].filter(Boolean);
+          done.push(`has ${named.join(' and ')}, for decks that ask for other colours`);
+        }
+      }
+      if (change.free === false) {
+        manifest.free = false;
+        done.push('offers no free slides when a deck is planned');
+      } else if (change.free === true || change.free === null) {
+        delete manifest.free;
+        done.push('offers free slides, on the frame and in the styles the software chooses');
+      } else if (change.free !== undefined) {
+        const next: { base?: string; styles?: Record<string, { slide: number; shape: string }> } = manifest.free ? structuredClone(manifest.free) : {};
+        const said: string[] = [];
+        if (change.free.base === null || change.free.base === '') {
+          delete next.base;
+          said.push('on the frame the software chooses');
+        } else if (change.free.base !== undefined) {
+          next.base = patternOf(change.free.base).id;
+          said.push(`on the frame of "${next.base}"`);
+        }
+        const parts = [...FREE_STYLE_ROLES, 'panel'] as readonly string[];
+        for (const [role, source] of Object.entries(change.free.styles ?? {})) {
+          if (!parts.includes(role)) reject(`a free slide has no part called "${role}"; its parts are ${parts.join(', ')}`);
+          if (source === null) {
+            if (next.styles) delete next.styles[role];
+            said.push(`with the ${role} the software chooses`);
+            continue;
+          }
+          const slide = info.slides[source.slide - 1] ?? reject(`the template has no slide ${source.slide}`);
+          const shape = slide.shapes.find((entry) => entry.id === String(source.shape)) ?? reject(`slide ${source.slide} has no shape #${source.shape}`);
+          if (role !== 'panel' && shape.kind !== 'text') reject(`shape #${shape.id} of slide ${source.slide} is ${describeKind(shape)}; the ${role} of a free slide is copied from a text box`);
+          (next.styles ??= {})[role] = { slide: source.slide, shape: shape.id };
+          said.push(`with its ${role} copied from shape #${shape.id} of slide ${source.slide}`);
+        }
+        if (next.styles && Object.keys(next.styles).length === 0) delete next.styles;
+        if (said.length === 0) reject('nothing to set for free slides');
+        if (next.base === undefined && next.styles === undefined) delete manifest.free;
+        else manifest.free = next;
+        // The frame has to be one a free slide can stand on, and the styles ones it can be drawn in.
+        const found = freeKitOrReason({ pkg, manifest });
+        const kit = typeof found === 'string' ? reject(`a free slide cannot be made: ${found}`) : found;
+        if (next.base !== undefined && kit.base !== next.base) {
+          const why = freeBaseRefusal({ pkg, manifest }, next.base) ?? `the layout "${next.base}" gives no frame of its own`;
+          reject(`a free slide cannot stand on "${next.base}": ${why}; name a layout with a title that leaves room under it and has no row of items, such as "${kit.base}"`);
+        }
+        for (const [role, source] of Object.entries(next.styles ?? {})) {
+          const used = role === 'panel' ? kit.panel : kit.styles[role as (typeof FREE_STYLE_ROLES)[number]];
+          if (used && used.slide === source.slide && used.shapeId === source.shape) continue;
+          const shape = info.slides[source.slide - 1]?.shapes.find((entry) => entry.id === source.shape);
+          const why = role === 'panel' ? 'it is not a box that the template sets text on' : shape?.placeholder !== undefined ? 'it is a placeholder, which takes its look from the slide layout, and a free slide copies a text box that states its own' : "it is not a text of one of the template's layouts";
+          reject(`shape #${source.shape} of slide ${source.slide} cannot be the ${role} of a free slide: ${why}`);
+        }
+        done.push(`lays out free slides ${said.join(', ')}`);
       }
       if (done.length === 0) reject('nothing to set');
       return `The template ${done.join(', ')}.`;
@@ -313,6 +406,28 @@ function apply(manifest: TemplateManifest, change: ManifestChange, info: Templat
       if (patch.empty !== undefined && !['error', 'remove', 'keep', 'drop'].includes(patch.empty)) reject('empty is "error", "remove", "keep" or "drop"');
       if (patch.box) checkBox(patch.box);
       if (typeof patch.fontSize === 'number' && !(patch.fontSize >= 4 && patch.fontSize <= 200)) reject('a font size is between 4 and 200 points');
+      // The look of a chart's or a table's text and the colours of a chart are written into the
+      // file as the manifest has them: a colour that is none, or a size that is none, gives a
+      // file PowerPoint does not open. A colour is stored as six hex digits, whatever way it was written.
+      const settings = patch as Record<string, unknown>;
+      const colorOf = (value: unknown, what: string): string => parseHex(value) ?? reject(`${what} is six hex digits such as "0E7C7B", not ${JSON.stringify(value)}`);
+      for (const key of STYLE_KEYS) {
+        const look = settings[key];
+        if (look === undefined || look === null) continue;
+        if (typeof look !== 'object' || Array.isArray(look)) reject(`${key} is the look of a text, such as { "size": 12, "color": "1B2A41" }`);
+        const next = { ...(look as Record<string, unknown>) };
+        if (next.size !== undefined && !(typeof next.size === 'number' && next.size >= 4 && next.size <= 200)) reject(`the size of ${key} is between 4 and 200 points`);
+        if (next.color !== undefined) next.color = colorOf(next.color, `the colour of ${key}`);
+        settings[key] = next;
+      }
+      if (settings.lineColor !== undefined && settings.lineColor !== null) settings.lineColor = colorOf(settings.lineColor, 'lineColor');
+      if (settings.colors !== undefined && settings.colors !== null) {
+        if (!Array.isArray(settings.colors)) reject('colors is a list of colours, such as ["0E7C7B", "F4A259"]');
+        settings.colors = (settings.colors as unknown[]).map((color) => colorOf(color, 'a colour of a chart'));
+      }
+      if (settings.paragraphGap !== undefined && settings.paragraphGap !== null && !(typeof settings.paragraphGap === 'number' && Number.isFinite(settings.paragraphGap) && settings.paragraphGap >= 0)) {
+        reject('paragraphGap is a number of points, 0 or more');
+      }
 
       const row = inRow(pattern, slot.name);
       // Taking a box away moves nothing: it puts the slot back where the slide draws it, in every item.

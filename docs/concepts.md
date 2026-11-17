@@ -51,6 +51,20 @@ its slots. Full reference: [deck-format.md](deck-format.md).
 A deck is the source of truth. It holds no binary data, so it is small (a few kilobytes), safe to send to a
 model, and can be stored, compared, edited and rendered again at any time.
 
+## Free slides
+
+A slide need not come from a pattern. A **free slide** lists **blocks** (texts, cards, figures, charts,
+tables, pictures, in any number) and the software lays them out itself, on the frame of one of the template's
+layouts and in the template's own text styles. It is for content that no pattern holds. Its `pattern` is
+`free`, and its content sits in `slots` under generated names (`b1Text`, `b2Chart`). See
+[free-slides.md](free-slides.md).
+
+## Colours
+
+A deck has the template's colours unless it asks for others: `colors` on the deck for every slide, or on a
+slide for that slide. The colour asked for takes the place of the template's main colour, and that colour's
+tints and shades follow. See [colors.md](colors.md).
+
 ## Deck fields
 
 Some text is the same on every slide, such as an organization or department line next to the logo. In the

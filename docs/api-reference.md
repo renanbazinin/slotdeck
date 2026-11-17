@@ -33,10 +33,10 @@ Deck JSON to pptx bytes. Synchronous, no model. Throws `DeckValidationError` whe
 ### `validateDeck`
 
 ```ts
-function validateDeck(manifest: TemplateManifest, deck: DeckSpec, options?: ValidateOptions): Issue[];
+function validateDeck(target: Template | TemplateManifest, deck: DeckSpec, options?: ValidateOptions): Issue[];
 ```
 
-Checks a deck against a manifest with the renderer's own rules.
+Checks a deck with the renderer's own rules, against a loaded template, or a manifest alone.
 
 ### `extractAssets`
 
@@ -110,9 +110,24 @@ interface DeckSpec {
   fields?: Record<string, string>;
   textScale?: number;
   layouts?: PatternDesign[];    // layouts made for this deck, built onto the template when it is rendered
+  colors?: DeckColors;          // colours in place of the template's, for every slide
+  patterns?: string[];          // the only patterns the deck was asked to use; the planner keeps to it
   slides: SlideSpec[];
 }
-interface SlideSpec { pattern: string; items?: number; slots: Record<string, SlotValue> }
+interface SlideSpec {
+  pattern: string;
+  items?: number;
+  slots: Record<string, SlotValue>;
+  blocks?: FreeBlockKind[];     // makes it a free slide (pattern 'free'): its parts in reading order
+  arrange?: FreeArrange;        // a free slide: how its parts are set out
+  base?: string;                // a free slide: the pattern whose frame it stands on
+  colors?: DeckColors;          // colours for this slide alone, in place of the deck's
+}
+interface DeckColors {
+  accent?: string;                  // takes the place of the template's main colour; six hex digits
+  accent2?: string;                 // the same for its second colour
+  replace?: Record<string, string>; // exact replacements of single colours, from one hex to another
+}
 type SlotValue = string | string[] | ImageRef | TableValue | ChartValue | null;
 interface ImageRef { asset: string; alt?: string; prompt?: string }
 interface TableValue { header: string[]; rows: string[][] }
@@ -157,8 +172,11 @@ Brief to deck JSON: `planOutline` then `writeDeck`.
 function planOutline(template: Template, brief: Brief, options: PlanOptions): Promise<DeckPlan>;
 ```
 
-Decides which pattern each slide uses and the point it makes. One model call. With `composeLayouts` set, it
-then makes new layouts for slides that none of the template's layouts shows well, as `composeLayouts` below does.
+Decides which pattern each slide uses and the point it makes. One model call. Where free slides are on offer
+(the `free` option, on unless `false`) a slide may be a free slide: its entry then has `pattern: 'free'` and lists
+its parts in `blocks`. With `composeLayouts` set and free slides not on offer, it then makes new layouts for
+slides that none of the template's layouts shows well, as `composeLayouts` below does. See "Free slides" in
+[generating.md](generating.md).
 
 ### `composeLayouts`
 
@@ -171,8 +189,9 @@ slide of running text, and makes up to `max` (default 2) new layouts for them in
 light model call decides, then each layout is composed with `composePattern`, side by side, on the frame of the
 layout its first slide had. The returned plan has the designs in `layouts` and its slides use them; the
 template is not changed. A layout that cannot be made is listed in `failed`, and its slides keep their layout.
-`planOutline` does the same when `composeLayouts` is set in its options. See "New layouts for a deck" in
-[generating.md](generating.md).
+`planOutline` does the same when `composeLayouts` is set in its options. Nothing is made for a plan that is
+limited to a list of patterns, nor while free slides are on offer: pass `free: false` to have layouts made. See
+"New layouts for a deck" in [generating.md](generating.md).
 
 ### `withLayouts`
 
@@ -188,10 +207,11 @@ for a template object and a list of layouts. Throws `DesignError` when a layout 
 ### `editPlan`
 
 ```ts
-function editPlan(template: Template, plan: DeckPlan, instruction: string, options: PlanOptions): Promise<{ plan: DeckPlan; summary: string }>;
+function editPlan(template: Template, plan: DeckPlan, instruction: string, options: PlanOptions & PlanSettings): Promise<{ plan: DeckPlan; summary: string }>;
 ```
 
-Changes a plan by instruction. One model call.
+Changes a plan by instruction. One model call. A free slide of the plan keeps its parts unless the instruction
+changes what that slide shows, and stays set out as it was wherever the answer does not say otherwise.
 
 ### `writeDeck`
 
@@ -199,7 +219,14 @@ Changes a plan by instruction. One model call.
 function writeDeck(template: Template, plan: DeckPlan, options: PlanOptions): Promise<PlanResult>;
 ```
 
-Writes the content of a plan's slides. One model call plus repairs.
+Writes the content of a plan's slides. One model call plus repairs. The counts of the plan are checked before
+any call: `items` that is not a whole number the pattern's row takes, or a free slide of more than 400 parts,
+is a `PlanError` that names the slide. A free slide of more than nine parts is
+written by calls of its own, three at a time, before that call. A part of a free slide that comes back without
+content is taken off the slide and named in `warnings`; it does not make the function throw. Of the photos a
+writer describes for one free slide, six are kept, and the warnings name the rest. Every number a chart shows
+must appear in the brief, or `warnings` names it; the check does not tell whether a number stands in the right
+chart.
 
 ### `planEdit`
 
@@ -207,7 +234,49 @@ Writes the content of a plan's slides. One model call plus repairs.
 function planEdit(template: Template, deck: DeckSpec, instruction: string, options: EditOptions): Promise<EditResult>;
 ```
 
-Applies an instruction to a deck and returns the new deck JSON, without pictures or rendering.
+Applies an instruction to a deck and returns the new deck JSON, without pictures or rendering. A free slide is
+changed part by part: the parts the instruction does not touch are carried over by code, and only parts that
+are new or change are written. The edit can also make a free slide, new or out of a slide of a pattern, where
+free slides are on offer. `rewritten` lists the slides that were written, and the free slides whose parts or
+arrangement code changed with nothing to write. A part that was to be written again and came back with nothing
+keeps what it had, and `warnings` says that the change was not made. It says so too for a slide the plan of the
+change had words for while it marked no part to be written, when the slide's title came back as it was
+(`slide 3: nothing on it was changed: ...`, with no slide number in the issue; the slide is not in
+`rewritten`). How a slide is set out is
+changed by a value the plan states; the plan's `auto` and 0 hand a slide back to the software only where the
+plan changes that slide. A title the writer leaves out stays, and the title of a slide of ten parts or more is
+changed, not removed. See "Free slides in an edit" in [generating.md](generating.md).
+
+### `recolorDeck`
+
+```ts
+function recolorDeck(deck: DeckSpec, colors: DeckColors | null, slides?: number[]): DeckSpec;
+```
+
+Sets colours on a deck, such as `{ accent: '1E6B3A' }`, and returns the new deck: no model is asked, and the
+deck given is not changed. Without `slides` they are the deck's colours; with `slides` (numbers from 1) those
+slides get them as their own; `null` removes them. An empty `slides` names no slide and is read as if it were
+left out.
+
+The edits set the same by code, from their options, with no model reading a colour out of the instruction:
+
+```ts
+// editPlan takes these beside PlanOptions, and writes them to the plan's brief.
+interface PlanSettings {
+  colors?: DeckColors | null;      // null returns to the template's colours
+  deckPatterns?: string[] | null;  // the person's list of patterns; null or [] lifts the limit
+}
+
+// planEdit takes these in EditOptions.
+//   colors?: DeckColors | null
+//   colorSlides?: number[]         numbers of the deck before the edit; empty means the whole deck
+//   deckPatterns?: string[] | null
+```
+
+`deckPatterns` is the person's list, kept in the plan and the deck (`Brief.patterns`, `DeckSpec.patterns`).
+`patterns` in the same options is still the app's own list, which narrows what is offered and is not kept.
+With `colorSlides`, `EditResult.recolored` holds the numbers those slides have in the new deck, and a slide
+the edit removed is named in `warnings`.
 
 ### `resolveAssets`
 
@@ -239,7 +308,8 @@ Whether a slide made from the pattern is running text and nothing else: the patt
 class PlanError extends Error {}
 ```
 
-Thrown when no usable plan can be made. The message says why.
+Thrown when no usable plan can be made, and by `writeDeck` for a plan whose counts cannot be written (a
+number of items the pattern does not take, a free slide of more than 400 parts). The message says why.
 
 ### `TEXT_SIZES`
 
@@ -261,6 +331,8 @@ interface Brief {
   fields?: Record<string, string>;
   textSize?: TextSize;
   textOnly?: boolean; // every slide plain text: only the template's plain text patterns are offered
+  patterns?: string[]; // the only patterns the person asked for, `free` among them for free slides; kept with the plan and the deck
+  colors?: DeckColors; // colours in place of the template's; copied to the deck
 }
 type ImageDensity = 'none' | 'low' | 'medium' | 'high';
 
@@ -274,6 +346,7 @@ interface PlanOptions {
   maxRepairs?: number;
   review?: DeckReview; // a second look at every draft; see "Design checks and reviews"
   composeLayouts?: number; // up to this many new layouts for the deck, in the template's own look; off (0) by default
+  free?: boolean; // whether a slide may be a free slide, laid out by the software from the parts the plan names; on unless false
   onProgress?: (event: PlanProgress) => void;
   signal?: AbortSignal;
 }
@@ -286,7 +359,13 @@ type PlanProgress =
 interface IconDef { id: string; description: string; data: Uint8Array }
 interface AssetDef { id: string; kind: 'photo' | 'graphic'; description: string; data: Uint8Array }
 
-interface OutlineEntry { pattern: string; purpose: string; items?: number }
+interface OutlineEntry {
+  pattern: string;
+  purpose: string;
+  items?: number;
+  blocks?: FreeBlockKind[]; // a free slide (pattern 'free'): its parts in reading order
+  arrange?: FreeArrange;    // a free slide: how its parts are set out, where the plan says so
+}
 interface DeckPlan { version: 1; title: string; brief: Brief; slides: OutlineEntry[]; layouts?: PatternDesign[] }
 interface PlanResult { deck: DeckSpec; warnings: Issue[]; outline: OutlineEntry[] }
 
@@ -306,8 +385,17 @@ interface EditOptions extends PlanOptions {
   fields?: Record<string, string>;
   direction?: Direction;
   imageDensity?: ImageDensity;
+  colors?: DeckColors | null;       // sets the deck's colours by code, as recolorDeck; null returns to the template's
+  colorSlides?: number[];           // gives `colors` to these slides alone, numbered as before the edit
+  deckPatterns?: string[] | null;   // the person's list of patterns from now on; null or [] lifts the limit
 }
-interface EditResult { deck: DeckSpec; summary: string; rewritten: number[]; warnings: Issue[] }
+interface EditResult {
+  deck: DeckSpec;
+  summary: string;
+  rewritten: number[];
+  recolored?: number[];             // with colorSlides: the numbers those slides have in the new deck
+  warnings: Issue[];
+}
 
 // generateDeck and editDeck add picture handling to the options above:
 interface GenerateOptions extends Omit<PlanOptions, 'onProgress'> {
@@ -325,7 +413,7 @@ interface EditDeckOptions extends Omit<EditOptions, 'onProgress'> {
 type GenerateProgress = PlanProgress | { stage: 'images'; done: number; total: number } | { stage: 'render' };
 
 interface GenerateResult { pptx: Uint8Array; deck: DeckSpec; assets: Record<string, Uint8Array>; warnings: Issue[]; outline: OutlineEntry[] }
-interface EditDeckResult { pptx: Uint8Array; deck: DeckSpec; assets: Record<string, Uint8Array>; warnings: Issue[]; summary: string; rewritten: number[] }
+interface EditDeckResult { pptx: Uint8Array; deck: DeckSpec; assets: Record<string, Uint8Array>; warnings: Issue[]; summary: string; rewritten: number[]; recolored?: number[] }
 
 interface ResolveOptions {
   images?: ImageProvider;
@@ -338,6 +426,86 @@ interface ResolveOptions {
 }
 ```
 
+## Free slides and colours
+
+### `freeSlide`, `freeContent`
+
+```ts
+function freeSlide(content: FreeSlideContent): SlideSpec;
+function freeContent(slide: SlideSpec): FreeSlideContent;
+
+interface FreeSlideContent {
+  title?: string;
+  blocks: FreeBlockContent[];
+  columns?: number;                           // how many blocks stand side by side on one line
+  lead?: 'left' | 'right' | 'top' | 'none';   // where the first block stands when it is the main one
+  base?: string;                              // the pattern whose frame the slide stands on
+  colors?: DeckColors;                        // colours for this slide alone
+}
+type FreeBlockContent =
+  | { text: string | string[]; heading?: string }
+  | { list: string[]; heading?: string }
+  | { card: { heading: string; text: string; icon?: ImageRef | string } }
+  | { figure: { value: string; label: string } }
+  | { step: { heading: string; text: string } }
+  | { quote: string; source?: string }
+  | { note: string }
+  | { chart: ChartValue; caption?: string }
+  | { table: TableValue; caption?: string }
+  | { photo: ImageRef | string; caption?: string }
+  | { graphic: ImageRef | string; caption?: string };
+```
+
+`freeSlide` writes a free slide: one the software lays out itself from the blocks given, any number of them,
+in reading order. It needs no template and returns the slide as a deck holds it: the kinds in `blocks`, the
+content in `slots` under `b1Text`, `b2Chart`, and so on. `freeContent` is its reverse, for code that adds,
+removes or reorders blocks. `freeSlide` throws an `Error` for a block that is none of the kinds. See
+[free-slides.md](free-slides.md).
+
+### `isFreeSlide`, `FREE_PATTERN`, `FREE_BLOCK_KINDS`
+
+```ts
+function isFreeSlide(slide: Pick<SlideSpec, 'blocks'>): boolean;
+const FREE_PATTERN: 'free';
+const FREE_BLOCK_KINDS: readonly ['text', 'list', 'card', 'figure', 'step', 'quote', 'note', 'chart', 'table', 'photo', 'graphic'];
+type FreeBlockKind = (typeof FREE_BLOCK_KINDS)[number];
+interface FreeArrange { columns?: number; lead?: 'left' | 'right' | 'top' | 'none' }
+```
+
+A slide is a free slide when it lists `blocks`; its `pattern` is then `FREE_PATTERN`. `FreeArrange` is the type
+of `SlideSpec.arrange`.
+
+### `freeBaseRefusal`
+
+```ts
+function freeBaseRefusal(template: Template, base: string): string | undefined;
+```
+
+Why a layout of the template cannot be the frame that free slides stand on, as a sentence, or `undefined` when
+it can: `the template has no layout "gone"`, `the layout "two-columns" has a row of columns, which the software
+lays out itself`, `the layout "cover" has its title low on the slide: ...`. `base` is the id of a pattern, as
+`free.base` in a manifest or `base` on a slide names it. A studio asks it before it offers a layout as the
+frame. A slide that names a layout that cannot be one stands on the template's usual frame, and the check of the
+deck says why. See "What a template gives a free slide" in [free-slides.md](free-slides.md).
+
+### `templatePalette`
+
+```ts
+function templatePalette(template: Template): TemplatePalette;
+
+interface TemplatePalette {
+  accent?: string;      // the template's main colour: what "accent" in a deck's colours takes the place of
+  accent2?: string;     // its second colour
+  ink?: string;         // the dark colour its text is set in, when that is not black or a grey
+  families: ColorFamily[];                         // the most used first; greys, black and white belong to none
+  colors: Array<{ hex: string; share: number }>;   // every colour found, the most used first
+}
+interface ColorFamily { base: string; members: string[]; share: number }
+```
+
+The colours of a template as its patterns use them, read from the pptx with no model. Colours are six hex
+digits in upper case. `manifest.colors` states the main and second colour outright. See [colors.md](colors.md).
+
 ## Chat tools and storage
 
 ### `presentationTools`
@@ -346,7 +514,12 @@ interface ResolveOptions {
 function presentationTools(options: PresentationToolsOptions): PresentationTools;
 ```
 
-Builds the four tools for a chat model.
+Builds the four tools for a chat model. `call` runs one of the four declared names and answers
+`{ output: { error } }` for any other name. An error is told to the chat model as its message, with one
+exception: a `TypeError`, `RangeError` or `SyntaxError` of the software itself, which a stored plan or
+presentation that is no longer what the tools saved brings about, is told as one sentence that says so. What
+the `llm`, the `images` provider, the `store` or the `review` throws is always passed on as its message. See
+"Errors" in [chat-tools.md](chat-tools.md).
 
 ### `TOOL_NAMES`
 
@@ -404,6 +577,10 @@ interface PresentationToolsOptions {
   fields?: Record<string, string>;
   numberPatterns?: 'from-brief' | 'always' | 'never';
   review?: DeckReview; // a second look at every draft the tools write
+  composeLayouts?: number; // new layouts for a new plan, as for planOutline; none while free slides are on offer
+  free?: boolean; // whether a slide may be a free slide, as `free` of PlanOptions; on unless false
+  patterns?: string[]; // the only layouts the tools may use: the app's own list; a person may narrow it, not widen it
+  colors?: boolean; // whether a person may ask for another colour; false leaves accent_color and color_slides out
   thumbnail?: (patternId: string) => string | undefined;
   preview?: PreviewProvider; // draws every presentation the tools create or change
   newId?: (kind: 'plan' | 'deck') => string;
@@ -1067,6 +1244,8 @@ interface TemplateManifest {
   alignOnDirectionChange?: AlignPolicy;
   textScale?: number; // enlarges body text in every deck made from the template
   shrinkText?: { to: number; minSize?: number }; // lets text that does not fit be set smaller; needs fonts
+  colors?: { accent?: string; accent2?: string } | false; // the main and second colour; false keeps every deck in the template's own
+  free?: { base?: string; styles?: Record<string, { slide: number; shape: string }> } | false; // free slides; false stops them being offered
   patterns: PatternDef[];
 }
 interface PatternDef {
@@ -1143,5 +1322,11 @@ interface ChartSlotDef {
   colors?: string[];
   text?: TableTextStyle;
   lineColor?: string;
+  detail?: 'full' | 'compact' | 'spark'; // how much a chart shows besides its data; default 'full'
+  drawn?: ChartDrawn; // set by the software on the charts of a free slide; a manifest does not state it
 }
 ```
+
+`ChartDrawn` is not exported: it is what the software works out for a chart whose place on the slide is known
+(its frame, the colour it stands on, the end of its value axis, whether it draws numbers, a value axis and a
+legend, and how its numbers are written). A chart slot without it is drawn as it always was.

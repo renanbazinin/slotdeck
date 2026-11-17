@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { placeholderPhoto } from '../examples/placeholder.ts';
 import { DeckValidationError, PptxPackage, loadTemplate, renderDeck, validateDeck } from '../src/index.ts';
@@ -7,6 +8,7 @@ import { ContentTypes, readRels, relsOwner, resolveTarget } from '../src/pptx/pa
 import { readPresentation } from '../src/pptx/presentation.ts';
 import { NS, childElement, childElements, descendants, parseXml, path, rootElement } from '../src/pptx/xml.ts';
 import type { Element } from '../src/pptx/xml.ts';
+import { writable } from '../src/util/chars.ts';
 import { buildFixturePptx, fixtureManifest } from './fixture.ts';
 
 const fixture = buildFixturePptx();
@@ -233,6 +235,42 @@ test('validation reports problems without rendering', () => {
 
   const result = render({ slides: [contentSlide({ title: 'x'.repeat(21) })] });
   assert.equal(result.warnings.length, 1, 'warnings are returned, not thrown');
+});
+
+test('a value that is no text is reported as one, and nothing throws', () => {
+  const check = (slots: Record<string, unknown>) =>
+    validateDeck(fixtureManifest, { version: 1, slides: [contentSlide(slots as SlideSpec['slots'])] }, { assets: Object.keys(assets) }).map((issue) => `${issue.slot}: ${issue.message}`);
+  assert.deepEqual(check({ title: 2025 }), ['title: expected text']);
+  assert.deepEqual(check({ title: true }), ['title: expected text']);
+  assert.deepEqual(check({ body: ['One', 24] }), ['body: expected text']);
+  assert.deepEqual(check({ body: ['One', null] }), ['body: expected text']);
+  assert.deepEqual(check({ body: [{ text: 'One' }] }), ['body: expected text']);
+  assert.deepEqual(check({ note: { asset: 'square' } }), ['note: expected text']);
+  // Rendering answers with the same issue, as an error of the deck.
+  assert.throws(() => render({ slides: [contentSlide({ title: 2025 } as unknown as SlideSpec['slots'])] }), (error: unknown) => error instanceof DeckValidationError && /title: expected text/.test(error.message));
+});
+
+test('characters that no file can hold never reach a part, and a vertical tab breaks the line', () => {
+  // A vertical tab is the line break of text copied out of a text box; the others come with pasted text too.
+  const { pkg, slide } = render({ slides: [contentSlide({ title: 'אחד\u000Bשניים\u0001', body: ['ראשון\u000C', 'שני\uFFFE\uD83D'], photo: { asset: 'wide', alt: 'A wide\u000Bphoto\u0008' } })] });
+  const xml = pkg.readText('ppt/slides/slide1.xml');
+  assert.doesNotMatch(xml, /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+  assert.deepEqual(paragraphs(slide(1), '2').map(textOf), ['אחד', 'שניים']);
+  assert.deepEqual(paragraphs(slide(1), '3').map(textOf), ['ראשון', 'שני']);
+  assert.equal(path(shape(slide(1), '4') as Element, [NS.p, 'nvPicPr'], [NS.p, 'cNvPr'])?.getAttribute('descr'), 'A wide photo');
+  // The count that is checked is the count that is drawn.
+  const issues = validateDeck(fixtureManifest, { version: 1, slides: [contentSlide({ title: `${'x'.repeat(20)}\u0001\u0002` })] }, { assets: Object.keys(assets) });
+  assert.deepEqual(issues, []);
+  // The two characters at the end of the plane go, and a pair of surrogates stays whole.
+  assert.equal(writable('a\uFFFEb\uFFFFc\u{1F6B2}d'), 'abc\u{1F6B2}d');
+  // The code names these characters by their numbers. Written as themselves they are invisible, and
+  // a tool that drops such characters from a file would take them out of the check without a trace.
+  assert.doesNotMatch(readFileSync(new URL('../src/util/chars.ts', import.meta.url), 'utf8'), /[^\t\n\r\x20-\x7E]/);
+  // The tests that give such characters to the code name them by their numbers too: one written as
+  // itself here would be dropped by the same tools, and the assertion over it would test nothing.
+  for (const file of ['render.test.ts', 'free.test.ts']) {
+    assert.doesNotMatch(readFileSync(new URL(`./${file}`, import.meta.url), 'utf8'), /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/, file);
+  }
 });
 
 test('content types list exactly the parts that exist', () => {

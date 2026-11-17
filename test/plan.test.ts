@@ -82,7 +82,8 @@ test('the content schema holds exactly the chosen slides and the slots the model
   await planDeck(template, brief, { llm });
 
   const outlineSchema = schemaOf(requests[0]);
-  assert.deepEqual(outlineSchema.properties.slides?.items?.properties.pattern?.enum, ['content', 'closing']);
+  // The template's patterns that can be filled, and `free`: a slide the software lays out from the parts a plan names.
+  assert.deepEqual(outlineSchema.properties.slides?.items?.properties.pattern?.enum, ['content', 'closing', 'free']);
 
   const schema = schemaOf(requests[1]);
   assert.deepEqual(Object.keys(schema.properties), ['s1', 's2']);
@@ -109,19 +110,25 @@ test('patterns the caller cannot fill are not offered', async () => {
   // No `closing` deck field: the closing pattern is unusable.
   const noField = scripted({ title: 'T', slides: [{ pattern: 'content', purpose: 'p' }] }, { s1: content.s1 });
   await planDeck(template, { prompt: 'x', language: 'en' }, { llm: noField.llm });
-  assert.deepEqual(schemaOf(noField.requests[0]).properties.slides?.items?.properties.pattern?.enum, ['content']);
+  assert.deepEqual(schemaOf(noField.requests[0]).properties.slides?.items?.properties.pattern?.enum, ['content', 'free']);
 
-  // No photos: the content pattern needs one, so only closing is left.
+  // No photos: the content pattern needs one, so of the template's patterns only closing is left.
   const noPhotos = scripted({ title: 'T', slides: [{ pattern: 'closing', purpose: 'p' }] }, { s1: {} });
   await planDeck(template, { ...brief, imageDensity: 'none' }, { llm: noPhotos.llm });
-  assert.deepEqual(schemaOf(noPhotos.requests[0]).properties.slides?.items?.properties.pattern?.enum, ['closing']);
+  assert.deepEqual(schemaOf(noPhotos.requests[0]).properties.slides?.items?.properties.pattern?.enum, ['closing', 'free']);
 
-  await assert.rejects(planDeck(template, { prompt: 'x', imageDensity: 'none' }, { llm: scripted().llm }), (error: unknown) => {
+  // With no pattern left and free slides turned off, nothing can be planned, and the error says why.
+  await assert.rejects(planDeck(template, { prompt: 'x', imageDensity: 'none' }, { llm: scripted().llm, free: false }), (error: unknown) => {
     assert.ok(error instanceof PlanError);
     assert.match(error.message, /content needs a photo/);
     assert.match(error.message, /closing needs the deck field "closing"/);
     return true;
   });
+  // With them, a deck can still be planned: from free slides alone.
+  const freeOnly = scripted({ title: 'T', slides: [{ pattern: 'free', purpose: 'p', shows: [{ kind: 'text', number: 1 }], shows_main: 'auto', side_by_side: 0 }] });
+  const plan = await planOutline(template, { prompt: 'x', imageDensity: 'none' }, { llm: freeOnly.llm });
+  assert.deepEqual(schemaOf(freeOnly.requests[0]).properties.slides?.items?.properties.pattern?.enum, ['free']);
+  assert.deepEqual(plan.slides, [{ pattern: 'free', purpose: 'p', blocks: ['text'] }]);
 });
 
 test('icon slots are offered only with an icon set, as a choice of ids', async () => {
@@ -146,7 +153,7 @@ test('icon slots are offered only with an icon set, as a choice of ids', async (
 
   const without = scripted({ title: 'T', slides: [{ pattern: 'closing', purpose: 'p' }] }, { s1: {} });
   await planDeck(iconTemplate, brief, { llm: without.llm });
-  assert.deepEqual(schemaOf(without.requests[0]).properties.slides?.items?.properties.pattern?.enum, ['closing']);
+  assert.deepEqual(schemaOf(without.requests[0]).properties.slides?.items?.properties.pattern?.enum, ['closing', 'free']);
 });
 
 test('a draft over a slot budget is sent back with the list of problems', async () => {
@@ -317,6 +324,27 @@ test('gemini() turns API failures into errors that carry the status', async () =
   await assert.rejects(gemini({ model: 'm', fetch: notJson.fetch }).generateJson({ system: '', prompt: '', schema: {} }), /did not return valid JSON/);
 });
 
+test('an answer of the right status and the wrong shape, as a gateway may give, is a GeminiError', async () => {
+  const ask = (answer: unknown) => gemini({ model: 'm', fetch: fakeFetch(200, answer).fetch }).generateJson({ system: '', prompt: '', schema: {} });
+  const isGemini = (error: unknown) => error instanceof GeminiError;
+  // Steps that are no list of steps, or steps and blocks that are none: no text came, which is no JSON.
+  for (const steps of ['x', 5, { type: 'model_output' }, [null], [5], [{ type: 'model_output', content: null }], [{ type: 'model_output', content: 'text' }], [{ type: 'model_output', content: [null, 7] }]]) {
+    await assert.rejects(ask({ status: 'completed', steps }), isGemini, JSON.stringify(steps));
+  }
+  // Errors that are no list of errors with messages say nothing more than the status.
+  for (const errors of ['x', 5, { message: 'm' }, [null], [5], [{ message: 7 }]]) {
+    await assert.rejects(ask({ status: 'failed', errors }), (error: unknown) => isGemini(error) && (error as Error).message === 'Gemini interaction ended with status "failed"', JSON.stringify(errors));
+  }
+  // Among them, the messages there are are still said.
+  await assert.rejects(ask({ status: 'failed', errors: [null, { message: 'blocked' }] }), /status "failed": blocked$/);
+  // An image whose data is no base64 text is no picture.
+  const picture = (data: unknown) => geminiImages({ model: 'm', fetch: fakeFetch(200, { status: 'completed', steps: [{ type: 'model_output', content: [{ type: 'image', mime_type: 'image/png', data }] }] }).fetch }).generateImage({ prompt: 'x', kind: 'photo', aspectRatio: 1 });
+  for (const data of ['not base64 !', 'a', 12345, { bytes: 'x' }]) {
+    await assert.rejects(picture(data), (error: unknown) => isGemini(error) && /an image that cannot be read/.test((error as Error).message), JSON.stringify(data));
+  }
+  await assert.rejects(geminiImages({ model: 'm', fetch: fakeFetch(200, { status: 'completed', steps: [null] }).fetch }).generateImage({ prompt: 'x', kind: 'photo', aspectRatio: 1 }), /returned no image/);
+});
+
 test('geminiImages() requests the closest supported ratio and decodes the picture', async () => {
   const base64 = Buffer.from(png).toString('base64');
   const { fetch, calls } = fakeFetch(200, {
@@ -396,7 +424,7 @@ test('a text-only deck is offered the plain text patterns and nothing else', asy
 
   // Without the wish every usable pattern is on offer, and the plain ones are named as such.
   await planOutline(template, { prompt: 'Dogs', slideCount: 1, fields, imageDensity: 'none' }, { llm, icons, layout: 'adaptive' });
-  assert.deepEqual(patternsOffered(requests[0]), ['closing', 'cards']);
+  assert.deepEqual(patternsOffered(requests[0]), ['closing', 'cards', 'free']);
   assert.match(requests[0]?.prompt ?? '', /- closing: Closing words\. Plain text\.\n/);
   assert.match(requests[0]?.prompt ?? '', /- cards: A row of cards\.\n/);
   assert.match(requests[0]?.prompt ?? '', /A wish about the kind of slides \(text only, no tables, only cards\) decides which patterns may be used, and comes before variety/);
@@ -404,14 +432,20 @@ test('a text-only deck is offered the plain text patterns and nothing else', asy
 
   // With it, cards are not offered at all, so the wish cannot be missed; and repeating a pattern is said to be fine.
   const plan = await planOutline(template, { prompt: 'Dogs', slideCount: 1, fields, textOnly: true }, { llm: { generateJson: async (request: JsonRequest) => (requests.push(request), { title: 'T', slides: [{ pattern: 'closing', purpose: 'x' }] }) }, icons, layout: 'adaptive' });
-  assert.deepEqual(patternsOffered(requests[1]), ['closing']);
+  // A free slide stays on offer, with parts of text alone, and its line says that it is plain text too.
+  assert.deepEqual(patternsOffered(requests[1]), ['closing', 'free']);
+  assert.match(requests[1]?.prompt ?? '', /\n- free: A slide the software lays out itself from the parts you name in "shows", any number of each: text \([^)]*\), list \([^)]*\), quote \([^)]*\), note \([^)]*\)\. .* Plain text\.\n\n/);
   assert.match(requests[1]?.prompt ?? '', /The deck is text only, and every pattern in the list is plain text\. Using the same pattern for several slides in a row is expected\./);
   assert.doesNotMatch(requests[1]?.prompt ?? '', /vary the patterns/i);
   assert.equal(plan.brief.textOnly, true, 'the wish stays with the plan');
-  // The answer is given room for a plan of this size and no more.
-  assert.equal(requests[1]?.maxOutputTokens, 400 + 160);
+  // The answer is given room for a plan of this size and no more: a slide, and the parts it may name.
+  assert.equal(requests[1]?.maxOutputTokens, 400 + 160 + 12);
+  // With free slides turned off, the plain text patterns are all there is, in the room of before.
+  await planOutline(template, { prompt: 'Dogs', slideCount: 1, fields, textOnly: true }, { llm, icons, layout: 'adaptive', free: false });
+  assert.deepEqual(patternsOffered(requests[2]), ['closing']);
+  assert.equal(requests[2]?.maxOutputTokens, 400 + 160);
 
-  // A template without a plain text pattern says so.
+  // A template without a plain text pattern, and with no layout a free slide could stand on, says so.
   const cardsOnly = loadTemplate(pptx, { ...cardsManifest, patterns: cardsManifest.patterns.filter((pattern) => pattern.id === 'cards') });
   await assert.rejects(planOutline(cardsOnly, { prompt: 'Dogs', textOnly: true }, { llm, icons }), /has no plain text pattern, so a text-only deck cannot be planned/);
 });

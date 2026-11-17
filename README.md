@@ -17,6 +17,10 @@ the template's own slides and fills them, so the design is never redrawn.
   ("shorten slide 3") and rendered again. Charts are native PowerPoint charts with their data inside.
 - **Any language, either direction.** A Hebrew or Arabic deck on a left-to-right template mirrors its text and
   the order of its cards, and the other way round.
+- **Room for what no layout holds.** A slide may list its parts instead of naming a pattern: one paragraph,
+  a chart beside three cards, twelve charts, two hundred. The code lays such a **free slide** out on the
+  template's own frame, in the template's own text styles. A deck, or a single slide, may also ask for other
+  **colours** than the template's.
 - **A studio for templates.** A model drafts the manifest that describes a template; you correct it by hand or
   by instruction; the code checks every change against the pptx.
 
@@ -306,6 +310,33 @@ manifest allows and the code moves the shapes; the model never positions anythin
   operation (`derivePattern`) makes each, moving the shapes and measuring the budgets again; the header, logo
   and page number stay where they are. In the demo template `text-and-photo-mirrored`, `photo-stat-mirrored`
   and `list-with-photo-mirrored` were made this way.
+
+### Free slides and colours
+
+```ts
+import { freeSlide, renderDeck } from 'slotdeck';
+import type { DeckSpec } from 'slotdeck';
+
+const deck: DeckSpec = {
+  version: 1,
+  fields: { organizationDepartment: 'Riverbend Bike Share' },
+  colors: { accent: '1565C0' },                       // the whole deck in blue; its tints follow
+  slides: [
+    { pattern: 'cover', slots: { title: 'A year of rides', subtitle: 'Riverbend Bike Share, 2025' } },
+    freeSlide({
+      title: 'Rides by station',
+      blocks: [{ chart: north, caption: 'North Bridge' }, { chart: tram, caption: 'Tram Square' }, { note: 'Both grew.' }],
+    }),
+  ],
+};
+const { pptx } = renderDeck(template, deck);
+```
+
+A free slide is laid out by rules, with no model: one kind of block as a grid, several kinds in bands, a single
+chart or picture among a few cards beside them, a note across the bottom. Texts, panels and tables are copies
+of shapes the template has. The planner uses free slides for content that no pattern shows, and the chat
+tools take a colour as an argument. See [docs/free-slides.md](docs/free-slides.md) and
+[docs/colors.md](docs/colors.md).
 
 ### Another layout for a slide
 

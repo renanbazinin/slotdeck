@@ -22,6 +22,13 @@ export interface SampleOptions {
 }
 
 /**
+ * The most a sample holds, whatever the budgets of the manifest say: the characters of one text
+ * (what `boxCapacity` searches up to), its paragraphs, and the columns, rows and characters in a
+ * cell of a table. No budget of a real manifest comes near them.
+ */
+const SAMPLE_MOST = { chars: 6000, paragraphs: 100, columns: 50, rows: 200, cellChars: 1000 };
+
+/**
  * Builds a deck that uses every pattern once and fills every slot close to its limit, with the
  * template's own sample words. Rendering it is the quickest way to see whether a manifest's
  * budgets are right: text that overflows here will overflow in real decks.
@@ -60,21 +67,24 @@ export function sampleDeck(template: Template, options: SampleOptions = {}): { d
         // The sample is filled to the budgets real decks get, which the template's own text scale shrinks.
         const budget = textBudget(slot, manifest.textScale ?? 1);
         const several = (slot.maxParagraphs ?? 1) > 1;
-        const paragraphs = several ? (budget.maxParagraphs ?? 2) : 1;
+        // A sample is a slide to look at: it holds no more than the limits below, whatever a
+        // manifest's budgets say. A budget of a thousand million characters is a mistake of the
+        // manifest, and must not be answered with a text of that length.
+        const paragraphs = several ? Math.min(budget.maxParagraphs ?? 2, SAMPLE_MOST.paragraphs) : 1;
         const held = measure ? boxCapacity(measure, pattern, slot, words, paragraphs, manifest.textScale ?? 1, items) : undefined;
         const total =
-          held !== undefined ? Math.max(1, Math.floor(held * fill)) : budget.maxChars !== undefined ? Math.max(1, Math.floor(budget.maxChars * fill)) : words.join(' ').length || 12;
+          held !== undefined ? Math.max(1, Math.floor(held * fill)) : budget.maxChars !== undefined ? Math.max(1, Math.floor(Math.min(budget.maxChars, SAMPLE_MOST.chars) * fill)) : words.join(' ').length || 12;
         const each = Math.max(1, Math.floor(total / paragraphs));
         const text = Array.from({ length: paragraphs }, (_, index) => filler(words, each, index));
         slots[slot.name] = several ? text : (text[0] as string);
       } else if (slot.kind === 'image') {
         slots[slot.name] = { asset: slot.imageKind === 'photo' ? 'sample-photo' : slot.imageKind === 'icon' ? 'sample-icon' : 'sample-graphic' };
       } else if (slot.kind === 'table') {
-        const columns = slot.maxColumns ?? 3;
-        const cell = 'x'.repeat(Math.max(1, Math.floor((tableAtScale(slot, manifest.textScale ?? 1).maxCellChars ?? 10) * fill)));
+        const columns = Math.min(slot.maxColumns ?? 3, SAMPLE_MOST.columns);
+        const cell = 'x'.repeat(Math.max(1, Math.floor(Math.min(tableAtScale(slot, manifest.textScale ?? 1).maxCellChars ?? 10, SAMPLE_MOST.cellChars) * fill)));
         slots[slot.name] = {
           header: Array.from({ length: columns }, () => cell),
-          rows: Array.from({ length: slot.maxRows ?? 3 }, () => Array.from({ length: columns }, () => cell)),
+          rows: Array.from({ length: Math.min(slot.maxRows ?? 3, SAMPLE_MOST.rows) }, () => Array.from({ length: columns }, () => cell)),
         };
       } else {
         const categories = Math.min(slot.maxCategories ?? 4, 6);

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -68,9 +68,10 @@ test('the tools are declared with the arguments a chat model must give', () => {
     tools.definitions.map((tool) => [tool.name, (tool.parameters as { required: string[] }).required]),
     [
       ['plan_presentation', ['topic']],
-      ['edit_presentation_plan', ['plan_id', 'instruction']],
+      // A change of colour alone needs no instruction, so the instruction is required of neither tool that changes something.
+      ['edit_presentation_plan', ['plan_id']],
       ['create_presentation', ['plan_id']],
-      ['edit_presentation', ['presentation_id', 'instruction']],
+      ['edit_presentation', ['presentation_id']],
     ],
   );
   for (const tool of tools.definitions) assert.ok(tool.description.length > 40);
@@ -161,6 +162,81 @@ test('problems come back as an error the model can act on', async () => {
   assert.match(String((await tools.call(TOOL_NAMES.plan, {})).output.error), /"topic" is required/);
   assert.match(String((await tools.call('unknown_tool', {})).output.error), /Unknown tool/);
   assert.match(String((await tools.call(TOOL_NAMES.plan, { topic: 'x' })).output.error), /usable outline/);
+});
+
+test('only a declared tool is run, whatever is given for a name', async () => {
+  const { tools, requests } = setup();
+  // "constructor" and "toString" are keys of every object, and no tools.
+  for (const name of ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf', '__defineGetter__', '', 'PLAN_PRESENTATION', 'plan_presentation ']) {
+    assert.deepEqual(await tools.call(name, { topic: 'Bikes' }), { output: { error: `Unknown tool "${name}"` } });
+  }
+  // A name that is no text is no tool either, and the call still answers: a symbol cannot stand in a text as it is.
+  for (const [name, said] of [[5, '5'], [null, 'null'], [undefined, 'undefined'], [Symbol('x'), 'Symbol(x)'], [{}, '[object Object]']] as const) {
+    assert.deepEqual(await tools.call(name as unknown as string, { topic: 'Bikes' }), { output: { error: `Unknown tool "${said}"` } });
+  }
+  assert.equal(requests.length, 0);
+});
+
+test('a number of slides beyond what the plan tool declares is held to it', async () => {
+  const { tools, requests } = setup(outline, outline, outline);
+  const declared = (tools.definitions[0]?.parameters as { properties: { slide_count: { minimum: number; maximum: number } } }).properties.slide_count;
+  assert.deepEqual([declared.minimum, declared.maximum], [1, 30]);
+
+  for (const [given, taken] of [[30, 30], [31, 30], [1e9, 30]] as const) {
+    const planned = await tools.call(TOOL_NAMES.plan, { topic: 'A deck about dogs', language: 'en', slide_count: given });
+    assert.equal(planned.plan?.brief.slideCount, taken);
+    const request = requests.at(-1);
+    assert.match(request?.prompt ?? '', new RegExp(`Plan a deck of exactly ${taken} slides\\.`));
+    const slides = (request?.schema as { properties: { slides: { minItems: number; maxItems: number } } }).properties.slides;
+    assert.deepEqual([slides.minItems, slides.maxItems], [taken, taken]);
+    // The room for the answer is that of thirty slides, not of a thousand million.
+    assert.equal(request?.maxOutputTokens, requests[0]?.maxOutputTokens);
+  }
+});
+
+test('what the software trips over in the store is said in words; what the parts of the app say is passed on', async () => {
+  const { tools, store, requests } = setup();
+  const put = (key: string, text: string) => store.set(key, new TextEncoder().encode(text));
+  const noPlan = 'The stored plan could not be read. Make a new plan with plan_presentation.';
+  const noDeck = 'The stored presentation could not be read. Make it again: a new plan with plan_presentation, then create_presentation.';
+  // No JSON at all, JSON that is no plan and no presentation, and one with a part missing: a plan
+  // without its brief, which is also a presentation whose slide has no slots.
+  const partly = '{"version":1,"title":"T","slides":[{"pattern":"content","purpose":"p"}]}';
+  const kept = ['not json {', '', '5', '"plan"', '[]', '{}', '{"version":1,"slides":null}', '{"version":1,"title":"T","brief":{"prompt":"x"},"slides":[null]}', partly];
+  for (const text of kept) {
+    await put(storeKeys.plan('bad'), text);
+    await put(storeKeys.deck('bad'), text);
+    assert.deepEqual((await tools.call(TOOL_NAMES.create, { plan_id: 'bad' })).output, { error: noPlan }, text);
+    assert.deepEqual((await tools.call(TOOL_NAMES.editPlan, { plan_id: 'bad', instruction: 'Add a slide' })).output, { error: noPlan }, text);
+    assert.deepEqual((await tools.call(TOOL_NAMES.edit, { presentation_id: 'bad', instruction: 'Shorten slide 1' })).output, { error: noDeck }, text);
+    assert.deepEqual((await tools.call(TOOL_NAMES.edit, { presentation_id: 'bad', accent_color: '1E6B3A' })).output, { error: noDeck }, text);
+    // A colour alone is set by code, which needs no brief: the plan that lacks one is recoloured as it is.
+    if (text !== partly) assert.deepEqual((await tools.call(TOOL_NAMES.editPlan, { plan_id: 'bad', accent_color: '1E6B3A' })).output, { error: noPlan }, text);
+  }
+  assert.equal(requests.length, 0, 'no model is asked about a plan that cannot be read');
+  // What the store does not hold is still said as that.
+  await put(storeKeys.plan('bad'), 'null');
+  assert.match(String((await tools.call(TOOL_NAMES.create, { plan_id: 'bad' })).output.error), /no plan with id "bad"/);
+  // The plan tool reads nothing from the store. Where the software trips there, on arguments that cannot be read, it says that.
+  const noPlanning = 'The presentation could not be planned: the software failed on this request. Tell the user that it did not work.';
+  const unreadable = Object.defineProperty({}, 'topic', { enumerable: true, get: () => (undefined as unknown as { trim(): string }).trim() });
+  assert.deepEqual((await tools.call(TOOL_NAMES.plan, unreadable)).output, { error: noPlanning });
+  // The page on the tools quotes the three sentences as they are.
+  const page = readFileSync(new URL('../docs/chat-tools.md', import.meta.url), 'utf8').replace(/\s+/g, ' ');
+  for (const sentence of [noPlan, noDeck, noPlanning]) assert.ok(page.includes(`\`${sentence}\``), sentence);
+
+  // A network that fails is a TypeError too. What the app's own model says goes to the chat model as it is,
+  const down = presentationTools({ template, store: memoryStore(), fields: { closing: 'x' }, llm: { generateJson: () => Promise.reject(new TypeError('fetch failed')) } });
+  assert.deepEqual((await down.call(TOOL_NAMES.plan, { topic: 'Dogs' })).output, { error: 'fetch failed' });
+  // and so does what its store says,
+  const closing = { title: 'T', slides: [{ pattern: 'closing', purpose: 'p' }] };
+  const full = presentationTools({ template, llm: scripted(closing).llm, fields: { closing: 'x' }, store: { get: async () => undefined, set: () => Promise.reject(new RangeError('The disk is full')) } });
+  assert.deepEqual((await full.call(TOOL_NAMES.plan, { topic: 'Dogs' })).output, { error: 'The disk is full' });
+  // and its image provider.
+  const blind = setup(outline, { s1: slideContent('Dogs are great', 'A dog'), s2: {} });
+  const dark = presentationTools({ template, llm: blind.llm, store: blind.store, fields: { closing: 'x' }, newId: () => 'plan_a', images: { generateImage: () => Promise.reject(new TypeError('fetch failed')) } });
+  await dark.call(TOOL_NAMES.plan, { topic: 'Dogs' });
+  assert.deepEqual((await dark.call(TOOL_NAMES.create, { plan_id: 'plan_a' })).output, { error: 'fetch failed' });
 });
 
 test('without an image provider, plans carry no photos', async () => {

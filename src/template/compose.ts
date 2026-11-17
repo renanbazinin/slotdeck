@@ -285,7 +285,7 @@ function cellsOf(box: Box, area: Box): Cells | undefined {
   return { column: c0 + 1, row: r0 + 1, width: c1 - c0, height: r1 - r0 };
 }
 
-interface ShapeLook {
+export interface ShapeLook {
   element: Element;
   fill: string;
   line: string;
@@ -300,7 +300,7 @@ const colorOf = (parent: Element | undefined): string => {
   return color ? (color.getAttribute('val') ?? '') : '';
 };
 
-function lookOf(element: Element): ShapeLook {
+export function lookOf(element: Element): ShapeLook {
   const spPr = childElement(element, NS.p, 'spPr');
   const ln = spPr && childElement(spPr, NS.a, 'ln');
   const run = descendants(element, NS.a, 'rPr')[0] ?? descendants(element, NS.a, 'endParaRPr')[0];
@@ -327,12 +327,21 @@ export function designKit(template: Template, inspected?: TemplateInfo, base?: s
   return kitWith(template, inspected ?? inspectTemplate(template.pkg), base)?.kit;
 }
 
-interface KitParts {
+export interface KitParts {
   kit: DesignKit;
   info: TemplateInfo;
   base: PatternDef;
   slide: SlideInfo;
   stays: Set<string>;
+}
+
+/**
+ * The frame a new slide stands on, as a composed layout has it: the layout whose slide gives it,
+ * the shapes of that slide that stay (frame and deck's own texts), and the kit. For a slide that
+ * the software lays out itself; `undefined` when the template has no layout with a title.
+ */
+export function frameParts(template: Template, base?: string, inspected?: TemplateInfo): KitParts | undefined {
+  return kitWith(template, inspected ?? inspectTemplate(template.pkg), base);
 }
 
 /** The name a composed slide carries in the pptx, so that a kit leaves it out. */
@@ -557,6 +566,11 @@ function review(design: PatternDesign, parts: KitParts, manifest: TemplateManife
   // Names the new pattern already has: the kept slots and the deck's own texts.
   const names = new Set<string>([...design.keep, ...parts.base.slots.filter((slot) => parts.stays.has(slot.shapeId)).map((slot) => slot.name)]);
 
+  // Every pair of parts is compared below, and a part takes at least one cell of the grid: a
+  // design of more parts than the grid has cells is refused before that, in one sentence.
+  if (design.elements.length > GRID * GRID) {
+    return { problems: [`The layout has ${design.elements.length} parts; a layout takes at most ${GRID * GRID}.`], soft: [], placed: [] };
+  }
   const placed: Placed[] = [];
   design.elements.forEach((element, index) => {
     const label = `Part ${index + 1}${element.name ? ` ("${element.name}")` : ''}`;
@@ -784,22 +798,30 @@ export function buildPattern(template: Template, design: PatternDesign): Compose
   return assemble(template, design, parts, checked.placed, checked.soft);
 }
 
-const built = new WeakMap<Template, Map<string, Template>>();
+// Remembered for the manifest object the layouts were built under: a template that was given
+// another manifest builds them again. A manifest object edited in place is not seen.
+const built = new WeakMap<Template, { manifest: TemplateManifest; known: Map<string, Template> }>();
 
 /**
  * The template with layouts made for one deck built onto it, in order: what a deck that carries
  * `layouts` is rendered, checked and edited with. The template itself is not changed. A layout
  * whose id the template already has is not built again: the template's own is used, as after the
  * layout was added to the template in a studio. Built once for a template and a list of layouts.
- * Throws {@link DesignError} when a layout no longer fits the template.
+ * Throws {@link DesignError} when a layout no longer fits the template, or when `layouts` is no
+ * list of layouts.
  */
 export function withLayouts(template: Template, layouts: readonly PatternDesign[] | undefined): Template {
+  // Layouts read from a stored deck may be anything: what is no list of layouts is said, not tripped over.
+  const given: unknown = layouts;
+  if (given !== undefined && given !== null && !(Array.isArray(given) && given.every((design) => typeof design === 'object' && design !== null && !Array.isArray(design)))) {
+    throw new DesignError(["The deck's layouts are no list of layouts, such as [{ \"id\": \"three-goals\", \"elements\": [...] }]"]);
+  }
   const wanted = (layouts ?? []).filter((design) => !template.manifest.patterns.some((pattern) => pattern.id === design.id));
   if (wanted.length === 0) return template;
   const key = JSON.stringify(wanted);
   let cache = built.get(template);
-  if (!cache) built.set(template, (cache = new Map()));
-  const known = cache.get(key);
+  if (!cache || cache.manifest !== template.manifest) built.set(template, (cache = { manifest: template.manifest, known: new Map() }));
+  const known = cache.known.get(key);
   if (known) return known;
   let result = template;
   for (const design of wanted) {
@@ -811,7 +833,7 @@ export function withLayouts(template: Template, layouts: readonly PatternDesign[
       throw new DesignError(reasons.map((reason) => `The deck's layout "${design.id}": ${reason}`));
     }
   }
-  cache.set(key, result);
+  cache.known.set(key, result);
   return result;
 }
 

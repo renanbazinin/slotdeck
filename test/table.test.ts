@@ -5,6 +5,7 @@ import { DeckValidationError, PptxPackage, loadTemplate, planDeck, planEdit, ren
 import type { DeckSpec, JsonRequest, LlmProvider, SlideSpec, TemplateManifest } from '../src/index.ts';
 import { slotSources } from '../src/template/manifest.ts';
 import { NS, childElement, childElements, descendants, parseXml, path, rootElement } from '../src/pptx/xml.ts';
+import { fitTable, setTable, tableFrameXml } from '../src/render/table.ts';
 import type { Element } from '../src/pptx/xml.ts';
 import { buildFixturePptx, fixtureManifest, tableManifest } from './fixture.ts';
 
@@ -128,6 +129,23 @@ test('table text takes the formatting the manifest gives it', () => {
   assert.equal(body.getAttribute('b'), null);
 });
 
+test('the rows of a placed table share its height equally, or as they are told to', () => {
+  const area = { x: 100000, y: 200000, cx: 6000000, cy: 1200000 };
+  const placed = (shares?: number[]) => {
+    const frame = rootElement(parseXml(tableFrameXml('9', area, { header: '0E7C7B', band: 'F2F2F2', line: 'D9D9D9' })));
+    setTable(frame, { header: ['Station', 'Docks'], rows: [['Tram Square', '24'], ['River Gate', '18']] }, { name: 'table', kind: 'table', shapeId: '9' }, 'ltr');
+    fitTable(frame, area, shares);
+    const tbl = descendants(frame, NS.a, 'tbl')[0] as Element;
+    const extent = path(frame, [NS.p, 'xfrm'], [NS.a, 'ext']);
+    return { rows: rowsOf(tbl).map((row) => Number(row.getAttribute('h'))), height: Number(extent?.getAttribute('cy')), above: path(cellsOf(rowsOf(tbl)[0] as Element)[0] as Element, [NS.a, 'tcPr'])?.getAttribute('marT') };
+  };
+  assert.deepEqual(placed(), { rows: [400000, 400000, 400000], height: 1200000, above: '40000' });
+  // A row whose cells take two lines is higher than one whose cells take one: 20, 40 and 40 parts of the height.
+  assert.deepEqual(placed([20, 40, 40]), { rows: [240000, 480000, 480000], height: 1200000, above: '24000' });
+  // Shares that do not match the rows are not followed.
+  assert.deepEqual(placed([1, 2]).rows, [400000, 400000, 400000]);
+});
+
 test('table values are validated', () => {
   const check = (slots: SlideSpec['slots']) => validateDeck(tableManifest, { version: 1, slides: [{ pattern: 'table', slots }] });
   const table = (header: string[], rows: string[][]) => ({ title: 'T', table: { header, rows } });
@@ -240,4 +258,28 @@ test('each row of a grid is mirrored on its own', () => {
     true,
   );
   assert.deepEqual(Object.fromEntries(sources), { a1: 'a3', a2: 'a2', a3: 'a1', b1: 'b3', b2: 'b2', b3: 'b1' });
+});
+
+test('the columns of a placed table share its width as they are told to, single columns can end on one edge, and cells have their text in the middle', () => {
+  const area = { x: 100000, y: 200000, cx: 6000000, cy: 1200000 };
+  const placed = (widths?: number[], aligns?: Array<'l' | 'r' | undefined>) => {
+    const frame = rootElement(parseXml(tableFrameXml('9', area, { header: '0E7C7B', band: 'F2F2F2', line: 'D9D9D9' })));
+    setTable(frame, { header: ['Station', 'Docks', 'Rides'], rows: [['Tram Square', '24', '410'], ['River Gate', '18', '365']] }, { name: 'table', kind: 'table', shapeId: '9' }, 'ltr', aligns);
+    fitTable(frame, area, undefined, widths);
+    const tbl = descendants(frame, NS.a, 'tbl')[0] as Element;
+    return {
+      columns: childElements(childElement(tbl, NS.a, 'tblGrid') as Element, NS.a, 'gridCol').map((column) => Number(column.getAttribute('w'))),
+      aligns: cellsOf(rowsOf(tbl)[1] as Element).map((cell) => descendants(cell, NS.a, 'pPr')[0]?.getAttribute('algn')),
+      heading: cellsOf(rowsOf(tbl)[0] as Element).map((cell) => descendants(cell, NS.a, 'pPr')[0]?.getAttribute('algn')),
+      anchors: [...new Set(descendants(tbl, NS.a, 'tcPr').map((props) => props.getAttribute('anchor')))],
+    };
+  };
+  // Left to themselves the columns share the width equally, and every cell starts where reading starts.
+  assert.deepEqual(placed(), { columns: [2000000, 2000000, 2000000], aligns: ['l', 'l', 'l'], heading: ['l', 'l', 'l'], anchors: ['ctr'] });
+  // A column of names twice as wide as two columns of numbers, which end on one edge, their headings with them.
+  const told = placed([200, 100, 100], [undefined, 'r', 'r']);
+  assert.deepEqual(told, { columns: [3000000, 1500000, 1500000], aligns: ['l', 'r', 'r'], heading: ['l', 'r', 'r'], anchors: ['ctr'] });
+  // The columns always take the whole width, and widths that do not match the columns are not followed.
+  assert.equal(placed([1, 1, 1.0001]).columns.reduce((sum, width) => sum + width, 0), 6000000);
+  assert.deepEqual(placed([2, 1]).columns, [2000000, 2000000, 2000000]);
 });

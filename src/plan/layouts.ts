@@ -3,6 +3,7 @@
 // and says what layout each would need. Those are composed in the template's own look, side by
 // side, and given to the slides they were asked for. The designs go into the plan and then the
 // deck; the template is not changed. A layout that cannot be made leaves its slides as they were.
+import { describeBlocks } from '../free/blocks.ts';
 import type { JsonSchema, LlmProvider } from '../llm/provider.ts';
 import type { Template } from '../render/render.ts';
 import { DesignError, composePattern, withLayouts } from '../template/compose.ts';
@@ -62,7 +63,8 @@ function decisionPrompt(plan: DeckPlan, offered: UsablePattern[], max: number, c
   const repeated = [...counts].filter(([, count]) => count >= 3).map(([id, count]) => `${id} on ${count} slides`);
   return [
     `The request:\n${brief.prompt.trim()}${brief.instructions?.trim() ? `\n${brief.instructions.trim()}` : ''}`,
-    `The deck, slide by slide (layout: what the slide says):\n${plan.slides.map((slide, index) => `${index + 1}. ${slide.pattern}${slide.items !== undefined ? ` (${slide.items} items)` : ''}: ${slide.purpose}`).join('\n')}`,
+    // A free slide is laid out for its own parts already; it is listed with them, and gets no new layout.
+    `The deck, slide by slide (layout: what the slide says):\n${plan.slides.map((slide, index) => `${index + 1}. ${slide.pattern}${Array.isArray(slide.blocks) ? ` (${describeBlocks(slide.blocks)})` : slide.items !== undefined ? ` (${slide.items} items)` : ''}: ${slide.purpose}`).join('\n')}`,
     repeated.length > 0 ? `The same layout is used for many slides: ${repeated.join(', ')}.` : '',
     `The layouts the template offers for this deck:\n${offered.map((pattern) => `- ${pattern.def.id}: ${pattern.def.description.slice(0, 200)}${isPlainText(pattern.def) ? ' Plain text.' : ''}`).join('\n')}`,
     [

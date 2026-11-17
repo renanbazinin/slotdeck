@@ -31,6 +31,21 @@ export interface TemplateManifest {
    * template loaded with fonts; without them nothing is shrunk.
    */
   shrinkText?: { to: number; minSize?: number };
+  /**
+   * The template's main colour and its second colour, as six hex digits without `#`: what a
+   * deck's `colors.accent` and `colors.accent2` take the place of. Left out, the software finds
+   * them by how much each colour is used (see `templatePalette`). State them for a template where
+   * that picks the wrong one. `false` keeps every deck in the template's own colours: a deck's
+   * `colors` are then left out, with a warning.
+   */
+  colors?: false | { accent?: string; accent2?: string };
+  /**
+   * Free slides: slides the software lays out itself on the frame of one of the template's
+   * layouts. `false` stops them being offered when a deck is planned (a stored deck that has
+   * one still renders). An object names the layout whose frame they stand on, and which of the
+   * template's shapes each part is a copy of, where the software's own choice does not suit.
+   */
+  free?: false | { base?: string; styles?: Record<string, { slide: number; shape: string }> };
   patterns: PatternDef[];
 }
 
@@ -39,10 +54,11 @@ const halfPoints = (size: number, scale: number): number => Math.round(size * sc
 /**
  * A table slot as it is at a body text scale: the text sizes the manifest states are enlarged,
  * and a cell holds less. A table whose sizes come from the sample table alone is left as it is,
- * since there is nothing stated to enlarge.
+ * since there is nothing stated to enlarge. So is the table of a slide the software laid out,
+ * which has a box of its own: its sizes and what it holds were worked out at the deck's scale.
  */
 export function tableAtScale(slot: TableSlotDef, scale: number): TableSlotDef {
-  if (scale === 1 || slot.bodyText?.size === undefined) return slot;
+  if (scale === 1 || slot.bodyText?.size === undefined || (slot as { box?: SlideBox }).box !== undefined) return slot;
   const scaled: TableSlotDef = { ...slot, bodyText: { ...slot.bodyText, size: halfPoints(slot.bodyText.size, scale) } };
   if (slot.headerText?.size !== undefined) scaled.headerText = { ...slot.headerText, size: halfPoints(slot.headerText.size, scale) };
   if (slot.maxCellChars !== undefined) scaled.maxCellChars = Math.max(1, Math.floor(slot.maxCellChars / (scale * scale)));
@@ -55,9 +71,23 @@ export function chartAtScale(slot: ChartSlotDef, scale: number): ChartSlotDef {
   return { ...slot, text: { ...slot.text, size: halfPoints(slot.text.size, scale) } };
 }
 
-/** The factor on body text for a deck: the template's own setting times the deck's. */
-export function bodyTextScale(manifest: Pick<TemplateManifest, 'textScale'>, deckScale = 1): number {
-  return (manifest.textScale ?? 1) * deckScale;
+/**
+ * What is wrong with a manifest's own `textScale`, as a sentence; `undefined` when it is a factor
+ * a deck can be made with. Every scaled size of every deck is multiplied by it, and one that is
+ * no number is written into the file as it is (`sz="NaN"`), which PowerPoint does not open. Left
+ * out or null it is 1; a number written as text is read as that number, as it always was.
+ */
+export function templateScaleProblem(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  const scale = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN;
+  if (Number.isFinite(scale) && scale > 0) return undefined;
+  const given = typeof value === 'number' ? String(value) : JSON.stringify(value);
+  return `the template's textScale is ${given}; it is a factor on body text such as 1.25, which changeManifest sets with "textScale"`;
+}
+
+/** The factor on body text for a deck: the template's own setting times the deck's. A deck's factor that is null, as an application stores a number that is not set, is 1. */
+export function bodyTextScale(manifest: Pick<TemplateManifest, 'textScale'>, deckScale: number | null = 1): number {
+  return (manifest.textScale ?? 1) * (deckScale ?? 1);
 }
 
 export interface PatternDef {
@@ -293,6 +323,42 @@ export interface ChartSlotDef extends SlotBase {
   text?: TableTextStyle;
   /** Colour of the gridlines and axis lines, as hex without `#`. */
   lineColor?: string;
+  /**
+   * How much a chart shows besides its data. `full` (the default): numbers on the bars,
+   * gridlines, axes and a legend. `compact`: no numbers and no gridlines, for a chart a few
+   * inches wide. `spark`: no axes and no legend either, for a chart among many on a slide.
+   */
+  detail?: 'full' | 'compact' | 'spark';
+  /**
+   * How the chart is drawn in a place whose size is known. The software sets it for the charts
+   * of a slide it lays out itself; a manifest does not state it, and a chart slot without it is
+   * drawn as it always was.
+   */
+  drawn?: ChartDrawn;
+}
+
+/** What is worked out for a chart whose place on the slide is known. Lengths in points. */
+export interface ChartDrawn {
+  /** The frame the chart is drawn in. */
+  width: number;
+  height: number;
+  /** The colour the chart stands on: colours past the end of the slot's are tints towards it. */
+  ground?: string;
+  /**
+   * Where the value axis ends, and the step between its lines when the axis is shown. It starts
+   * at `min`, or at nothing when that is left out. Like charts of one slide are given the same
+   * axis, so that a bar of one can be read against a bar of the next. Left out, the chart keeps
+   * the scale its own values give it.
+   */
+  axis?: { max: number; step?: number; min?: number };
+  /** The numbers are written at the bars. Left out: as the slot's `detail` says. */
+  numbers?: boolean;
+  /** `false`: no value axis is drawn, because the numbers at the bars say it all. */
+  valueAxis?: boolean;
+  /** `false`: the chart draws no legend, because its slide shows one for all its charts. */
+  legend?: boolean;
+  /** How its numbers are written, where that is decided for several charts together. Left out, by the chart's own values. */
+  look?: { divisor: 1 | 1000 | 1000000; suffix: '' | 'K' | 'M' | '%'; decimals: number };
 }
 
 export type SlotDef = TextSlotDef | ImageSlotDef | TableSlotDef | ChartSlotDef;
