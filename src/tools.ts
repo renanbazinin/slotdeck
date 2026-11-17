@@ -13,6 +13,7 @@ import type { AssetDef, CatalogContext, IconDef, ImageDensity } from './plan/cat
 import { planEdit, recolorDeck } from './plan/edit.ts';
 import type { EditOptions } from './plan/edit.ts';
 import { entryBlocks, freeOnOffer, isFreeEntry, partLabel, severalOnOneSlide } from './plan/free.ts';
+import { readWords } from './plan/length.ts';
 import { editPlan, patternIds, planOutline, withSettings, writeDeck } from './plan/plan.ts';
 import type { Brief, DeckPlan, PlanOptions, PlanSettings } from './plan/plan.ts';
 import { previewExtension } from './preview/provider.ts';
@@ -531,6 +532,8 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
     language: plan.brief.language ?? template.manifest.language,
     ...echoWishes(plan.brief.colors, plan.brief.patterns),
     slides: plan.slides.map((slide, index) => {
+      // The words asked for a slide, so that the model can tell the user how long its text will be.
+      const words = readWords(slide.words);
       // A free slide is laid out for its own parts: it has no description to quote and no picture to show.
       if (isFreeEntry(slide) && !patterns.has(slide.pattern)) {
         return {
@@ -538,6 +541,7 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
           layout: FREE_PATTERN,
           layout_description: `A slide laid out for this presentation: ${describeBlocks(entryBlocks(slide))}.`,
           purpose: slide.purpose,
+          ...(words !== undefined ? { words } : {}),
           free_layout: true,
         };
       }
@@ -548,6 +552,7 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
         layout_description: own?.description ?? patterns.get(slide.pattern)?.description,
         purpose: slide.purpose,
       };
+      if (words !== undefined) line.words = words;
       // A layout made for this deck has no picture in the app; the model can say it is new.
       if (own) line.new_layout = true;
       const thumbnail = own ? undefined : options.thumbnail?.(slide.pattern);

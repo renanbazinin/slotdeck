@@ -10,9 +10,11 @@ import { withLayouts } from '../template/compose.ts';
 import { TEXT_SIZES, effectiveSlots, itemCount, itemRange } from '../template/manifest.ts';
 import type { Direction, PatternDef, TextSize } from '../template/manifest.ts';
 import { measurerFor } from '../text/measure.ts';
-import { budgetScale, buildCatalog, describeCatalog, planPattern, readItems } from './catalog.ts';
-import type { CatalogContext, ImageDensity } from './catalog.ts';
-import { FREE_ENTRY_ROOM, PlanError, SLIDE_KIND_RULE, allowedPatterns, asker, colorNote, columnsRule, directionOf, givenPatterns, hasFigures, limitRule, planRoom, reviewWith, storedColors, wishesRule, withoutColorCodes } from './plan.ts';
+import { budgetScale, buildCatalog, describeCatalog, isPlainText, planPattern, readItems } from './catalog.ts';
+import type { CatalogContext, ImageDensity, UsablePattern } from './catalog.ts';
+import { MOST_WORDS, WORDS_NOTE, charsOfWords, freeLengths, heldBy, homeFor, partPurpose, partsFor, readWords, shortOfWords, spreads, withLength, wordsOfChars, wordsRule } from './length.ts';
+import type { LengthPlanning, TextHome } from './length.ts';
+import { FREE_ENTRY_ROOM, PlanError, SLIDE_KIND_RULE, allowedPatterns, asker, colorNote, columnsRule, directionOf, freePartsOf, givenPatterns, hasFigures, limitRule, planRoom, reviewWith, storedColors, wishesRule, withoutColorCodes } from './plan.ts';
 import type { PlanOptions } from './plan.ts';
 import { MOST_PHOTOS, freeKnown, freeLine, freeOnOffer, freeWritePattern, kindsUsed, namesFree } from './free.ts';
 import { usedLayouts } from './layouts.ts';
@@ -111,6 +113,8 @@ interface PlanEntry {
   items?: number;
   /** For a free slide: its parts after the change, and how they are set out. */
   free?: FreeChange;
+  /** The words of running text the request asks for on the slide, where it asks for an amount. */
+  words?: number;
 }
 
 /** A slide to write, with what the writer is shown of the slide it comes from. */
@@ -239,6 +243,7 @@ function planSchemaBase(patternIds: string[], slideCount: number): JsonSchema {
                 'What to write or change in the content of this slide: its text, numbers, pictures or parts. Empty when the content stays as it is; a new colour or a new place in the deck is not a change of content.',
             },
             images: { type: 'boolean', description: 'true only when the pictures or icons of this slide should change' },
+            words: { type: 'integer', minimum: 1, maximum: MOST_WORDS, description: WORDS_NOTE },
           },
           required: ['from', 'pattern', 'change', 'images'],
         },
@@ -362,6 +367,7 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
       // The rule above is about the look of a deck. A person who asks for other words on a slide still gets them.
       '- A request to shorten, cut or rewrite the text of a slide is a change of its content: say it in change.',
       '- images: true only when the pictures or icons of that slide should change.',
+      `- words: ${wordsRule('request')}`,
       '- items: for a pattern with a row of items, the number the slide has after the change.',
       ...(freeIn ? [`- ${PARTS_RULE}`, `- ${MOVED_RULE}`] : []),
       // Only where a slide may become a free slide: its chart is then handed on by code, if the plan lets it.
@@ -393,8 +399,10 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
     const nextFields = Object.fromEntries(fieldNames.map((name) => [name, cleanText(rawFields[name]) || (fields[name] as string)]));
     const countProblems: string[] = [];
     const entries: PlanEntry[] = (Array.isArray(raw.slides) ? raw.slides : []).map((item, index) => {
-      const given = (item ?? {}) as { from?: unknown; pattern?: unknown; change?: unknown; images?: unknown; items?: unknown };
+      const given = (item ?? {}) as { from?: unknown; pattern?: unknown; change?: unknown; images?: unknown; items?: unknown; words?: unknown };
       const entry: PlanEntry = { from: Number(given.from) || 0, pattern: cleanText(given.pattern), change: cleanText(given.change), images: given.images === true };
+      const words = readWords(given.words);
+      if (words !== undefined) entry.words = words;
       // What an entry says of parts counts for a free slide alone; on any other slide it is passed over.
       if (freeIn && entry.pattern === FREE_PATTERN) {
         const based = Number.isInteger(entry.from) && entry.from > 0 ? deck.slides[entry.from - 1] : undefined;
@@ -481,6 +489,87 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
   const textScale = TEXT_SIZES[plan.textSize];
   const resized = textScale !== context.textScale;
   context.textScale = textScale;
+
+  // A slide the request asks an amount of text for gets the room for it: it keeps its layout when
+  // that holds the text, or moves to a layout of plain text or a free slide that does. Where none
+  // does, the text goes over the slides it needs, up to ten more, the others new after it.
+  const freeKinds = new Set<FreeBlockKind>(free?.kinds ?? []);
+  const plainIds = offer.patterns.filter((pattern) => isPlainText(pattern.def)).map((pattern) => pattern.def.id);
+  const lengthPlanning: LengthPlanning = {
+    context,
+    language,
+    layout: (id, items) => {
+      const definition = definitions.get(id);
+      // A slide that stays in its layout can always be written again, even where that layout is not on offer for new slides.
+      const planned = definition ? planPattern(definition, offered.has(id) ? context : { ...context, figures: true }, undefined, items) : undefined;
+      return planned && 'pattern' in planned ? planned.pattern : undefined;
+    },
+    plainText: (id) => plainIds.includes(id),
+    plain: plainIds,
+    free: freeKinds.has('text')
+      ? (blocks, arrange, lengths) => {
+          const written = freeWritePattern(loaded, { direction, textScale }, { blocks, arrange, lengths }, context);
+          return 'pattern' in written ? written.pattern : undefined;
+        }
+      : undefined,
+    freeParts: (id) => freePartsOf(definitions.get(id), freeKinds),
+  };
+  let spare = 10;
+  // Texts that go over several slides: the first slide of each, the words asked, and the number of slides.
+  const spreadOut: Array<{ first: PlanEntry; words: number; parts: number; room: number }> = [];
+  plan.entries = plan.entries.flatMap((entry): PlanEntry[] => {
+    if (entry.words === undefined) return [entry];
+    const source = entry.from > 0 ? deck.slides[entry.from - 1] : undefined;
+    // The parts a free slide has after the change: those the plan names, or else those it has. A
+    // plan that names none ("[]") and has words for the slide writes them all again, as a change
+    // that names no part does (see planFree): that stays so if a running text is added to them.
+    const named = entry.free?.parts.length ? entry.free.parts : undefined;
+    const partsNow: PartPlan[] = named ?? (entry.free && isFree(source) ? ((source.blocks ?? []) as FreeBlockKind[]).map((kind, at) => ({ from: at + 1, kind, rewrite: true })) : []);
+    const current: TextHome = entry.free ? { blocks: partsNow.map((part) => part.kind) } : { pattern: entry.pattern, items: entry.items };
+    const found = homeFor(current, entry.words, lengthPlanning);
+    if (found.home !== current) {
+      if ('blocks' in found.home) {
+        // A free slide that gets a running text keeps its parts after it. A slide of a layout
+        // becomes a free slide of a running text and its chart, table or photo, which it hands
+        // on as they are (not written again: see carryOver); a new slide has none to hand on.
+        const added = entry.free ? found.home.blocks.length - partsNow.length : found.home.blocks.length;
+        const keeps = (kind: FreeBlockKind) => source !== undefined && !entry.free && (kind === 'chart' || kind === 'table' || kind === 'photo');
+        const fresh = found.home.blocks.slice(0, added).map((kind): PartPlan => ({ from: 0, kind, rewrite: !keeps(kind) }));
+        entry.free = { ...(entry.free ?? {}), parts: [...fresh, ...(entry.free ? partsNow : [])] };
+        entry.pattern = FREE_PATTERN;
+        delete entry.items;
+      } else {
+        entry.pattern = found.home.pattern;
+        delete entry.free;
+        if (found.home.items !== undefined) entry.items = found.home.items;
+        else delete entry.items;
+      }
+    }
+    // The text is written whatever else the plan says of the slide.
+    if (!entry.change) entry.change = 'Write the text at the length asked for.';
+    // A text goes over more slides only where it is all the slide shows, and such a slide can be new.
+    const addable = 'blocks' in found.home ? free !== undefined : offered.has(found.home.pattern);
+    const parts = found.holds || !addable || !spreads(found.home, lengthPlanning) ? 1 : partsFor(entry.words, wordsOfChars(found.room, language), spare);
+    spare -= parts - 1;
+    if (parts === 1) return [entry];
+    spreadOut.push({ first: entry, words: entry.words, parts, room: found.room });
+    const words = Math.ceil(entry.words / parts);
+    const change = entry.change;
+    const home = found.home;
+    return Array.from({ length: parts }, (_, at): PlanEntry => {
+      if (at === 0) return Object.assign(entry, { words, change: partPurpose(change, 1, parts) });
+      // The slides after the first are new, of the same layout or the same running texts, each written whole.
+      const next: PlanEntry = { from: 0, pattern: entry.pattern, change: partPurpose(change, at + 1, parts), images: false, words };
+      if ('blocks' in home) next.free = { parts: home.blocks.map((kind) => ({ from: 0, kind, rewrite: true })) };
+      else if (home.items !== undefined) next.items = home.items;
+      return next;
+    });
+  });
+  // The deck is told where such a text went: the summary of the change was written before, and says nothing of the slides added for it.
+  const spread: Issue[] = spreadOut.map(({ first, words, parts, room }) => {
+    const number = plan.entries.indexOf(first) + 1;
+    return { severity: 'warning', message: `the ${words} words asked for slide ${number} go over slides ${number} to ${number + parts - 1}: one slide holds about ${wordsOfChars(room, language)}` };
+  });
   // A deck that holds a free slide is checked with the template as it was loaded: the slide is
   // then laid out, and its text checked against the room it gets. Any other deck is checked as before.
   const check = (given: DeckSpec): Issue[] =>
@@ -488,6 +577,16 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
   /** What no longer fits on a slide at the size the deck will have. */
   const tight = (slide: SlideSpec): Issue[] => check({ ...deck, textScale, slides: [slide] }).filter((issue) => /characters|paragraphs|lines/.test(issue.message));
   const overflows = (slide: SlideSpec) => tight(slide).length > 0;
+
+  // Slides that hold less text than the request asked for them, said with the deck.
+  const short: Issue[] = [];
+  /** The pattern a slide is written against, told the length asked for it where there was one. */
+  const toldLength = (pattern: UsablePattern, number: number, words: number | undefined, names?: ReadonlySet<string>): UsablePattern => {
+    if (words === undefined) return pattern;
+    const room = heldBy(pattern, context, { names, language });
+    if (room < charsOfWords(words, language)) short.push(shortOfWords(number, words, room, language));
+    return withLength(pattern, words, context, { names, language });
+  };
 
   // 2. Work out, per slide, whether it is copied or written, and what a written slide carries over.
   const jobs: EditJob[] = [];
@@ -505,7 +604,10 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
   const planFree = (entry: PlanEntry, number: number, source: SlideSpec | undefined): void => {
     const before = isFree(source) ? source : undefined;
     const stated: FreeChange = entry.free ?? { parts: [] };
-    let parts: PartPlan[] = stated.parts;
+    // A length asked for the slide is the length of its running texts, or of its lists where it
+    // has no running text (as `freeLengths` shares it out): those are written again.
+    const holder: FreeBlockKind = stated.parts.some((part) => part.kind === 'text') ? 'text' : 'list';
+    let parts: PartPlan[] = entry.words !== undefined ? stated.parts.map((part) => (part.kind === holder ? { ...part, rewrite: true } : part)) : stated.parts;
     // The title is written with the parts, and whenever the plan has words for the slide: where
     // nothing is written and nothing is said, it stays.
     let title: boolean | undefined;
@@ -589,7 +691,9 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
       // what it had, and one the plan named to be written again is then asked for once more (`due`).
       // The slide is planned with the optional parts it has (a caption under its one photo, a
       // heading over its one text), so that they have their room and can be written again.
-      const planned = freeWritePattern(loaded, { direction, textScale }, { blocks: shape.blocks, arrange, base: before?.base }, context, skip, heldParts(shape));
+      // Its running texts are set out for the length asked, where one was.
+      const lengths = entry.words !== undefined ? freeLengths(shape.blocks, charsOfWords(entry.words, language)) : undefined;
+      const planned = freeWritePattern(loaded, { direction, textScale }, { blocks: shape.blocks, arrange, base: before?.base, lengths }, context, skip, heldParts(shape));
       // A chart or a table that is offered with what it holds is asked for at the size it has.
       const written = 'reason' in planned ? planned : { ...planned, pattern: roomAsHeld(planned.pattern, current) };
       return { shape, moved, carried, current, written };
@@ -628,7 +732,7 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
     const anew = before !== undefined && parts.every((part) => part.from === 0);
     const job: EditJob = {
       number,
-      pattern: written.pattern,
+      pattern: entry.words !== undefined ? toldLength(written.pattern, number, entry.words, new Set(Object.keys(freeLengths(shape.blocks, charsOfWords(entry.words, language))))) : written.pattern,
       // A plan that names new parts and says nothing of them leaves the request itself to go by.
       purpose: entry.change || instruction.trim(),
       carried,
@@ -735,7 +839,7 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
 
     const job: EditJob = {
       number,
-      pattern: planned.pattern,
+      pattern: toldLength(planned.pattern, number, entry.words),
       purpose: entry.change,
       carried,
       relaid: !!source && source.pattern !== entry.pattern,
@@ -750,7 +854,7 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
   const named = options.colors !== undefined && options.colorSlides?.length ? [...new Set(options.colorSlides)] : undefined;
   const recolored = named ? plan.entries.flatMap((entry, index) => (entry.from > 0 && named.includes(entry.from) ? [index + 1] : [])) : undefined;
   const removed = (named ?? []).filter((number) => Number.isInteger(number) && number >= 1 && number <= deck.slides.length && !plan.entries.some((entry) => entry.from === number));
-  const notes: Issue[] = [...idle.map(nothingChanged), ...removed.map((number): Issue => ({ severity: 'warning', message: `the change removed slide ${number}, which was to be recoloured` }))];
+  const notes: Issue[] = [...idle.map(nothingChanged), ...removed.map((number): Issue => ({ severity: 'warning', message: `the change removed slide ${number}, which was to be recoloured` })), ...spread, ...short];
 
   const assemble = (written: Map<number, SlideSpec>): DeckSpec => {
     const slides = plan.entries.map((entry, index) => {

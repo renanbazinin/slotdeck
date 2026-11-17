@@ -75,7 +75,15 @@ const PARTS_RULE =
   '- A slide with the layout free names its parts in "shows", in reading order. A number of things the brief asks to see on one slide (twelve charts, forty logos) is that number of parts, however many.';
 const KEEP_PARTS_RULE = '- A slide with the layout free names its parts in "shows". Repeat them exactly as the plan has them unless the request changes what that slide shows.';
 
-// The outline of the fixture as it was asked before there were free slides: the list of patterns, the rules and the schema.
+// What every plan is told of an amount of text asked for a slide (0.6.1), and the property it answers in. A change to a
+// deck says it as the rule for "words"; a change to a plan keeps the words its slides have.
+const WORDS_RULE = (asked: 'brief' | 'request' | 'deck', keep = false) =>
+  `- ${asked === 'deck' ? 'words: ' : ''}When the ${asked === 'deck' ? 'request' : asked} asks for an amount of text on a slide ("200 words", "a paragraph of about 80 words"), set "words" on that slide to that number of words, ` +
+  `and choose a pattern whose slots hold that much: a word takes about 6 characters with its space. Leave "words" out of every other slide${keep ? ', and keep the words a slide has unless the request changes them' : ''}.`;
+const WORDS = { type: 'integer', minimum: 1, maximum: 3000, description: 'Only when an amount of text is asked for on this slide: the number of words. Leave it out otherwise.' };
+
+// The outline of the fixture as it was asked before there were free slides: the list of patterns, the rules and the
+// schema, with the rule and the property on asked lengths that every plan has since 0.6.1.
 const PROMPT_BEFORE =
   'Brief:\nA deck about dogs\n\nPlan a deck of exactly 2 slides. Choose one pattern for each slide from this list ("?" marks an optional slot):\n\n' +
   '- content: Title, body, photo and icon.\n  slots: title (at most 20 characters); body (at most 3 items); photo (photo); note (text)\n' +
@@ -84,6 +92,7 @@ const PROMPT_BEFORE =
   "- What the brief asks about the form of the deck comes first, before variety, before the usual choices below and before what a pattern's description advises: how many slides, which kinds of slides, how many things on a slide, how many side by side. Do exactly that, even when it means one slide or one pattern for every slide.\n" +
   '- For a pattern with a row of items, set "items" to the number the brief asks for, or else the number the content really has. Do not pad a list to fill a row.\n' +
   '- When the brief asks for a number of columns, or for items side by side, use a pattern that takes that number of items and whose items are "side by side in one row" or "in lines of" that number or more: either sets them on one line. Items "in lines of" a smaller number are broken over several lines. When the list has no such pattern, use the one that comes closest.\n' +
+  `${WORDS_RULE('brief')}\n` +
   '- Choose a pattern only when the content can fill every required slot within its limits.\n' +
   '- A wish about the kind of slides (text only, no tables, only cards) decides which patterns may be used, and comes before variety. "Text only" means the patterns marked "Plain text.": a title with paragraphs or a list, and no cards, figures, tables, charts, icons or pictures. Using one pattern for many slides is right when the wish leaves no other.\n' +
   '- Otherwise vary the patterns across the deck.\n' +
@@ -94,6 +103,7 @@ const ENTRY_BEFORE = {
     pattern: { type: 'string', enum: ['content', 'closing', 'cards'] },
     purpose: { type: 'string', description: 'The one point this slide makes: a single sentence of at most 25 words' },
     items: { type: 'integer', minimum: 1, maximum: 5, description: 'For a pattern with a row of items: how many items the content calls for. Leave it out for other patterns.' },
+    words: WORDS,
   },
   required: ['pattern', 'purpose'],
 };
@@ -116,6 +126,7 @@ const EDIT_PROMPT_BEFORE =
   '- A wish about how the deck looks (more modern, less empty, less text) is met with another pattern for a slide, another number of items, or the text size. It changes layouts and settings, not wording: leave change empty unless the slide gets another pattern.\n' +
   '- A request to shorten, cut or rewrite the text of a slide is a change of its content: say it in change.\n' +
   '- images: true only when the pictures or icons of that slide should change.\n' +
+  `${WORDS_RULE('deck')}\n` +
   '- items: for a pattern with a row of items, the number the slide has after the change.\n\n' +
   'Patterns, for new slides and for a slide that changes its layout ("?" marks an optional slot):\n' +
   '- content: Title, body, photo and icon.\n  slots: title (at most 20 characters); body (at most 3 items); photo (photo); note (text)\n' +
@@ -141,6 +152,7 @@ const EDIT_SCHEMA_BEFORE = {
               'What to write or change in the content of this slide: its text, numbers, pictures or parts. Empty when the content stays as it is; a new colour or a new place in the deck is not a change of content.',
           },
           images: { type: 'boolean', description: 'true only when the pictures or icons of this slide should change' },
+          words: WORDS,
           items: { type: 'integer', minimum: 1, maximum: 5, description: 'For a pattern with a row of items: how many items the slide has after the change. Leave it out for other patterns.' },
         },
         required: ['from', 'pattern', 'change', 'images'],
@@ -199,10 +211,11 @@ test('the outline offers free slides after the template\'s patterns, and reads t
         description: 'Only for free: where the first part stands when it is the main one and larger. auto lets the software decide; none sets all parts alike.',
       },
       side_by_side: { type: 'integer', minimum: 0, description: 'Only for free, when the brief asks for a number of columns; 0 lets the software decide.' },
+      words: WORDS,
     },
     required: ['pattern', 'purpose', 'shows', 'shows_main', 'side_by_side'],
   });
-  assert.deepEqual(Object.keys(entryOf(requests[0]).properties), ['pattern', 'purpose', 'items', 'shows', 'shows_main', 'side_by_side']);
+  assert.deepEqual(Object.keys(entryOf(requests[0]).properties), ['pattern', 'purpose', 'items', 'shows', 'shows_main', 'side_by_side', 'words']);
   const declared = JSON.stringify(entryOf(requests[0]));
   for (const word of ['anyOf', 'oneOf', '"pattern":{"type":"string","pattern"', '"format"', '"enum":[]', 'minItems', 'maxItems']) assert.ok(!declared.includes(word), word);
   // Room for a plan of two slides, and for the parts each may name.
@@ -1384,7 +1397,7 @@ test('a change to a deck lists a free slide by its parts, without their data, an
 
   // An entry: what it was, and three properties that every slide answers. Its parts are named one by one.
   const entry = entryOf(requests[0]);
-  assert.deepEqual(Object.keys(entry.properties), ['from', 'pattern', 'change', 'images', 'items', 'parts', 'shows_main', 'side_by_side']);
+  assert.deepEqual(Object.keys(entry.properties), ['from', 'pattern', 'change', 'images', 'words', 'items', 'parts', 'shows_main', 'side_by_side']);
   assert.deepEqual(entry.required, ['from', 'pattern', 'change', 'images', 'parts', 'shows_main', 'side_by_side']);
   assert.deepEqual(entry.properties.parts, {
     type: 'array',

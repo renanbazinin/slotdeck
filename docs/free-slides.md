@@ -433,6 +433,13 @@ what its box holds at the size that ends on.
   that has two or more of the kind, the source of a quotation. A change to a deck names the optional slots
   that hold a value on the slide (`withParts`, such as `b2Caption`), and those are counted in besides, so
   that a caption or a heading the slide has can be written again.
+- **A text a person asked a length for is planned at that length** (from 0.6.1). Where a plan has `words` for
+  the slide, its running texts are set out for that many characters (about 6 to a word, 6.5 in Hebrew) in
+  place of the usual 300, and their budgets say what their boxes then hold. On the demo template a text of 300
+  characters alone is set at 22 pt on a short line and told `Write 290 to 550 characters`; one of 1,200 is set
+  at 15.5 pt in two columns and holds 1,377. The writer is told the length asked
+  (`Write 200 words, as was asked: 1200 to 1370 characters in all`). See "Asking for an amount of text" in
+  [generating.md](generating.md).
 
 ## What a template gives a free slide
 

@@ -365,6 +365,7 @@ interface OutlineEntry {
   items?: number;
   blocks?: FreeBlockKind[]; // a free slide (pattern 'free'): its parts in reading order
   arrange?: FreeArrange;    // a free slide: how its parts are set out, where the plan says so
+  words?: number;           // the words of running text asked for this slide ("200 words"), 1 to 3000
 }
 interface DeckPlan { version: 1; title: string; brief: Brief; slides: OutlineEntry[]; layouts?: PatternDesign[] }
 interface PlanResult { deck: DeckSpec; warnings: Issue[]; outline: OutlineEntry[] }
