@@ -3,6 +3,84 @@
 What changed in each version, newest first, with what to do when upgrading. The version you have installed is
 in `node_modules/slotdeck/package.json`.
 
+## 0.6.1
+
+A slide gets the amount of text a person asks for. A deck, a plan and a manifest from 0.6.0 work unchanged, and
+a deck renders to the same bytes.
+
+### Fixed
+
+- **200 words asked, 76 written.** The planner did not read an amount of text from a brief or a request. The
+  writer was told what each slot says of length ("About 420 characters in all") and that limits are hard, so
+  it wrote what the slot said, whatever was asked. On the right-to-left template one slide of "200 words of
+  running text" came out as 76 words on its text layout, and as 53 on a free slide.
+- **A free slide of one text was told far less than it holds.** A free slide is planned for texts of the usual
+  length, 300 characters for running text. One such text alone is set large on a short line, so its slot said
+  `Write 260 to 500 characters` with a limit of 528 on the right-to-left template, and 584 on the demo template.
+  The same slide holds 1,194 characters in two columns at the running-text size, with no warning.
+
+### Added
+
+- **Asking for an amount of text.** The outline gives a slide `words` (`OutlineEntry.words`, 1 to 3000) when
+  the brief asks for an amount of text on it: "200 words", "a paragraph of about 80 words". Code then finds
+  the text a slide that holds it, counting about 6 characters to a word, 6.5 in Hebrew: the layout planned
+  when nine tenths of its limits hold it, else the smallest layout of plain text that does, else a free slide
+  set out for that length, which keeps a chart, a table or a photo the layout had. Where none holds it and the
+  slide shows text alone, the text goes over as many slides as it needs while the deck may have more, each
+  with its share and its purpose numbered "(1/3)"; otherwise the slide holds what it can and the deck gets a
+  warning. The writer is told the length before the rest of the
+  slot's description, as a range that starts at it: `Write 200 words, as was asked: 1200 to 1370 characters in
+  all`. See "Asking for an amount of text" in [generating.md](generating.md).
+- **The same in a change.** A change to a plan keeps the words a slide has, and lists them; a slide whose
+  layout and words it leaves as they were is not fitted again. A change to a deck ("make slide 2 about 200
+  words") gives the slide the room as a plan does, and a slide that becomes a free slide for it keeps its
+  chart, table or photo as it is; where nothing holds the text, it goes over new slides after it, and a
+  warning says where.
+- **The plan tool shows them.** A slide of `plan_presentation` and `edit_presentation_plan` that was asked an
+  amount of text has `"words"` in its line.
+
+### Changed
+
+- Every prompt that plans slides (a new plan, a change to a plan, a change to a deck) has one more rule, on
+  amounts of text, and an optional `words` property for each slide. A brief without such a wish is planned as
+  before.
+- A free slide's running text is planned at the length asked for, where a plan has `words` for its slide. Its
+  budget then says what its box holds at that length: 1,377 characters for 200 words on the demo template,
+  1,450 for 200 Hebrew words on the right-to-left template.
+
+### Measured
+
+- **Live**, the production text model, each call capped as the adapter caps it: on the right-to-left template,
+  a deck of one slide asked for "200 words of running text". 0.6.0: 53 words. 0.6.1: 212 words in three
+  paragraphs, on a free slide set out for them in two columns, inside their box in PowerPoint's own rendering.
+  Two text calls. Told "about 200 words" alone the model wrote 164, and told a range from nine tenths of the
+  length it wrote 168: the range now starts at the length.
+- **Offline** on the right-to-left template, with a model that answers as told: 200 words planned on its text
+  layout go to a free slide that holds 1,450 characters; 80 words (520 characters) go to a free slide too,
+  since nine tenths of its page layout's 556 are 500; with free slides off, 200 words go over three slides of
+  67 when the deck may have six, and a deck of one slide is told what the slide holds (76 words) with a
+  warning; 600 words go over three free slides of 200; 200 words on its chart layout go to a free slide of the
+  text and the chart, which holds 96, with a warning, and are not spread; a change to a deck that asks for 200
+  words on a slide makes it a free slide, or, with free slides off, three slides with a warning. A brief
+  without such a wish gives the same plan as before.
+- **PowerPoint**: free slides of one text filled to their budgets (1,281 characters in 9 paragraphs and in 4,
+  1,200 in 6, 1,450 in 10 and in 3) lie inside their boxes with room to spare.
+
+### Upgrading from 0.6.0
+
+- Nothing to do. A plan an app keeps may now have `words` on a slide: keep it with the plan, as the plan's
+  other keys. An app that shows a plan's slides may show it ("about 200 words").
+- An app that passes `patterns` to the planner or the tools without `free` gets no free slides: a long text
+  then goes over several slides where the deck may have them, and otherwise holds what the slide's layout
+  holds, with a warning. Add `free` to the list.
+- An app whose own prompts tell the chat model, or the planner through `instructions`, to keep slides short
+  works against a person who asks for an amount: pass such a wish on in the person's words.
+- Known: a layout's limits can be more than its box holds when its text has many paragraphs and the template
+  keeps space between them in points: 532 characters in five paragraphs run over the 556 of the right-to-left
+  template's page layout, whose paragraphs have 12 pt before them. An asked length fills a layout to nine
+  tenths of its limits for that reason, and a free slide counts that space. Text written to a layout's own
+  description is as it was in 0.6.0.
+
 ## 0.6.0
 
 More freedom: slides the software lays out itself, a deck's own colours, and a planner that does what was

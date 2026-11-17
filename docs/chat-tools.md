@@ -163,6 +163,15 @@ A plan and a presentation that have a colour carry `"accent_color"`, and one lim
 `"layouts"`; in a presentation, a slide with a colour of its own has `"accent_color"` in its line (`"template"`
 where it keeps the template's inside a coloured presentation).
 
+A slide the person asked an amount of text for ("200 words on the expansion", passed on in `instructions` or
+`topic`) has `"words"` in its line: the words its text will have. The plan gives such a slide the room for the
+text: a layout that holds it, a free slide set out for it, or several slides that share it, each with its share
+and its purpose numbered "(1/3)". See "Asking for an amount of text" in [generating.md](generating.md).
+
+```json
+{ "number": 2, "layout": "free", "layout_description": "A slide laid out for this presentation: a text.", "purpose": "Our expansion north.", "words": 200, "free_layout": true }
+```
+
 ### `edit_presentation_plan`
 
 Arguments:
@@ -233,6 +242,11 @@ Output: the same shape as `create_presentation` with a new `presentation_id`, pl
 
 `rewritten_slides` are the slides that were written again, and the free slides whose parts or arrangement were
 changed with nothing to write: a part taken off, three side by side.
+
+An instruction that asks for an amount of text on a slide ("make slide 2 about 200 words") gives that slide
+the room for it: a layout that holds the text, or a free slide set out for it. Where no slide holds that much,
+the text goes over new slides after it, and `warnings` says so, as in
+`the 200 words asked for slide 2 go over slides 2 to 4: one slide holds about 55`.
 
 A change that was planned for a part of a free slide and did not come back from the writer is in `warnings`,
 such as `slide 3: nothing was written for 1 part, and it stays as it was`. So is a change the plan spoke of

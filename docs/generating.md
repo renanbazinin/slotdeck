@@ -19,7 +19,7 @@ const result = await generateDeck(template, brief, options);
 // result.deck      DeckSpec     store this: it is what gets edited and rendered again
 // result.assets    Record<string, Uint8Array>   every picture the deck uses, by asset id
 // result.warnings  Issue[]      limits the final draft still exceeds
-// result.outline   OutlineEntry[]   [{ pattern, purpose, items? }] for each slide; a free slide has blocks and arrange too
+// result.outline   OutlineEntry[]   [{ pattern, purpose, items?, words? }] for each slide; a free slide has blocks and arrange too
 ```
 
 It runs `planDeck`, then `resolveAssets`, then `renderDeck`.
@@ -152,6 +152,45 @@ Two things to know:
   deck from free slides of text. Where those are not on offer either, it cannot:
   `PlanError: Template "x" has no plain text pattern, so a text-only deck cannot be planned from it`. Add one as a
   derived pattern (see [layout-freedom.md](layout-freedom.md)).
+
+### Asking for an amount of text
+
+A person may ask for an amount of text on a slide: "200 words on the expansion", "a paragraph of about 80
+words". Every slot says how much to write, in its description ("About 420 characters in all") and its limit,
+and without more the writer keeps to that: 200 words asked came out as 76. From 0.6.1 the planner reads such a
+wish and makes room for it.
+
+1. The outline gives the slide `words`: the number of words asked. A slide with no such wish has none, and is
+   planned and written as before.
+2. Code finds the text a slide that holds it, counting about 6 characters to a word with its space, 6.5 in
+   Hebrew (200 words are about 1,200 characters), at the deck's text size:
+   - the layout planned, when nine tenths of the limits of its running text (paragraphs, lists, texts of 200
+     characters or more) hold it. A layout's limits were found for the template's own text, and a text that
+     fills them in many paragraphs is the one most likely to run over its box;
+   - else, for a slide of plain text, the smallest layout of plain text that holds it;
+   - else a free slide, where free slides are on offer, set out for that length: one text alone that long is
+     set at the template's running-text size in two columns where it needs them, and its budget is what its
+     box then holds. A slide of a layout with a chart or a table keeps it beside the text.
+3. Where none holds it and the slide shows text alone, the text goes over as many slides as it needs, while
+   the deck may have more (`slideCount` up to its most, or ten more in a change), each with its share of the
+   words, counted in whole words, and its purpose numbered "(1/3)". A slide with a chart, a table, a photo or
+   cards is not repeated for its text: every copy would ask for that content again. Such a slide, and one in a
+   deck that may have no more slides, holds what it can.
+4. The writer is told the length before the rest of the slot's description, from which what it said of length
+   is taken out, in words and as a range of characters that starts at the length:
+   `Write 200 words, as was asked: 1200 to 1370 characters in all`. A model writes short of a length it is told
+   "about", by a fifth. A long text with nothing else to say of itself is asked for in paragraphs. The slot's
+   limits stay as they are. A slide that holds less is told what it holds, and the deck gets a warning:
+   `200 words were asked for this slide, and it holds about 92: ask for the text over more slides, or for a shorter one`.
+
+```ts
+const plan = await planOutline(template, { prompt: 'Our expansion north', instructions: 'One slide of 200 words of running text.', slideCount: 1 }, { llm });
+// plan.slides = [{ pattern: 'free', purpose: 'Our expansion north', words: 200, blocks: ['text'] }]
+```
+
+`words` is part of a plan an app keeps, from 1 to 3000. A change to the plan keeps it unless the request changes
+it, and `writeDeck` writes a plan that has it as above. A change to a deck reads it the same way: see "Editing a
+deck" below.
 
 ### New layouts for a deck
 
@@ -316,7 +355,7 @@ Use these when a person should see and approve a plan before the content is writ
 ```ts
 // 1. Decide the slides. One call, quick, small result: the thing to show a person.
 const plan = await planOutline(template, brief, { llm, icons, layout: 'adaptive' });
-// plan = { version: 1, title, brief, slides: [{ pattern, purpose, items?, blocks?, arrange? }], layouts? }
+// plan = { version: 1, title, brief, slides: [{ pattern, purpose, items?, blocks?, arrange?, words? }], layouts? }
 
 // 2. Change the plan by instruction. One call. Returns a new plan and one sentence on what changed.
 const { plan: revised, summary } = await editPlan(template, plan, 'Add a slide about pricing before the end', { llm, icons, layout: 'adaptive' });
@@ -388,6 +427,12 @@ no second call.
 - A change of language rewrites every slide, sets the reading direction and translates deck-level fields.
 - "Make the text larger" sets `textScale` and rewrites only the slides whose text no longer fits.
 - "Use three cards instead of four" changes `items` on that slide.
+- "Make slide 2 about 200 words" gives that slide the room for the text, as a plan does (see "Asking for an
+  amount of text" above): its layout, another layout of plain text, or a free slide written from what the slide
+  held, which keeps the slide's chart, table or photo as it is. Where nothing holds it and the slide shows text
+  alone, the text goes over new slides after it, of the same kind, and a warning without a slide number says
+  where it went:
+  `the 200 words asked for slide 2 go over slides 2 to 4: one slide holds about 55`.
 - A free slide is changed part by part: the parts the instruction does not touch stay exactly as they are. See
   "Free slides in an edit" below.
 

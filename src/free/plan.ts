@@ -108,9 +108,11 @@ export interface FreeContext {
    * parts are counted in by rule: an icon when `icons` says cards get one, a heading over a text
    * when the slide has several blocks, a caption when it has several of that kind, the source of
    * a quotation. `withParts` names slots to count in besides: the optional parts a slide that is
-   * being changed already has, such as `b2Caption`.
+   * being changed already has, such as `b2Caption`. `lengths` gives some texts the length a
+   * person asked for, in characters, by slot name (`b1Text`): such a text is set out and sized
+   * for that length in place of the usual one, and its budget says what its box then holds.
    */
-  planning?: { icons: boolean; withParts?: readonly string[] };
+  planning?: { icons: boolean; withParts?: readonly string[]; lengths?: Readonly<Record<string, number>> };
   /**
    * For a deck that asks for larger text: the size every text of the slide has without that
    * wish, by the name of its shape, or of its slot for the text of a chart. A heading, a
@@ -323,6 +325,15 @@ const USUAL: Partial<Record<FreeBlockKind, Record<string, readonly number[]>>> =
 const LEAST_SAID = 12;
 
 /**
+ * A length a person asked for, in characters, as the paragraphs of a usual text: paragraphs of
+ * about 300 characters, as running text usually has them, and one for a shorter text.
+ */
+function askedParagraphs(chars: number): number[] {
+  const count = Math.max(1, Math.round(chars / 300));
+  return Array.from({ length: count }, (_, at) => Math.floor(chars / count) + (at < chars % count ? 1 : 0));
+}
+
+/**
  * How wide a word is set, in sizes of its text: about half a size a letter, more for capitals and for
  * the widest letters, less for the narrowest. Generous, so that a word counted to fit a column does.
  */
@@ -498,8 +509,12 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
   const blocksOnSlide = kinds.filter((kind) => kind !== 'note').length;
 
   const at = (index: number, part: string) => slots[freeSlotName(index, part)];
-  /** How long the paragraphs of a text part are: as written, or, while planning, as texts of the kind usually are. */
-  const lengthsOf = (index: number, part: string): readonly number[] => (planning ? (USUAL[kinds[index - 1] as FreeBlockKind]?.[part] ?? []) : paragraphsOf(at(index, part)).map((paragraph) => paragraph.length));
+  /** How long the paragraphs of a text part are: as written, or, while planning, as long as was asked or as texts of the kind usually are. */
+  const lengthsOf = (index: number, part: string): readonly number[] => {
+    if (!planning) return paragraphsOf(at(index, part)).map((paragraph) => paragraph.length);
+    const asked = planning.lengths?.[freeSlotName(index, part)];
+    return asked !== undefined && asked > 0 ? askedParagraphs(asked) : (USUAL[kinds[index - 1] as FreeBlockKind]?.[part] ?? []);
+  };
   const said = (index: number, part: string): number => lengthsOf(index, part).reduce((sum, chars) => sum + chars, 0);
   /** The least size a part of a block is set at: what it has without a deck's wish for larger text, or 0. */
   const floorOf = (index: number | undefined, label: string): number => (index === undefined ? 0 : (context.atLeast?.get(`Block ${index} ${label}`) ?? 0));

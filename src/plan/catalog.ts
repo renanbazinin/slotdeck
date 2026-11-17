@@ -4,6 +4,7 @@ import type { LayoutMode } from '../deck/validate.ts';
 import type { JsonSchema } from '../llm/provider.ts';
 import { defaultItems, effectiveSlots, itemRange, rowLayout, tableAtScale, textBudget } from '../template/manifest.ts';
 import type { ChartSlotDef, ImageSlotDef, PatternDef, SlotDef, TableSlotDef, TemplateManifest, TextSlotDef } from '../template/manifest.ts';
+import { MOST_WORDS, WORDS_NOTE } from './length.ts';
 
 /** An icon the app offers; the planning model picks from these by id. */
 export interface IconDef {
@@ -389,7 +390,9 @@ export const SHOWS_MAIN_NOTE = 'Only for free: where the first part stands when 
 export function outlineEntrySchema(catalog: Catalog, free?: FreeShows): JsonSchema {
   const ids = catalog.patterns.map((pattern) => pattern.def.id);
   const purpose: JsonSchema = { type: 'string', description: 'The one point this slide makes: a single sentence of at most 25 words' };
-  if (!free) return { type: 'object', properties: { pattern: { type: 'string', enum: ids }, purpose, ...itemsProperty(catalog) }, required: ['pattern', 'purpose'] };
+  // An amount of text asked for a slide. Optional: most slides have none, and are planned as before.
+  const words: JsonSchema = { type: 'integer', minimum: 1, maximum: MOST_WORDS, description: WORDS_NOTE };
+  if (!free) return { type: 'object', properties: { pattern: { type: 'string', enum: ids }, purpose, ...itemsProperty(catalog), words }, required: ['pattern', 'purpose'] };
 
   // A free slide names its parts where a pattern has its slots. The three properties are asked of
   // every slide, so that a model cannot choose `free` and leave its parts out.
@@ -412,6 +415,7 @@ export function outlineEntrySchema(catalog: Catalog, free?: FreeShows): JsonSche
       },
       shows_main: { type: 'string', enum: [...SHOWS_MAIN], description: SHOWS_MAIN_NOTE },
       side_by_side: { type: 'integer', minimum: 0, description: 'Only for free, when the brief asks for a number of columns; 0 lets the software decide.' },
+      words,
     },
     required: ['pattern', 'purpose', 'shows', 'shows_main', 'side_by_side'],
   };

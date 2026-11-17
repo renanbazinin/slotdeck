@@ -102,6 +102,8 @@ export interface PlannedFree {
   blocks: FreeBlockKind[];
   arrange?: FreeArrange | undefined;
   base?: string | undefined;
+  /** Texts a person asked a length of, in characters, by slot name (`b1Text`). */
+  lengths?: Readonly<Record<string, number>> | undefined;
 }
 
 /**
@@ -113,13 +115,17 @@ export interface PlannedFree {
  * of a slide that has two or more of the kind, the source of a quotation. `withParts` names
  * slots to count in besides, such as `b2Caption`: a change to a deck passes the optional slots
  * that hold a value on the slide, so that a caption or a heading the slide has can be written
- * again. A sentence instead when the template cannot carry the slide.
+ * again. A text whose length a person asked for (`lengths`) is set out for that length instead
+ * of the usual one. A sentence instead when the template cannot carry the slide.
  */
 export function freePattern(template: Template, deck: Pick<DeckSpec, 'direction' | 'textScale'>, planned: PlannedFree, icons: boolean, withParts?: readonly string[]): { pattern: PatternDef; base: string } | string {
   const slide: Pick<SlideSpec, 'blocks' | 'arrange' | 'slots' | 'base'> = { blocks: planned.blocks, slots: {} };
   if (planned.arrange) slide.arrange = planned.arrange;
   if (planned.base !== undefined) slide.base = planned.base;
-  const resolved = freeFor(template, deck, slide, withParts && withParts.length > 0 ? { icons, withParts } : { icons });
+  const planning: { icons: boolean; withParts?: readonly string[]; lengths?: Readonly<Record<string, number>> } = { icons };
+  if (withParts && withParts.length > 0) planning.withParts = withParts;
+  if (planned.lengths && Object.keys(planned.lengths).length > 0) planning.lengths = planned.lengths;
+  const resolved = freeFor(template, deck, slide, planning);
   return typeof resolved === 'string' ? resolved : { pattern: resolved.plan.pattern, base: resolved.kit.base };
 }
 
