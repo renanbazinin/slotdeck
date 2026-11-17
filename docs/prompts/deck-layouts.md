@@ -9,6 +9,10 @@ Paste everything below the line to the agent. It asks for one setting on the pat
 in the plan the person sees, and nothing else in the chat. Server logic only, for slotdeck 0.5.0 or later.
 Keeping such a layout in the template is a studio matter: see [compose-layout.md](compose-layout.md).
 
+From 0.6.0 the planner gives such content a free slide instead, laid out by the software in the template's
+look, and composes no layouts while free slides are on offer. Use this prompt on 0.6.0 only for an app that
+keeps free slides off (`free: false`); otherwise use [free-slides-and-colors.md](free-slides-and-colors.md).
+
 ---
 
 You are working in an application whose chat makes presentations with slotdeck. When a person asks for a
@@ -44,6 +48,9 @@ configuration with a default of 2; 0 turns it off.
 ```ts
 const tools = presentationTools({ template, llm, store, /* as before */ composeLayouts: settings.composeLayouts ?? 2 });
 ```
+
+On slotdeck 0.6.0 or later the setting acts only with `free: false` beside it; with free slides on offer no
+layout is composed.
 
 When the app calls the planner itself, pass the same option to `planOutline`, `planDeck` or `generateDeck`.
 Nothing else is called for it: do not call `composePattern` or `composeLayouts` from the chat. It applies to a

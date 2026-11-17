@@ -384,9 +384,18 @@ Deck fields and slots with `"empty": "keep"` or `"drop"` take no part.
   is not recognised; such a slide still gets the alternatives whose slots have the same names.
 - It is not offered by the chat tools yet. Call it from your own code.
 
+## What no pattern holds
+
+Everything above varies a slide somebody designed. Content that no pattern of the template holds (twelve
+charts on one slide, a chart beside three cards, one paragraph and nothing else) goes on a **free slide**:
+the deck lists the blocks, and the software lays them out on the frame of one of the template's layouts, in
+the template's own text styles. See [free-slides.md](free-slides.md). A deck may also ask for other colours
+than the template's: see [colors.md](colors.md).
+
 ## What is not possible
 
-- Moving a shape to an arbitrary place from a deck. Positions come only from the template and the manifest.
+- Moving a shape to an arbitrary place from a deck. Positions come only from the template and the manifest;
+  on a free slide the software sets the blocks out by its own rules.
 - Mirroring a slide because of a deck's reading direction. A mirrored layout is a separate pattern
   (`derivePattern` with `mirror`) that a deck names or the planner chooses.
 - Deriving a variant that would move a row or grid of items, or a table.

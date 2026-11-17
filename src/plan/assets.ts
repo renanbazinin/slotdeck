@@ -1,11 +1,12 @@
-import { isImageRef } from '../deck/spec.ts';
+import { isFreeSlide, isImageRef } from '../deck/spec.ts';
 import type { DeckSpec } from '../deck/spec.ts';
 import type { ImageProvider } from '../llm/provider.ts';
 import type { PptxPackage } from '../pptx/package.ts';
 import type { Template } from '../render/render.ts';
 import { inspectTemplate } from '../template/inspect.ts';
 import type { TemplateInfo } from '../template/inspect.ts';
-import { effectiveSlots, slotSources } from '../template/manifest.ts';
+import { freeFor } from '../free/resolve.ts';
+import { effectiveSlots, itemRange, slotSources } from '../template/manifest.ts';
 import type { ImageKind } from '../template/manifest.ts';
 import type { AssetDef, IconDef } from './catalog.ts';
 
@@ -59,12 +60,18 @@ export async function resolveAssets(template: Template, deck: DeckSpec, options:
   const mirrored = (deck.direction ?? template.manifest.direction) !== template.manifest.direction;
 
   deck.slides.forEach((slide, index) => {
-    const pattern = patterns.get(slide.pattern);
+    const free = isFreeSlide(slide) ? freeFor(template, deck, slide) : undefined;
+    const pattern = free === undefined ? patterns.get(slide.pattern) : typeof free === 'string' ? undefined : free.plan.pattern;
     if (!pattern) return; // rendering reports unknown patterns
+    // So it does a number of items the row does not take. Its slots are not worked out here: a
+    // deck is read before it is checked, and the slots of a million items are never built.
+    const range = itemRange(pattern);
+    if (slide.items !== undefined && range && !(Number.isInteger(slide.items) && slide.items >= range.min && slide.items <= range.max)) return;
     const sources = slotSources(pattern, mirrored, slide.items);
     for (const slot of effectiveSlots(pattern, slide.items)) {
       // The frame a picture is sized for is the one it will actually be placed in.
-      const value = slide.slots[sources.get(slot.name) ?? slot.name];
+      // A slide stored without slots asks for no picture; the deck's check says what it lacks.
+      const value = slide.slots?.[sources.get(slot.name) ?? slot.name];
       if (slot.kind !== 'image' || !isImageRef(value)) continue;
       const known = supplied.get(value.asset) ?? cache.get(value.asset);
       if (known) {
@@ -80,8 +87,10 @@ export async function resolveAssets(template: Template, deck: DeckSpec, options:
       // A copied item has no shape of its own in the template; its frame is that of the item it copies.
       const frameId = slot.copyOf ?? slot.shapeId;
       const shape = info.slides[pattern.sourceSlide - 1]?.shapes.find((candidate) => candidate.id === frameId);
-      const width = (shape?.box.w ?? 0) * info.slideWidth;
-      const height = (shape?.box.h ?? 0) * info.slideHeight;
+      // A slot that places its picture says the frame itself; a slide the software laid out always does.
+      const frame = slot.box ?? shape?.box;
+      const width = (frame?.w ?? 0) * info.slideWidth;
+      const height = (frame?.h ?? 0) * info.slideHeight;
       pending.set(value.asset, {
         asset: value.asset,
         prompt: value.prompt,

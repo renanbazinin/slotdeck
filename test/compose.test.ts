@@ -22,6 +22,7 @@ import {
 } from '../src/index.ts';
 import type { DeckSpec, DesignElement, JsonRequest, LlmProvider, PatternDesign, Template, TemplateManifest } from '../src/index.ts';
 import { NS, descendants, parseXml, rootElement } from '../src/pptx/xml.ts';
+import { withLayouts } from '../src/template/compose.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const pptx = readFileSync(join(root, 'templates', 'demo.pptx'));
@@ -138,6 +139,20 @@ test('a layout composed earlier does not change the kit, so a design is built th
   const second = buildPattern(extended, threeCards(template, 'second-cards'));
   assert.deepEqual(second.manifest.patterns.map((pattern) => pattern.id).slice(-2), ['first-cards', 'second-cards']);
   assert.equal(second.slide, first.slide + 1);
+});
+
+test('layouts built for a deck are built again for a template that was given another manifest', () => {
+  const template = demo();
+  const design = threeCards(template);
+  const first = withLayouts(template, [design]);
+  assert.equal(withLayouts(template, [design]), first, 'built once for a template and its manifest');
+  assert.equal(first.manifest.name, manifest.name);
+  // The manifest a studio changed, put on the same template: what was built under the old one is not handed out.
+  template.manifest = { ...manifest, name: 'Renamed' };
+  const second = withLayouts(template, [design]);
+  assert.notEqual(second, first);
+  assert.equal(second.manifest.name, 'Renamed');
+  assert.ok(second.manifest.patterns.some((pattern) => pattern.id === design.id));
 });
 
 test('a composed budget is what the box holds, not what the model\'s sample was', () => {

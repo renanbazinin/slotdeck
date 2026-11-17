@@ -1,5 +1,6 @@
 import type { TemplateManifest } from '../template/manifest.ts';
-import { isChartValue } from './spec.ts';
+import { freeSlots, isFreeBlockKind } from '../free/blocks.ts';
+import { isChartValue, isFreeSlide } from './spec.ts';
 import type { DeckSpec } from './spec.ts';
 import type { Issue } from './validate.ts';
 
@@ -30,7 +31,9 @@ export function unstatedChartValues(manifest: TemplateManifest, deck: DeckSpec):
   const issues: Issue[] = [];
   deck.slides.forEach((slide, index) => {
     const pattern = manifest.patterns.find((candidate) => candidate.id === slide.pattern);
-    for (const slot of pattern?.slots ?? []) {
+    // A free slide names its charts itself: block 3 of kind chart is the slot b3Chart.
+    const charts = isFreeSlide(slide) ? freeSlots((slide.blocks ?? []).filter(isFreeBlockKind)).filter((entry) => entry.part.holds === 'chart').map((entry) => ({ name: entry.name, kind: 'chart' as const })) : (pattern?.slots ?? []);
+    for (const slot of charts) {
       const value = slide.slots[slot.name];
       if (slot.kind !== 'chart' || !isChartValue(value)) continue;
       const unknown = [...new Set(value.series.flatMap((series) => series.values))].filter((number) => !stated.has(number));

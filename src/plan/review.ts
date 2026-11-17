@@ -1,6 +1,7 @@
 // A second look at a draft, beyond the template's limits: problems found here go back to the
 // writing model in the same repair round as the limits it broke. Nothing reviews a draft unless
 // the caller asks for it.
+import { freeFor } from '../free/resolve.ts';
 import { checkDesign } from '../deck/design.ts';
 import type { DesignOptions } from '../deck/design.ts';
 import { isImageRef } from '../deck/spec.ts';
@@ -106,7 +107,8 @@ export function visionReview(options: VisionReviewOptions): DeckReview {
       const slotsOf = new Map<number, string[]>();
       const listing = batch.map((number) => {
         const slide = deck.slides[number - 1] as DeckSpec['slides'][number];
-        const pattern = template.manifest.patterns.find((entry) => entry.id === slide.pattern);
+        const free = Array.isArray(slide.blocks) ? freeFor(options.template, deck, slide) : undefined;
+        const pattern = free === undefined ? template.manifest.patterns.find((entry) => entry.id === slide.pattern) : typeof free === 'string' ? undefined : free.plan.pattern;
         const names: string[] = [];
         const texts: string[] = [];
         for (const slot of pattern ? effectiveSlots(pattern, slide.items) : []) {

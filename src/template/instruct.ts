@@ -59,6 +59,11 @@ const PROPERTIES = [
   'textScale',
   'variant',
   'widen',
+  'accent',
+  'accent2',
+  'keepColors',
+  'freeSlides',
+  'freeBase',
 ] as const;
 
 const SYSTEM = [
@@ -80,7 +85,7 @@ const GUIDE = [
   '- derivePattern (pattern): a second pattern from the same slide that the software lays out itself. Values: variant, and optionally id and description. Variants: "mirror" (the picture and the text beside it change sides), "text-only" (the picture is left out and the text widens over the room it leaves), "without" (leaves out the optional text named in "slot"; what sits under it moves up). The software works out every position and budget, and refuses a variant the slide does not allow. In a description, say what the layout holds and where the picture is.',
   '- removePattern (pattern).',
   '- addPattern: make a slide without a pattern into one. Values: slide, id, and optionally description.',
-  '- setManifest: settings of the whole template. Values: name, language, direction ("rtl" or "ltr"), alignOnDirectionChange ("flip" or "keep"), textScale (a factor on the body text of every deck, such as "1.3" when the template\'s body text is too small; "1" for the designed size).',
+  '- setManifest: settings of the whole template. Values: name, language, direction ("rtl" or "ltr"), alignOnDirectionChange ("flip" or "keep"), textScale (a factor on the body text of every deck, such as "1.3" when the template\'s body text is too small; "1" for the designed size), accent and accent2 (the template\'s main and second colour as six hex digits such as "0E7C7B", which a deck that asks for other colours replaces; "" has the software find them), keepColors ("true" keeps every deck in the template\'s own colours whatever it asks for; "false" lets decks ask again), freeSlides ("false" stops slides that the software lays out itself being planned; "true" allows them), freeBase (the id of the pattern whose frame such slides stand on; "" has the software choose).',
   'A change to one item of a row (card1Icon) is made to that slot of every item, so give it once.',
   "When a size, a table's columns or a row count changes, do not also set a character budget: the software measures the new one.",
   'Operations run in order, so a pattern made by copyPattern can be named by the operations after it.',
@@ -157,7 +162,7 @@ export function describeManifest(template: Template): string {
   });
 
   return [
-    `Template "${manifest.name}"${manifest.language ? `, written in ${manifest.language}` : ''}, reads ${manifest.direction === 'rtl' ? 'right to left' : 'left to right'}; ${(manifest.alignOnDirectionChange ?? 'flip') === 'flip' ? 'mirrors' : 'keeps'} alignment in decks that read the other way${manifest.textScale && manifest.textScale !== 1 ? `; body text is shown at ${manifest.textScale} times its designed size` : ''}. Positions and sizes are percentages of the slide.`,
+    `Template "${manifest.name}"${manifest.language ? `, written in ${manifest.language}` : ''}, reads ${manifest.direction === 'rtl' ? 'right to left' : 'left to right'}; ${(manifest.alignOnDirectionChange ?? 'flip') === 'flip' ? 'mirrors' : 'keeps'} alignment in decks that read the other way${manifest.textScale && manifest.textScale !== 1 ? `; body text is shown at ${manifest.textScale} times its designed size` : ''}${manifest.colors === false ? '; every deck keeps its colours' : manifest.colors ? `; its ${[manifest.colors.accent ? `main colour is ${manifest.colors.accent}` : '', manifest.colors.accent2 ? `second colour is ${manifest.colors.accent2}` : ''].filter(Boolean).join(' and its ')}` : ''}${manifest.free === false ? '; no slides are laid out by the software' : manifest.free && manifest.free.base ? `; slides the software lays out stand on the frame of "${manifest.free.base}"` : ''}. Positions and sizes are percentages of the slide.`,
     ...blocks,
     unused.length > 0 ? `Slides without a pattern: ${unused.join(', ')}.` : '',
   ]
@@ -205,6 +210,22 @@ function toChange(raw: Record<string, unknown>): ManifestChange | undefined {
     const font = str(`${prefix}Font`);
     if (font) result.font = font;
     return Object.keys(result).length > 0 ? result : undefined;
+  };
+  // Colours and free slides are several properties that make one setting each.
+  const colorsAsked = (): { accent?: string | null; accent2?: string | null } | false | null | undefined => {
+    const keep = bool('keepColors');
+    if (keep === true) return false;
+    const named: { accent?: string | null; accent2?: string | null } = {};
+    for (const name of ['accent', 'accent2'] as const) {
+      if (values.has(name)) named[name] = (values.get(name) ?? '').replace(/^#/, '').toUpperCase() || null;
+    }
+    return Object.keys(named).length > 0 ? named : keep === false ? null : undefined;
+  };
+  const freeAsked = (): boolean | { base: string | null } | undefined => {
+    const offered = bool('freeSlides');
+    if (offered === false) return false;
+    if (values.has('freeBase')) return { base: values.get('freeBase') || null };
+    return offered;
   };
   const put = <T extends object>(target: T, entries: Record<string, unknown>): T => {
     for (const [key, value] of Object.entries(entries)) if (value !== undefined) (target as Record<string, unknown>)[key] = value;
@@ -257,6 +278,8 @@ function toChange(raw: Record<string, unknown>): ManifestChange | undefined {
         direction: choice('direction', ['rtl', 'ltr'] as const),
         alignOnDirectionChange: choice('alignOnDirectionChange', ['flip', 'keep'] as const),
         textScale: num('textScale'),
+        colors: colorsAsked(),
+        free: freeAsked(),
       });
     default:
       return undefined;

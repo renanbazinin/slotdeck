@@ -1,5 +1,6 @@
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import type { Document, Element, Node } from '@xmldom/xmldom';
+import { writable } from '../util/chars.ts';
 
 export type { Document, Element, Node };
 
@@ -17,8 +18,27 @@ export function parseXml(text: string): Document {
   return new DOMParser().parseFromString(text, 'text/xml');
 }
 
+/** A document as the text of a part. Characters that XML cannot hold are left out: a part with one could not be opened. */
 export function serializeXml(doc: Document): string {
-  return new XMLSerializer().serializeToString(doc);
+  return writable(new XMLSerializer().serializeToString(doc));
+}
+
+/** The text sizes PowerPoint opens a file with, in hundredths of a point: 1 to 4000 pt. One size outside them and the file does not open. */
+const OPENABLE_SIZE = { least: 100, most: 400_000 };
+
+/**
+ * The text of a part with every text size inside the range PowerPoint opens. A size the renderer
+ * writes is the template's size times the manifest's `textScale` times the deck's, and a deck's
+ * factor alone cannot keep that product inside it: 300 on a template whose body text is 14 pt at
+ * a factor of 1.3 is past 4000 pt. Such a size is set to the nearest that opens; every other is
+ * left as written, so a part with none outside the range is the same text as before.
+ */
+export function openableSizes(xml: string): string {
+  return xml.replace(/(<(?:[A-Za-z_][\w.-]*:)?(?:rPr|defRPr|endParaRPr)\b[^>]*?\ssz=")([^"]*)(")/g, (whole, head: string, value: string, tail: string) => {
+    const size = Number(value);
+    if (!Number.isFinite(size) || (size >= OPENABLE_SIZE.least && size <= OPENABLE_SIZE.most)) return whole;
+    return `${head}${size < OPENABLE_SIZE.least ? OPENABLE_SIZE.least : OPENABLE_SIZE.most}${tail}`;
+  });
 }
 
 export function rootElement(doc: Document): Element {
@@ -69,7 +89,7 @@ export function removeNode(node: Node): void {
 }
 
 export function escapeXmlAttr(value: string): string {
-  return value
+  return writable(value)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')

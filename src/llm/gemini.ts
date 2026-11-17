@@ -110,7 +110,12 @@ async function createInteraction(
   // An answer cut off at the output limit is for the caller to deal with, when it says it can.
   if (interaction.status === 'incomplete' && acceptCutOff) return interaction;
   if (interaction.status !== 'completed') {
-    const reason = interaction.errors?.map((error) => error.message).filter(Boolean).join('; ');
+    // A gateway may answer in another shape than the service: what is not a list of errors with messages says nothing.
+    const errors: unknown[] = Array.isArray(interaction.errors) ? interaction.errors : [];
+    const reason = errors
+      .map((error) => (typeof error === 'object' && error !== null ? (error as { message?: unknown }).message : undefined))
+      .filter((message) => typeof message === 'string' && message !== '')
+      .join('; ');
     throw new GeminiError(`Gemini interaction ended with status "${interaction.status ?? 'unknown'}"${reason ? `: ${reason}` : ''}`);
   }
   return interaction;
@@ -125,8 +130,13 @@ function passesByItself(error: unknown): boolean {
   return (error.status !== undefined && error.status >= 500 && error.status <= 504) || /recitation/i.test(error.message);
 }
 
+/** The blocks the model wrote. Steps and blocks of another shape than the service's (from a gateway, say) are passed over. */
 function outputBlocks(interaction: Interaction): ContentBlock[] {
-  return (interaction.steps ?? []).filter((step) => step.type === 'model_output').flatMap((step) => step.content ?? []);
+  const isObject = (value: unknown): boolean => typeof value === 'object' && value !== null && !Array.isArray(value);
+  const steps: unknown[] = Array.isArray(interaction.steps) ? interaction.steps : [];
+  return steps
+    .filter((step): step is { type: string; content?: unknown } => isObject(step) && (step as { type?: unknown }).type === 'model_output')
+    .flatMap((step) => (Array.isArray(step.content) ? step.content : []).filter((block): block is ContentBlock => isObject(block)));
 }
 
 /** A Gemini text model as an {@link LlmProvider}. */
@@ -234,7 +244,15 @@ export function geminiImages(options: GeminiImageOptions): ImageProvider {
       const interaction = await createInteraction(options, body, request.signal);
       const image = outputBlocks(interaction).find((block) => block.type === 'image' && block.data);
       if (!image?.data) throw new GeminiError('Gemini returned no image');
-      return Uint8Array.from(atob(image.data), (char) => char.charCodeAt(0));
+      // The picture comes as base64 text. Anything else, or text that is not base64, is no picture.
+      let binary: string;
+      try {
+        if (typeof image.data !== 'string') throw new TypeError('not text');
+        binary = atob(image.data);
+      } catch {
+        throw new GeminiError('Gemini returned an image that cannot be read');
+      }
+      return Uint8Array.from(binary, (char) => char.charCodeAt(0));
     },
   };
 }

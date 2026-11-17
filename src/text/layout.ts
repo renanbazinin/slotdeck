@@ -82,14 +82,41 @@ export function breakLines(text: string, first: number, rest: number, measure: (
         line = '';
         width = 0;
       }
-      // A word wider than a whole line is cut by characters.
-      while (wordWidth > limit()) {
+      // A word wider than a whole line is cut by characters. The word is spread once, and what is
+      // left of it is not measured whole after every line, which took a time that grew with the
+      // square of its length: a piece of it that is wider than a line shows that the rest is, and
+      // only a rest that may fit a line is measured whole, for its width. The pieces start at
+      // twice the length of the line before and double.
+      if (wordWidth > limit()) {
         const chars = [...word];
-        let count = 1;
-        while (count < chars.length && measure(chars.slice(0, count + 1).join('')) <= limit()) count++;
-        lines.push(chars.slice(0, count).join(''));
-        word = chars.slice(count).join('');
-        wordWidth = word === '' ? 0 : measure(word);
+        let from = 0;
+        let last = 0;
+        for (;;) {
+          const left = chars.length - from;
+          if (left === 0) {
+            word = '';
+            wordWidth = 0;
+            break;
+          }
+          let wider = false;
+          for (let piece = Math.max(8, 2 * last); !wider; piece *= 2) {
+            if (piece >= left) {
+              wordWidth = measure(chars.slice(from).join(''));
+              wider = wordWidth > limit();
+              break;
+            }
+            wider = measure(chars.slice(from, from + piece).join('')) > limit();
+          }
+          if (!wider) {
+            word = chars.slice(from).join('');
+            break;
+          }
+          let count = 1;
+          while (count < left && measure(chars.slice(from, from + count + 1).join('')) <= limit()) count++;
+          lines.push(chars.slice(from, from + count).join(''));
+          from += count;
+          last = count;
+        }
       }
       line = word;
       width = wordWidth;

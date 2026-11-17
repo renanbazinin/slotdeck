@@ -1,3 +1,5 @@
+import { FREE_PATTERN } from '../deck/spec.ts';
+import type { FreeBlockKind } from '../deck/spec.ts';
 import type { LayoutMode } from '../deck/validate.ts';
 import type { JsonSchema } from '../llm/provider.ts';
 import { defaultItems, effectiveSlots, itemRange, rowLayout, tableAtScale, textBudget } from '../template/manifest.ts';
@@ -48,8 +50,8 @@ export interface CatalogContext {
 export type PlannedSlot =
   | { slot: TextSlotDef; mode: 'text' | 'paragraphs'; required: boolean }
   | { slot: ImageSlotDef; mode: 'photo' | 'icon' | 'graphic'; required: boolean }
-  | { slot: TableSlotDef; mode: 'table'; required: boolean }
-  | { slot: ChartSlotDef; mode: 'chart'; required: boolean };
+  | { slot: TableSlotDef; mode: 'table'; required: boolean; mayBeEmpty?: boolean }
+  | { slot: ChartSlotDef; mode: 'chart'; required: boolean; mayBeEmpty?: boolean };
 
 export interface UsablePattern {
   def: PatternDef;
@@ -166,27 +168,30 @@ export function buildCatalog(manifest: TemplateManifest, context: CatalogContext
   return { patterns, excluded };
 }
 
+/** A limit in words: "at most 4 rows", and "at most 1 row" for one. */
+const atMost = (count: number, one: string, many: string): string => `at most ${count} ${count === 1 ? one : many}`;
+
 function limits(given: SlotDef, scale = 1): string {
   const slot = given.kind === 'table' ? tableAtScale(given, scale) : given;
   if (slot.kind === 'table') {
     const parts: string[] = [];
-    if (slot.maxColumns !== undefined) parts.push(`at most ${slot.maxColumns} columns`);
-    if (slot.maxRows !== undefined) parts.push(`at most ${slot.maxRows} rows`);
-    if (slot.maxCellChars !== undefined) parts.push(`at most ${slot.maxCellChars} characters in a cell`);
+    if (slot.maxColumns !== undefined) parts.push(atMost(slot.maxColumns, 'column', 'columns'));
+    if (slot.maxRows !== undefined) parts.push(atMost(slot.maxRows, 'row', 'rows'));
+    if (slot.maxCellChars !== undefined) parts.push(`${atMost(slot.maxCellChars, 'character', 'characters')} in a cell`);
     return parts.join(', ');
   }
   if (slot.kind === 'chart') {
     const parts: string[] = [];
-    if (slot.maxCategories !== undefined) parts.push(`at most ${slot.maxCategories} categories`);
-    if (slot.maxSeries !== undefined) parts.push(`at most ${slot.maxSeries} series`);
+    if (slot.maxCategories !== undefined) parts.push(atMost(slot.maxCategories, 'category', 'categories'));
+    if (slot.maxSeries !== undefined) parts.push(atMost(slot.maxSeries, 'series', 'series'));
     return parts.join(', ');
   }
   if (slot.kind !== 'text') return '';
   const budget = textBudget(slot, scale);
   const several = (slot.maxParagraphs ?? 1) > 1;
   const parts: string[] = [];
-  if (budget.maxChars !== undefined) parts.push(`at most ${budget.maxChars} characters${several ? ' in total' : ''}`);
-  if (several) parts.push(`at most ${budget.maxParagraphs} items`);
+  if (budget.maxChars !== undefined) parts.push(`${atMost(budget.maxChars, 'character', 'characters')}${several ? ' in total' : ''}`);
+  if (several && budget.maxParagraphs !== undefined) parts.push(atMost(budget.maxParagraphs, 'item', 'items'));
   return parts.join(', ');
 }
 
@@ -240,9 +245,29 @@ export function describeCatalog(catalog: Catalog, textScale = 1): string {
     .join('\n');
 }
 
+/** What a slot's schema says of it: its description, then its limits at the deck's text size. */
+export function slotNote(slot: SlotDef, context: CatalogContext): string {
+  return [slot.description, limits(slot, budgetScale(context))].filter(Boolean).join('. ');
+}
+
+/** Said with every chart a model is asked for. */
+export const CHART_RULE = 'A chart of numbers the brief states. Use only those numbers: never estimate, interpolate or invent a value to complete a series.';
+export const CHART_TYPE_NOTE = 'column: compare items. bar: compare items with long names. line: change over time. pie: shares of a whole.';
+export const CHART_FORMAT_NOTE = 'percent when the values are percentages (write 45 for 45%)';
+export const PHOTO_PROMPT_NOTE = 'What the photo shows, in English: subject, setting, light and mood, in one or two sentences. No text, logos or brand names in the picture.';
+export const PHOTO_ALT_NOTE = 'Short alternative text for screen readers, in the deck language';
+export const PHOTO_ASSET_NOTE = 'Set only when one of the supplied photos fits; it is then used instead of generating one.';
+/**
+ * Said of the lists of a chart and of a table that may be left empty, in a slide written with the
+ * deck. Such a part is a property every answer has to hold, so "leave it empty" needs a way to
+ * do it. Without one, "one or more series" reads as an order to find some.
+ */
+const EMPTY_CHART_NOTE = '[] for a chart that is left empty';
+const EMPTY_TABLE_NOTE = '[] for a table that is left empty';
+
 function slotSchema(planned: PlannedSlot, context: CatalogContext): JsonSchema {
   const { slot } = planned;
-  const note = [slot.description, limits(slot, budgetScale(context))].filter(Boolean).join('. ');
+  const note = slotNote(slot, context);
 
   switch (planned.mode) {
     case 'text':
@@ -254,24 +279,28 @@ function slotSchema(planned: PlannedSlot, context: CatalogContext): JsonSchema {
       return schema;
     }
     case 'table': {
-      const cells: JsonSchema = { type: 'array', items: { type: 'string' }, minItems: 2 };
-      const rows: JsonSchema = { type: 'array', minItems: 1, description: 'Body rows. Every row has one cell per column, in column order.' };
+      // A table or a chart that may be left empty (a part of a free slide the brief has nothing for) states no least number.
+      // Its description says when to leave it empty, and the two lists say how: the property itself is asked of every answer.
+      const none = planned.mayBeEmpty ? EMPTY_TABLE_NOTE : '';
+      const cells: JsonSchema = { type: 'array', items: { type: 'string' }, ...(planned.mayBeEmpty ? {} : { minItems: 2 }) };
+      const rows: JsonSchema = { type: 'array', ...(planned.mayBeEmpty ? {} : { minItems: 1 }), description: `Body rows. Every row has one cell per column, in column order.${none ? ` ${none}.` : ''}` };
       if (planned.slot.maxColumns !== undefined) cells.maxItems = planned.slot.maxColumns;
       if (planned.slot.maxRows !== undefined) rows.maxItems = planned.slot.maxRows;
       rows.items = { ...cells };
       return {
         type: 'object',
         description: note || 'A table',
-        properties: { header: { ...cells, description: 'Column headings, a word or two each' }, rows },
+        properties: { header: { ...cells, description: `Column headings, a word or two each${none ? `. ${none}` : ''}` }, rows },
         required: ['header', 'rows'],
       };
     }
     case 'chart': {
-      const categories: JsonSchema = { type: 'array', items: { type: 'string' }, minItems: 2, description: 'Labels along the axis, or the names of the pie slices' };
+      const none = planned.mayBeEmpty ? EMPTY_CHART_NOTE : '';
+      const categories: JsonSchema = { type: 'array', items: { type: 'string' }, ...(planned.mayBeEmpty ? {} : { minItems: 2 }), description: `Labels along the axis, or the names of the pie slices${none ? `. ${none}` : ''}` };
       const series: JsonSchema = {
         type: 'array',
-        minItems: 1,
-        description: 'One or more series. A pie takes exactly one.',
+        ...(planned.mayBeEmpty ? {} : { minItems: 1 }),
+        description: none ? `One or more series. A pie takes exactly one. ${none}.` : 'One or more series. A pie takes exactly one.',
         items: {
           type: 'object',
           properties: {
@@ -285,14 +314,12 @@ function slotSchema(planned: PlannedSlot, context: CatalogContext): JsonSchema {
       if (planned.slot.maxSeries !== undefined) series.maxItems = planned.slot.maxSeries;
       return {
         type: 'object',
-        description:
-          (note ? `${note}. ` : '') +
-          'A chart of numbers the brief states. Use only those numbers: never estimate, interpolate or invent a value to complete a series.',
+        description: (note ? `${note}. ` : '') + CHART_RULE,
         properties: {
-          type: { type: 'string', enum: ['column', 'bar', 'line', 'pie'], description: 'column: compare items. bar: compare items with long names. line: change over time. pie: shares of a whole.' },
+          type: { type: 'string', enum: ['column', 'bar', 'line', 'pie'], description: CHART_TYPE_NOTE },
           categories,
           series,
-          format: { type: 'string', enum: ['number', 'percent'], description: 'percent when the values are percentages (write 45 for 45%)' },
+          format: { type: 'string', enum: ['number', 'percent'], description: CHART_FORMAT_NOTE },
         },
         required: ['type', 'categories', 'series', 'format'],
       };
@@ -307,19 +334,12 @@ function slotSchema(planned: PlannedSlot, context: CatalogContext): JsonSchema {
       };
     case 'photo': {
       const properties: Record<string, JsonSchema> = {
-        prompt: {
-          type: 'string',
-          description: 'What the photo shows, in English: subject, setting, light and mood, in one or two sentences. No text, logos or brand names in the picture.',
-        },
-        alt: { type: 'string', description: 'Short alternative text for screen readers, in the deck language' },
+        prompt: { type: 'string', description: PHOTO_PROMPT_NOTE },
+        alt: { type: 'string', description: PHOTO_ALT_NOTE },
       };
       const photos = context.assets.filter((asset) => asset.kind === 'photo');
       if (photos.length > 0) {
-        properties.asset = {
-          type: 'string',
-          enum: photos.map((asset) => asset.id),
-          description: 'Set only when one of the supplied photos fits; it is then used instead of generating one.',
-        };
+        properties.asset = { type: 'string', enum: photos.map((asset) => asset.id), description: PHOTO_ASSET_NOTE };
       }
       return { type: 'object', properties, required: ['prompt', 'alt'], description: note || 'Photo for this slide' };
     }
@@ -354,7 +374,55 @@ export function contentSchema(items: WriteItem[], context: CatalogContext): Json
   return { type: 'object', properties, required: Object.keys(properties) };
 }
 
-export function outlineSchema(catalog: Catalog, count: { min: number; max: number }): JsonSchema {
+/** Where the first part of a free slide stands, as a plan or a change to a deck states it. `auto` leaves it to the software. */
+export const SHOWS_MAIN = ['auto', 'left', 'right', 'top', 'none'] as const;
+/** Said of the count of a run of like parts. */
+export const SHOWS_COUNT_NOTE = 'How many parts of this kind stand here, one after another: 8 for eight charts. One entry for them all, not one entry for each.';
+export const SHOWS_MAIN_NOTE = 'Only for free: where the first part stands when it is the main one and larger. auto lets the software decide; none sets all parts alike.';
+
+/**
+ * Schema of one slide of an outline: its pattern, the point it makes and, where a row of items
+ * varies, how many it has. A new plan and a change to a plan ask for the same entry, so that what
+ * one can say about a slide the other can too. With `free`, a slide may also be a free slide,
+ * and the entry says what it is made of; without it the entry is what it was before free slides.
+ */
+export function outlineEntrySchema(catalog: Catalog, free?: FreeShows): JsonSchema {
+  const ids = catalog.patterns.map((pattern) => pattern.def.id);
+  const purpose: JsonSchema = { type: 'string', description: 'The one point this slide makes: a single sentence of at most 25 words' };
+  if (!free) return { type: 'object', properties: { pattern: { type: 'string', enum: ids }, purpose, ...itemsProperty(catalog) }, required: ['pattern', 'purpose'] };
+
+  // A free slide names its parts where a pattern has its slots. The three properties are asked of
+  // every slide, so that a model cannot choose `free` and leave its parts out.
+  const items = itemsProperty(catalog);
+  if (items.items) items.items = { ...items.items, description: `${items.items.description} Not for free: its parts go in "shows".` };
+  return {
+    type: 'object',
+    properties: {
+      pattern: { type: 'string', enum: [...ids, FREE_PATTERN] },
+      purpose,
+      ...items,
+      shows: {
+        type: 'array',
+        description: 'Only for the layout free: its parts in reading order, like parts together. [] for every other layout.',
+        items: {
+          type: 'object',
+          properties: { count: { type: 'integer', minimum: 1, description: SHOWS_COUNT_NOTE }, kind: { type: 'string', enum: [...free.kinds] } },
+          required: ['count', 'kind'],
+        },
+      },
+      shows_main: { type: 'string', enum: [...SHOWS_MAIN], description: SHOWS_MAIN_NOTE },
+      side_by_side: { type: 'integer', minimum: 0, description: 'Only for free, when the brief asks for a number of columns; 0 lets the software decide.' },
+    },
+    required: ['pattern', 'purpose', 'shows', 'shows_main', 'side_by_side'],
+  };
+}
+
+/** What an outline entry may name as the parts of a free slide. Never empty. */
+export interface FreeShows {
+  kinds: readonly FreeBlockKind[];
+}
+
+export function outlineSchema(catalog: Catalog, count: { min: number; max: number }, free?: FreeShows): JsonSchema {
   return {
     type: 'object',
     properties: {
@@ -363,15 +431,7 @@ export function outlineSchema(catalog: Catalog, count: { min: number; max: numbe
         type: 'array',
         minItems: count.min,
         maxItems: count.max,
-        items: {
-          type: 'object',
-          properties: {
-            pattern: { type: 'string', enum: catalog.patterns.map((pattern) => pattern.def.id) },
-            purpose: { type: 'string', description: 'The one point this slide makes: a single sentence of at most 25 words' },
-            ...itemsProperty(catalog),
-          },
-          required: ['pattern', 'purpose'],
-        },
+        items: outlineEntrySchema(catalog, free),
       },
     },
     required: ['title', 'slides'],

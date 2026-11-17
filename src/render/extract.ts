@@ -1,9 +1,11 @@
-import { isImageRef, toParagraphs } from '../deck/spec.ts';
+import { isFreeSlide, isImageRef, toParagraphs } from '../deck/spec.ts';
 import type { DeckSpec } from '../deck/spec.ts';
 import { PptxPackage, readRels, resolveTarget } from '../pptx/package.ts';
 import { readPresentation } from '../pptx/presentation.ts';
 import { NS, descendants, parseXml, path, rootElement } from '../pptx/xml.ts';
+import { freeFor } from '../free/resolve.ts';
 import { effectiveSlots, slotSources } from '../template/manifest.ts';
+import type { PatternDef } from '../template/manifest.ts';
 import { indexShapes } from './render.ts';
 import type { Template } from './render.ts';
 
@@ -27,7 +29,9 @@ export function extractAssets(template: Template, deck: DeckSpec, pptx: Uint8Arr
   const mirrored = (deck.direction ?? template.manifest.direction) !== template.manifest.direction;
 
   deck.slides.forEach((slide, index) => {
-    const pattern = patterns.get(slide.pattern);
+    // A slide the software laid out is laid out again the same way, which says where its pictures are.
+    const free = isFreeSlide(slide) ? freeFor(template, deck, slide) : undefined;
+    const pattern: PatternDef | undefined = free === undefined ? patterns.get(slide.pattern) : typeof free === 'string' ? undefined : free.plan.pattern;
     const part = slides[index]?.part;
     if (!pattern || !part || !pkg.has(part)) return;
     const shapes = indexShapes(rootElement(parseXml(pkg.readText(part))));
@@ -61,6 +65,8 @@ export function extractAssets(template: Template, deck: DeckSpec, pptx: Uint8Arr
     for (const slot of slots) {
       const value = valueOf(slot.name);
       if (slot.kind !== 'image' || !isImageRef(value)) continue;
+      // A pictogram of a deck in other colours was drawn in those colours: the icon set has the original.
+      if (slot.imageKind === 'icon' && (deck.colors !== undefined || slide.colors !== undefined)) continue;
       const shape = shapes.get(slot.shapeId);
       const blip = shape && path(shape, [NS.p, 'blipFill'], [NS.a, 'blip']);
       const target = targets.get(blip?.getAttributeNS(NS.r, 'embed') ?? '');

@@ -1,0 +1,164 @@
+// What a planner needs to know of free slides before any content exists: whether a template can
+// carry them, which kinds of block a deck may be offered, how many read well, and the pattern a
+// planned slide is written against.
+import type { DeckSpec, FreeArrange, FreeBlockKind, SlideSpec } from '../deck/spec.ts';
+import { FREE_BLOCK_KINDS } from '../deck/spec.ts';
+import type { Template } from '../render/render.ts';
+import type { PatternDef, TemplateManifest } from '../template/manifest.ts';
+import { freeSlotName, isFreeBlockKind } from './blocks.ts';
+import { freeKitOrReason } from './kit.ts';
+import { freeBodySize } from './plan.ts';
+import { freeFor } from './resolve.ts';
+
+/** What a deck has to draw on, as far as free slides care. */
+export interface FreeSupplies {
+  /** The brief holds numbers: figures, charts and tables may be planned. */
+  figures: boolean;
+  /** Photos can be had: generated, or supplied. */
+  photos: boolean;
+  /** Pictures to show whole (diagrams, screenshots) were supplied. */
+  graphics: boolean;
+  /** An icon set was supplied: a card may carry one. */
+  icons: boolean;
+  /** Every slide is to be plain text. */
+  textOnly?: boolean;
+}
+
+export interface FreeOffer {
+  /** The kinds of block a slide may be planned with, in the order they are listed to a model. */
+  kinds: FreeBlockKind[];
+  /** About how many blocks a slide holds at the template's own text size. */
+  comfortable: number;
+  /** The id of the layout whose frame free slides stand on. */
+  base: string;
+}
+
+/** One line on each kind of block, for a model that chooses them. */
+export const FREE_KIND_NOTES: Record<FreeBlockKind, string> = {
+  text: 'running text, with a heading when there are several',
+  list: 'a list of short points',
+  card: 'a heading and a short text in a box',
+  figure: 'one big number and what it counts',
+  step: 'a numbered step: a heading and a short text',
+  quote: 'a quotation',
+  note: 'one highlighted line across the slide, for the bottom line',
+  chart: 'a chart of numbers the brief states',
+  table: 'a table',
+  photo: 'a photo',
+  graphic: 'one of the supplied graphics, shown whole',
+};
+
+const PLAIN: readonly FreeBlockKind[] = ['text', 'list', 'quote', 'note'];
+
+/**
+ * What free slides a deck on this template may be offered, or `undefined` when it may be offered
+ * none: the manifest turns them off, or the template has no layout to stand them on.
+ */
+export function freeOffer(template: Template, supplies: FreeSupplies): FreeOffer | undefined {
+  if (template.manifest.free === false) return undefined;
+  const kit = freeKitOrReason(template);
+  if (typeof kit === 'string') return undefined;
+  const kinds = FREE_BLOCK_KINDS.filter((kind) => {
+    if (supplies.textOnly) return PLAIN.includes(kind);
+    if (kind === 'figure' || kind === 'chart' || kind === 'table') return supplies.figures;
+    if (kind === 'photo') return supplies.photos;
+    if (kind === 'graphic') return supplies.graphics;
+    return true;
+  });
+  return { kinds: [...kinds], comfortable: comfortableBlocks(template, supplies.icons), base: kit.base };
+}
+
+// Remembered for the manifest object it was worked out under, as a template's kit is.
+const comfort = new WeakMap<Template, { manifest: TemplateManifest; known: Map<boolean, number> }>();
+
+/**
+ * How many cards a slide holds before their text is set smaller than the template's own: the
+ * number a planner is told reads well. Cards are the measure because they are the block a slide
+ * most often has several of. Each card is taken to say what a card usually says, as a slide
+ * is planned, so the number is that of a slide as it will be written.
+ */
+function comfortableBlocks(template: Template, icons: boolean): number {
+  let cache = comfort.get(template);
+  if (!cache || cache.manifest !== template.manifest) comfort.set(template, (cache = { manifest: template.manifest, known: new Map() }));
+  const { known } = cache;
+  const before = known.get(icons);
+  if (before !== undefined) return before;
+  let most = 1;
+  for (let count = 1; count <= 12; count++) {
+    const resolved = freeFor(template, {}, { blocks: Array<FreeBlockKind>(count).fill('card'), slots: {} }, { icons });
+    if (typeof resolved === 'string') break;
+    const text = resolved.plan.pattern.slots.find((slot) => slot.name === freeSlotName(1, 'Text'));
+    const size = text && text.kind === 'text' ? (text.fontSize ?? text.size ?? 0) : 0;
+    // The text of one card or two may be set larger than the template's own; the measure is the template's own size.
+    if (resolved.plan.layout.dense || size < 0.85 * freeBodySize(resolved.kit)) break;
+    most = count;
+  }
+  known.set(icons, most);
+  return most;
+}
+
+/** A free slide as a plan holds it, before its content is written. */
+export interface PlannedFree {
+  blocks: FreeBlockKind[];
+  arrange?: FreeArrange | undefined;
+  base?: string | undefined;
+}
+
+/**
+ * The pattern a planned free slide is written against: its slots with the room each has, worked
+ * out with no content. The slide is set out as it will be when every text is about as long as
+ * texts of its kind usually are, and each slot says what its box holds then. Optional parts are
+ * counted in by rule: an icon for every card when `icons` says an icon set is at hand, a heading
+ * over each text of a slide of several blocks, a caption for each chart, table, photo or graphic
+ * of a slide that has two or more of the kind, the source of a quotation. `withParts` names
+ * slots to count in besides, such as `b2Caption`: a change to a deck passes the optional slots
+ * that hold a value on the slide, so that a caption or a heading the slide has can be written
+ * again. A sentence instead when the template cannot carry the slide.
+ */
+export function freePattern(template: Template, deck: Pick<DeckSpec, 'direction' | 'textScale'>, planned: PlannedFree, icons: boolean, withParts?: readonly string[]): { pattern: PatternDef; base: string } | string {
+  const slide: Pick<SlideSpec, 'blocks' | 'arrange' | 'slots' | 'base'> = { blocks: planned.blocks, slots: {} };
+  if (planned.arrange) slide.arrange = planned.arrange;
+  if (planned.base !== undefined) slide.base = planned.base;
+  const resolved = freeFor(template, deck, slide, withParts && withParts.length > 0 ? { icons, withParts } : { icons });
+  return typeof resolved === 'string' ? resolved : { pattern: resolved.plan.pattern, base: resolved.kit.base };
+}
+
+/** Like blocks that follow one another, as a plan names them: 6 charts, then 1 note. */
+export interface BlockRun {
+  kind: FreeBlockKind;
+  number: number;
+  /** The number of the run's first block in the slide, from 1. */
+  first: number;
+}
+
+/** The blocks of a slide as runs of like blocks, in order. */
+export function blockRuns(blocks: readonly FreeBlockKind[]): BlockRun[] {
+  const runs: BlockRun[] = [];
+  blocks.forEach((kind, index) => {
+    const last = runs[runs.length - 1];
+    if (last && last.kind === kind) last.number++;
+    else runs.push({ kind, number: 1, first: index + 1 });
+  });
+  return runs;
+}
+
+/** The most blocks that runs are ever written out as, whatever their numbers say: more than any slide shows, and few enough that an answer with a number gone wrong cannot fill the memory. */
+export const MOST_BLOCKS = 2000;
+
+/**
+ * Runs of like blocks written out again as the list of blocks: what a deck holds. How many
+ * blocks a run has is its `count`, or, failing that, its `number`. Anything that is no kind, or
+ * no count, is passed over, and the list is never longer than `MOST_BLOCKS`: what the runs name
+ * beyond that is left out.
+ */
+export function blocksOfRuns(runs: ReadonlyArray<{ kind: unknown; count?: unknown; number?: unknown }>): FreeBlockKind[] {
+  const blocks: FreeBlockKind[] = [];
+  for (const run of runs) {
+    const stated = Math.floor(Number(run.count));
+    const count = stated >= 1 ? stated : Math.floor(Number(run.number));
+    if (!isFreeBlockKind(run.kind) || !(count >= 1)) continue;
+    for (let n = 0; n < count && blocks.length < MOST_BLOCKS; n++) blocks.push(run.kind);
+    if (blocks.length >= MOST_BLOCKS) break;
+  }
+  return blocks;
+}

@@ -128,7 +128,15 @@ What does **not** change: the budgets the planning model is told (`maxChars`), t
 (`maxParagraphs`, still reported as before), and tables and charts, which are not measured. To give the model
 budgets that match the boxes, see "Budgets from measurement" below.
 
-`validateDeck` takes a manifest, not a template, so it gets the measurer as an option:
+`validateDeck` measures by itself when it is given the loaded template:
+
+```ts
+import { validateDeck } from 'slotdeck';
+
+const issues = validateDeck(template, deck, { layout: 'adaptive' });
+```
+
+Given only the manifest, it gets the measurer as an option, as before 0.6.0:
 
 ```ts
 import { textMeasurer, validateDeck } from 'slotdeck';
@@ -137,6 +145,10 @@ const issues = validateDeck(template.manifest, deck, { layout: 'adaptive', measu
 ```
 
 `renderDeck`, the planner and the studio functions take the template and need nothing extra.
+
+The text of a free slide (see [free-slides.md](free-slides.md)) is measured too: each of its texts is a copy
+of a shape of the template, and is measured in that shape's typeface at the size and in the box the slide gives
+it.
 
 ### The warnings
 

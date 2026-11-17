@@ -81,6 +81,8 @@ export interface TextFrame {
   width: number;
   height: number;
   insets: { left: number; right: number; top: number; bottom: number };
+  /** The part of the insets that the outline itself keeps clear of text (rounded corners, an ellipse), at each side and above and below. */
+  clear: { x: number; y: number };
   /** Whether lines wrap at the box's edge. */
   wrap: boolean;
   /** `shape`: the box grows with its text when edited in PowerPoint. `shrink`: PowerPoint shrinks the text. */
@@ -178,6 +180,27 @@ export class TextStyles {
       this.frames.set(key, shape ? this.read(slideNumber, shapeId, styleRun, undefined, shape) : undefined);
     }
     return this.frames.get(key);
+  }
+
+  /**
+   * The place of a placeholder that states none of its own on the slide: the box of the same
+   * placeholder on the slide's layout, or else on its master, in EMU. `undefined` for a shape
+   * that is no placeholder, and when neither of the two states a place.
+   */
+  inheritedBox(slideNumber: number, shapeId: string): { x: number; y: number; cx: number; cy: number } | undefined {
+    const slide = this.slide(slideNumber);
+    const shape = slide?.shapes.get(shapeId);
+    const placeholder = shape ? descendants(shape, NS.p, 'ph')[0] : undefined;
+    if (!slide || !placeholder) return undefined;
+    const layoutShape = slide.layout ? findPlaceholder(slide.layout, placeholder, false) : undefined;
+    const masterShape = slide.master ? findPlaceholder(slide.master.root, layoutShape ? (descendants(layoutShape, NS.p, 'ph')[0] ?? placeholder) : placeholder, true) : undefined;
+    for (const source of [layoutShape, masterShape]) {
+      const transform = source && path(source, [NS.p, 'spPr'], [NS.a, 'xfrm']);
+      const off = transform && childElement(transform, NS.a, 'off');
+      const ext = transform && childElement(transform, NS.a, 'ext');
+      if (off && ext) return { x: Number(off.getAttribute('x') ?? 0), y: Number(off.getAttribute('y') ?? 0), cx: Number(ext.getAttribute('cx') ?? 0), cy: Number(ext.getAttribute('cy') ?? 0) };
+    }
+    return undefined;
   }
 
   /** The shapes of a slide after its row is laid out, on a copy that nothing else reads. */
@@ -316,6 +339,7 @@ export class TextStyles {
         top: points(bodyAttr('tIns'), 3.6) + inside.y,
         bottom: points(bodyAttr('bIns'), 3.6) + inside.y,
       },
+      clear: { x: inside.x, y: inside.y },
       wrap: bodyAttr('wrap') !== 'none',
       autofit: fit?.localName === 'normAutofit' ? 'shrink' : fit?.localName === 'spAutoFit' ? 'shape' : 'none',
       fontScale: fit?.localName === 'normAutofit' ? Number(fit.getAttribute('fontScale') ?? 100000) / 100000 : 1,

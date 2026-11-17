@@ -399,6 +399,25 @@ test('an edit to a larger text size rewrites only the slides that no longer fit'
   assert.equal(back.requests.length, 1);
 });
 
+test('a text size that is not one of the list keeps the size there is, also one every object has', async () => {
+  // "constructor" and "__proto__" are in every object: they were once read as sizes, and the deck could not be rendered.
+  const larger: DeckSpec = { ...three, slides: [cardSlide(3)], textScale: 1.25 };
+  for (const size of ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'huge']) {
+    const { llm, requests } = scripted(editPlan([{ from: 1, pattern: 'cards', change: '', images: false }], { text_size: size }));
+    const result = await planEdit(template, larger, 'Make the text larger', { llm });
+    assert.equal(result.deck.textScale, 1.25, size);
+    assert.deepEqual(result.rewritten, [], size);
+    assert.equal(requests.length, 1, size);
+  }
+  // A brief's size is read the same way: the deck is written in the usual size.
+  for (const size of ['__proto__', 'constructor', 'huge']) {
+    const { llm } = scripted({ title: 'T', slides: [{ pattern: 'cards', purpose: 'p', items: 1 }] }, { s1: { title: 'T', card1Text: 'Short' } });
+    const { deck } = await planDeck(template, { prompt: 'x', language: 'en', imageDensity: 'none', textSize: size as 'large' }, { llm });
+    assert.equal(deck.textScale, undefined, size);
+    assert.equal(renderDeck(template, deck).warnings.filter((issue) => issue.severity === 'error').length, 0, size);
+  }
+});
+
 test('the plan tool passes the text size on', async () => {
   const model = scripted({ title: 'T', slides: [{ pattern: 'cards', purpose: 'p', items: 2 }] });
   const tools = presentationTools({ template, llm: model.llm, store: memoryStore() });

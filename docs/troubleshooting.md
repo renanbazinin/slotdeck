@@ -19,11 +19,17 @@ Each has the slide number and usually the slot name.
 | Message | Meaning | Fix |
 | --- | --- | --- |
 | `the deck has no slides` | `slides` is missing or empty. | Give at least one slide. |
+| `the deck is no object with a list of slides, such as { "version": 1, "slides": [...] }` (also `the slide is no object with a pattern and slots, ...` on a slide, and `"layouts" is an object; it is a list of the deck's own layouts, ...`) | What was passed as a deck, a slide or `layouts` has another shape: `null`, a string, a number. Before 0.6.0 this was a `TypeError`. | Pass the parsed deck. An application that stores decks: check what was read back. |
+| `the deck's textScale is NaN; it is a factor on body text between 0.1 and 300, such as 1.25` | `textScale` is no number, or is outside 0.1 to 300. `null` is read as not set, and a number written as text (`"1.25"`) as that number. Before 0.6.0 such a deck rendered to a file PowerPoint did not open when it had a chart or text of 12 pt or less, whose size the factor sets. | Leave `textScale` out, or give a factor such as `1.25`. |
+| `the template's textScale is NaN; it is a factor on body text such as 1.25, which changeManifest sets with "textScale"` | The manifest's own `textScale` is no number, or is 0 or less. Every deck on the template is stopped: its sizes would be written as `NaN`, which PowerPoint does not open. `checkManifest` reports it too. | Set it with `changeManifest` (`{ op: 'setManifest', textScale: 1.25 }`), or remove it from the manifest. |
+| `the chart has 256 series; a chart takes at most 255` | PowerPoint does not open a chart of more series. | Fewer series: a chart reads well with up to about eight. |
+| `asset "x" is not a PNG, JPEG or GIF picture` | (From `renderDeck`.) The bytes passed for the asset are no picture, or empty. | Pass the bytes of the picture file. |
+| `a free slide holds at most 2000 blocks, not 5000` | Past that a slide is no slide, and laying it out would take minutes. | Fewer blocks; spread them over slides. |
 | `unknown pattern "x" (available: a, b, c)` | The slide names a pattern the manifest does not have. | Use one of the listed ids. |
 | `pattern "x" takes 2 to 4 cards, not 5` | `items` is outside the pattern's range. | Use a count in the range, or raise `max` in the manifest if the template has room. |
 | `this slot is required` | A required slot has no value (or an empty string), or a required deck field was not given. | Give the slot a value, or add the field to `deck.fields`. |
 | `leaving this slot empty needs layout: 'adaptive'` | An optional slot was left out in `strict` layout. | Render with `layout: 'adaptive'`, or fill the slot. |
-| `expected text` | A text slot got a picture, table or chart value. | Give a string or an array of strings. |
+| `expected text` | A text slot got something that is no text: a picture, table or chart value, a number such as `87`, an object, or a list that holds one of them. | Give a string or an array of strings. A number goes in quotation marks: `"87"`. |
 | `expected an image reference such as { "asset": "id" }` | An image slot got something else. | Give `{ "asset": "<id>" }`. |
 | `expected a table such as { "header": [...], "rows": [[...]] }` | A table slot got something else. | Give a `header` array and a `rows` array of arrays. |
 | `the table has no columns` | `header` is empty. | Give at least one column heading. |
@@ -35,6 +41,9 @@ Each has the slide number and usually the slot name.
 | `series "x" has a value that is not a number` | A value is `null`, a string that is not a number, or missing. | Give numbers. |
 | `a pie chart takes exactly one series` | A pie with several series. | Give one series, or use another type. |
 | `asset "x" was not provided` | The deck refers to a picture whose bytes were not passed. | Add it to `options.assets` under that id. With the planner, pass the same `icons` and `assets` to rendering as to planning, or use `resolveAssets`. |
+| `a free slide needs at least one block, such as "blocks": ["text"]` | A slide with an empty `blocks` list. | Name at least one block, or use a pattern. See [free-slides.md](free-slides.md). |
+| `"blocks" names "x"; a free slide is made of text, list, card, ...` | A kind of block that does not exist. | Use one of the kinds listed. |
+| `a free slide cannot be made from this template: ...` | The template has no layout a free slide can stand on, or no running text to copy. The sentence says which: no layout with a title, a title whose place neither its slide layout nor the master states, running text that does not read on the frame's background, or running text that is all in placeholders. | Add a pattern with a title at the top and running text in text boxes to the manifest, or name a frame with `free.base`. |
 
 ## Deck warnings
 
@@ -43,26 +52,41 @@ These do not stop rendering. `renderDeck` and the planner return them.
 | Message | Meaning | What to do |
 | --- | --- | --- |
 | `text is 230 characters; the slot fits about 211` | Text over the slot's `maxChars`. It is rendered and may overflow its box. | Shorten the text, or raise the budget in the manifest if the sample deck shows room. |
+| `text is 38 characters; the slot fits about 1` on a part of a free slide (`b3Text`) | The box of that part is lower than one line of its text, even at the smallest size: a card among too many, one under the other, or a template that sets its lines far apart. The text would be drawn across the card's edge. | Fewer blocks on the slide, or more of them side by side (`arrange.columns`). |
 | `text takes 7 lines at 18 pt; the box holds 5 (2 lines too many). Text of about 290 characters fits.` | (Template loaded with fonts.) The text was measured and runs over its box by that many lines. | Shorten the text to about the length given, or allow shrinking with `shrinkText`. See [text-fit.md](text-fit.md). |
 | `text takes 6 lines even at 15.5 pt; the box holds 5 ...` | The text was set as small as `shrinkText` allows and still does not fit. | Shorten the text. |
 | `text is 30% wider than its box at 12 pt, and the box does not wrap. ...` | (With fonts.) A one-line box whose text is too long. | Shorten the text. |
 | `text takes 1 line where the template's own text takes 5, so its box will look empty. ...` | (From `checkDesign` or a `review`.) The text fits but leaves its box almost empty. Also: `...so the row will look uneven`, and `the last of its 2 lines holds one word, ...`. | Lengthen or shorten the text as the message says. See [design-checks.md](design-checks.md). |
 | `seen in the picture of the slide: ...` | (From `visionReview`.) A model looked at a picture of the slide and reported this. It is only as reliable as the picture. | Check the slide; see the cautions in [design-checks.md](design-checks.md). |
 | `text has 5 paragraphs; the slot fits 4` | Over `maxParagraphs`. | Fewer paragraphs. |
-| `the table has 6 columns; the slot fits 5` (also rows) | Over the table's limits. The table may leave the slide. | A smaller table. |
-| `a cell is 40 characters; cells fit about 22` | A long cell makes its row taller. | Shorter cells. |
-| `the chart has 12 categories; the slot fits 8` (also series) | Over the chart's limits. Labels may crowd. | Fewer categories. |
+| `the table has 6 columns; the slot fits 5` (also rows) | Over the table's limits. The table may leave the slide. On a free slide (slot `b1Table`) the limit is what the table's box holds at the smallest text size, so the table will be drawn past its box, over what is under it. | A smaller table. On a free slide also: fewer blocks beside it, or a slide of its own. |
+| `a cell is 40 characters; cells fit about 22` | A long cell makes its row taller. On a free slide a row is made as high as its cells need, and the text is set smaller until the table fits its box. This is said when that takes the text under four fifths of the size the table would have with a word in every cell: the table is still drawn inside its box, in small text, down to the smallest size. | Shorter cells: they make the table's text larger. |
+| `the chart has 12 categories; the slot fits 8` (also series) | Over the chart's limits. Labels may crowd. On a free slide (slot `b1Chart`) the limits are what reads well at the size the chart is drawn at: 8 categories and 3 series for a large chart, fewer for a small one, 12 categories and one series for a chart drawn without axes. The chart is drawn all the same. | Fewer categories or series, or fewer blocks on the slide so that the chart is larger. |
 | `pattern "x" has no such slot; ignored` | The slide gives a slot name the pattern does not have. | Check the name against the manifest. With `items`, slots of items beyond the count are reported this way. |
 | `pattern "x" has a fixed number of items; "items" is ignored` | `items` on a pattern without a `repeat`. | Remove `items`. |
 | `chart format "x" is not known and is ignored; use "number" or "percent"` | An unknown `format`. | Use one of the two, or leave it out. |
 | `chart values not stated in the brief: 89` | (Planner only.) The model charted a number the brief does not contain. It may be invented, or worked out from the brief. | Check the number. Put the figures you want charted into the brief. |
+| `slide 4 holds 60 blocks, as asked; its smallest text is set at 5.5 pt` | A free slide was made with as many blocks as asked for, and some of its text is under 9 pt (on a slide 13.33 inches wide; in proportion on a narrower one), which nobody reads on a projected slide. It has no slide number in `Issue.slide`: it is a note on what was asked for, not a request to write the slide again. Where the small text is a table's and its long cells are the cause, the table's slot is told as well. | Nothing, when that many on one slide is what was wanted. Otherwise spread the blocks over more slides. |
+| `slide 4: 12 side by side were asked for; the slide holds 5` | A free slide's `arrange.columns` would have left some block under its smallest size: narrower than its kind sits well in, or under half the least height. The slide was set out with the nearest number of blocks side by side at which every block has that size. No slide number in `Issue.slide`. | Nothing, or state the number the slide holds. See "How the blocks are set out" in [free-slides.md](free-slides.md). |
+| `slide 4 holds 9 blocks, as asked; the deck asks for larger text, and this slide has no room for it` (also `... has room for half of that`) | The deck's `textScale` is above 1. On this free slide larger text would leave some part less room than it needs, and its text would have to be set smaller than without the wish. The slide is made with half of the larger text, or with none. No slide number in `Issue.slide`. | Nothing, or fewer blocks on the slide. |
+| `slide 4 holds 200 blocks, as asked; 200 charts are drawn small, without axes, legend or labels` | The charts of a free slide are too small for anything but their bars or lines. | The same. |
+| `slide 4 holds 9 blocks, as asked; one of them reaches below the room the slide has, and may be cut off at its edge` | A block of a free slide was set out below the room for content. The software lays nothing out there, and says so should it happen. | Fewer blocks on the slide. Please report the deck: it is a fault in the layout. |
+| `slide 4 was planned on the frame of the layout "x", which the template no longer offers; it stands on "y"` | A free slide's `base` names a pattern that is gone. | Remove `base` from the slide, or restore the pattern. |
+| `slide 4 was planned on the frame of the layout "x", which cannot carry a free slide (the layout "x" has its title low on the slide: blocks would get 25% of the slide's height, and a frame leaves them 45% or more); it stands on "y"` | A free slide's `base` names a pattern that is no frame: a cover, a section divider or a closing slide, whose title leaves no room under it; a pattern with a row of items; one without a title. On a template none of whose layouts leaves 45%, the sentence compares with the layout the slide stands on: `... and "y" leaves them 40%`. | Remove `base` from the slide, or name a content layout. |
+| `the colour "accent" is "blue", which is not six hex digits such as "1565C0"; it is ignored` | A colour in `colors` that is no colour. The deck renders without it. | Give six hex digits. See [colors.md](colors.md). |
+| `the template keeps its own colours in every deck; the colours the deck asks for are left out` | The manifest has `"colors": false`. | Remove `colors` from the deck, or allow colours in the manifest. |
+| `the colour FFFFFF is close to the page's own; fills, chart bars and icons in it will hardly show` | (From `renderDeck` and the chat tools.) The deck's colour is about the colour of a page that stays as it is. `validateDeck` does not say this: it has no page to compare with. | A darker or stronger colour. |
+| `the template has no second colour; "accent2" is left out` | The deck asks for a second colour, and the template has only one main colour. | Nothing, or leave `accent2` out. |
 
 ## Planner errors (`PlanError`)
 
 | Message | Meaning | Fix |
 | --- | --- | --- |
-| `No pattern of template "x" can be used: ...` | Nothing in the manifest can be filled with what was supplied. The reasons follow. | See the reasons below. |
+| `No pattern of template "x" can be used: ...` | Nothing in the manifest can be filled with what was supplied, and free slides are not on offer: the template cannot carry them, the deck fields their frame shows were not supplied, `free: false` (on the planner or the tools, or `"free": false` in the manifest), a list of patterns without `free`, or a template with a pattern of its own called `free`. The reasons follow. | See the reasons below. |
 | `The model did not produce a usable outline: ...` | The model's answer did not have the expected shape. | Retry. If it repeats, check that your provider returns parsed JSON that follows the schema. |
+| `The brief has no prompt: "prompt" is the text of what the deck is about` | `brief.prompt` is missing or no string. Before 0.6.0 this was a `TypeError`. | Give the text of what the deck is about. |
+| `The plan is no object with a list of slides` (also `The plan has slides that are no object with a pattern and a purpose: 2, 5`) | A plan passed to `writeDeck`, `editPlan` or `composeLayouts` has another shape: often a stored plan read back wrongly. | Pass the plan as `planOutline` or `editPlan` returned it. |
+| `Slide 3: a free slide takes at most 400 parts, not 1000` | A plan whose free slide names more parts than a deck is written with. | Fewer parts on the slide. |
 | `Template "x" has no plain text pattern, so a text-only deck cannot be planned from it` | `textOnly` was asked for, and no pattern of the manifest is plain text. | Add a plain text pattern to the manifest (see [layout-freedom.md](layout-freedom.md)), or plan without `textOnly`. |
 | `The plan uses patterns that cannot be filled with what was supplied: a, b` | A plan was made with icons, assets or fields that are not passed now. | Pass the same `icons`, `assets`, `fields` and `layout` to every step. |
 | `Slide 3: pattern "x" needs icons, and no icon set was supplied` | The same, for an edit. | As above. |
@@ -81,6 +105,7 @@ Reasons a pattern is not offered:
 
 | Message | Fix |
 | --- | --- |
+| `patterns is no list of patterns, such as [...]` (also `slots is no list of slots, ...` and `pattern 2 is no object with an id, a slide and slots`) | A manifest of another shape, often one written by hand. Nothing else is checked until it is mended. Other functions given such a manifest may still throw a `TypeError`: check a manifest you did not make with `checkManifest` first. |
 | `points at slide 9, but the template has 5 slides` | Correct `sourceSlide`, or the pptx lost slides. |
 | `points at shape #99, which is not on slide 1` | The shape id is wrong, or the slide was edited. List ids with `inspectTemplate` or `studioView`. |
 | `is an image slot, but shape #6 is a text box` (and similar) | The slot's kind does not match the shape. Change the kind or the shape id. |
@@ -97,6 +122,9 @@ Reasons a pattern is not offered:
 | warning: `has a budget of 900 characters, but sample text of that length takes 14 lines where 9 fit; about 560 characters fit` | (Template loaded with fonts.) The budget lets text run over the box. Lower `maxChars` to about the length given, or use `measuredBudgets`. See [text-fit.md](text-fit.md). |
 | warning: `has a budget of 520 characters on a slide with 2 of its 4 items, but sample text of that length takes 10 lines where 7 fit; about 376 characters fit` | (Template loaded with fonts, row with `widen`.) With that number of items the row's items are wider and their texts have a larger budget, which still lets text run over the wider box. Lower the slot's `maxChars`: the budget at each number of items follows from it. See "Fewer items that fill the row" in [layout-freedom.md](layout-freedom.md). |
 | warning: `no font was supplied for Cambria bold; text set in it is checked by its character budget` | Add the font file to `fontkitMetrics`, or accept character budgets for those slots. |
+| warning: `free.base names the pattern "x", which cannot be the frame of free slides: ...; they stand on "y"` | The pattern is there and is no frame: its title sits low on the slide, it has a row of items, or it has no title. Free slides stand on the layout named last. Name a content layout, or remove `free.base`. On a template that has no content layout, the layout that leaves most room is the frame and can be named. See [free-slides.md](free-slides.md). |
+| warning: `free.styles.heading points at shape #6 of slide 11, which no layout of the manifest uses as a text that can be copied; the software's own choice is used` | The shape is in the template, and no pattern of the manifest fills it as a text any more (its pattern was removed), or it is a placeholder. Name another shape, or remove the entry. |
+| `free.styles.heading is null; it names a shape of the template, such as { "slide": 7, "shape": "7" }` | A manifest written by hand. Give the slide number and the shape id, or remove the entry. |
 
 ## Refusals from `changeManifest`
 
@@ -109,11 +137,14 @@ Reasons a pattern is not offered:
 | `a grid holds at most the 6 cards it draws; 8 would need a new line of them` | A grid's `max` is the number drawn. |
 | `"title" is a text slot; maxColumns does not apply to it` | A setting for another kind of slot. |
 | `maxChars must be a whole number of 1 or more` | A budget of zero, a fraction or a negative number. |
+| `the size of bodyText is between 4 and 200 points` (also `the colour of text is six hex digits such as "0E7C7B", not "red"`, `lineColor is ...`, `colors is a list of colours, ...`, `paragraphGap is a number of points, 0 or more`) | A size or colour of a chart's or a table's text, a line colour, a list of chart colours, or a text slot's `paragraphGap` that PowerPoint could not open the file with. Before 0.6.0 these were taken, and every deck with such a slot rendered to a file PowerPoint did not open. (A text slot's `fontSize` outside 4 to 200, `a font size is between 4 and 200 points`, was refused before as well.) |
 | `"card1Text" is part of the row of cards, so it cannot be renamed, moved or tied to a deck field; remove the row first` | Row slots must stay alike. Use `removeRepeat` first if you really need to. |
 | `shape #4 is a picture; it can be photo, icon, graphic, chart, decoration` | The role does not suit the shape. |
 | `"x" has no row of like items. Name the slots of each item alike with a number ...` | `setRepeat` found no numbered slots to make a row from. |
 | `another pattern is already called "x"` | Choose another id. |
 | `a template needs at least one pattern` | The last pattern cannot be removed. |
+| `a free slide cannot stand on "cover": the layout "cover" has its title low on the slide: blocks would get 22% of the slide's height, and a frame leaves them 45% or more; name a layout with a title that leaves room under it and has no row of items, such as "list-with-photo"` | `free.base` names a pattern that is no frame. The reason is in the middle: a low title, a row of items, no title. The layout named at the end is one that can be used. Where no layout of the template leaves 45%, the reason compares with that layout: `... and "section" leaves them 40%`. |
+| `shape #4 of slide 11 cannot be the quote of a free slide: it is a placeholder, which takes its look from the slide layout, and a free slide copies a text box that states its own` | `free.styles` names a placeholder. Also: `it is not a text of one of the template's layouts`, `it is not a box that the template sets text on`. Name a text box that a pattern fills. |
 
 ## Rendering errors that are not about the deck
 
@@ -143,6 +174,7 @@ Plain `Error`s from `renderDeck`. They mean the manifest and the pptx disagree, 
 | `Gemini request failed (400): Thinking level ... is not supported for this model` | The `thinkingLevel` set on the adapter is not one the model accepts (`minimal` is refused by some models). Use `low`, or leave it unset. |
 | `Gemini request failed (429): Your project has exceeded its monthly spending cap` | The key's project reached the spending cap set for it. Nothing works until the cap is raised in the provider's console. |
 | `Gemini returned no image` | The image model answered without a picture, often because the prompt was refused. |
+| `Gemini returned an image that cannot be read` | The answer held image data that is not base64 text, as a gateway may give. Before 0.6.0 this was a `DOMException`, or, for image data that is no text (a number), a picture of a byte or two that rendering then refused; an answer whose steps, content or errors had another shape was a `TypeError`, and is now one of the errors above. Check what the gateway returns. |
 
 ## The result looks wrong
 
@@ -170,7 +202,13 @@ Plain `Error`s from `renderDeck`. They mean the manifest and the pptx disagree, 
 - **Shapes need their own position.** The engine measures the shapes on a slide. A shape that takes its position
   and font size from a layout placeholder, without stating them on the slide, is filled correctly but measured
   as empty: a drafted budget for it is only as long as its sample text, and `box` cannot be applied to it. Decks
-  exported from Google Slides and decks built from free-standing text boxes work as they are.
+  exported from Google Slides and decks built from free-standing text boxes work as they are. For a free
+  slide, the title of the frame may be such a placeholder: its place is read from the layout or the master.
+  The texts a free slide copies its styles from may not be.
+- **Control characters are left out.** A character that no pptx part can hold (a vertical tab, a form feed and
+  the like, which come with text pasted from other programs) is taken out of every text, cell, label and
+  alternative text before it is written. A vertical tab, the line break of a text box, breaks the line in a
+  text slot and is a space elsewhere.
 - **Budgets are estimates.** A character budget cannot see lines lost to wrapping. Leave room in budgets for
   slots with several paragraphs. A template loaded with its fonts measures text in lines and does not have this
   limit for text slots: see [text-fit.md](text-fit.md). Tables and charts are not measured.

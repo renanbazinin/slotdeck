@@ -1,6 +1,10 @@
-import { DeckValidationError, fitOptions, resolveSlot, validateDeck } from '../deck/validate.ts';
+import { DeckValidationError, checkDeck, deckShapeIssues, fitOptions, freeTextFloor, resolveSlot } from '../deck/validate.ts';
 import type { Issue, LayoutMode } from '../deck/validate.ts';
-import type { ChartValue, DeckSpec } from '../deck/spec.ts';
+import { isFreeSlide } from '../deck/spec.ts';
+import type { ChartValue, DeckSpec, SlideSpec } from '../deck/spec.ts';
+import { buildFreeSlide } from '../free/build.ts';
+import { freeFor } from '../free/resolve.ts';
+import type { FreeResolved } from '../free/resolve.ts';
 import {
   ContentTypes,
   PptxPackage,
@@ -14,17 +18,21 @@ import {
 } from '../pptx/package.ts';
 import type { Relationship } from '../pptx/package.ts';
 import { readPresentation } from '../pptx/presentation.ts';
-import { NS, childElement, childElements, descendants, parseXml, removeNode, rootElement, serializeXml } from '../pptx/xml.ts';
+import { NS, childElement, childElements, descendants, openableSizes, parseXml, removeNode, rootElement, serializeXml } from '../pptx/xml.ts';
 import type { Element } from '../pptx/xml.ts';
 import { bodyTextScale, chartAtScale, defaultFit, effectiveSlots, itemCount, scalesWithText, slotSources, tableAtScale } from '../template/manifest.ts';
-import type { ChartSlotDef, PatternDef, TemplateManifest } from '../template/manifest.ts';
+import type { ChartSlotDef, PatternDef, SlideBox, TemplateManifest } from '../template/manifest.ts';
 import { withLayouts } from '../template/compose.ts';
 import { readImageInfo } from '../util/image.ts';
 import type { ImageInfo } from '../util/image.ts';
+import { colorMap, readColors } from '../color/palette.ts';
+import type { ColorMap } from '../color/palette.ts';
+import { inheritedBackground, ownBackground, ownTheBackground, paletteOf, recolorChart, recolorDefaults, recolorIcon, recolorInherited, recolorSlide, schemeOf } from '../color/recolor.ts';
+import { contrast } from '../color/space.ts';
 import { CHART_CONTENT_TYPE, CHART_REL_TYPE, WORKBOOK_CONTENT_TYPE, WORKBOOK_REL_TYPE, buildChartWorkbook, buildChartXml, chartFrameXml } from './chart.ts';
 import { setPicture } from './picture.ts';
 import type { PictureFill } from './picture.ts';
-import { setTable } from './table.ts';
+import { fitTable, setTable } from './table.ts';
 import { applyRepeat, moveShape, placeShape, rowTextIds } from './repeat.ts';
 import type { FontMetrics } from '../text/fonts.ts';
 import { measurerFor } from '../text/measure.ts';
@@ -35,6 +43,8 @@ const IMAGE_REL_TYPE = 'http://schemas.openxmlformats.org/officeDocument/2006/re
 const SLIDE_REL_TYPE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide';
 const P14 = 'http://schemas.microsoft.com/office/powerpoint/2010/main';
 const FIRST_SLIDE_ID = 256;
+/** The colours of a slide that keeps the template's own in a deck that has others. */
+const TEMPLATE_COLORS: { map: ColorMap; key: string } = { map: (hex) => hex, key: '' };
 
 /** A template pptx, unzipped once, together with its manifest. Reuse it across renders. */
 export interface Template {
@@ -81,15 +91,26 @@ export interface RenderResult {
  * and filling its slots. Deterministic: no model calls, no network.
  */
 export function renderDeck(template: Template, deck: DeckSpec, options: RenderOptions = {}): RenderResult {
-  // Layouts made for the deck are built onto the template first.
+  // A deck of the wrong shape is told so before anything of it is read.
+  const shape = deckShapeIssues(deck);
+  if (shape.length > 0) throw new DeckValidationError(shape);
+  // Layouts made for the deck are built onto the template first. A free slide stands on the
+  // template as it was loaded, so that it is the same slide whatever layouts the deck brings.
+  const loaded = template;
   template = withLayouts(template, deck.layouts);
   const { manifest } = template;
   const layout = options.layout ?? 'strict';
   const assets = options.assets ?? {};
+  const laidOut = new Map<SlideSpec, FreeResolved | string>();
+  const freeOf = (slide: SlideSpec): FreeResolved | string => {
+    let free = laidOut.get(slide);
+    if (free === undefined) laidOut.set(slide, (free = freeFor(loaded, deck, slide)));
+    return free;
+  };
 
   // A template loaded with fonts measures its text: warnings are in lines, and text may be shrunk to fit.
   const measure = measurerFor(template);
-  const issues = validateDeck(manifest, deck, measure ? { layout, assets: Object.keys(assets), measure } : { layout, assets: Object.keys(assets) });
+  const issues = checkDeck(manifest, deck, measure ? { layout, assets: Object.keys(assets), measure } : { layout, assets: Object.keys(assets) }, freeOf);
   const errors = issues.filter((issue) => issue.severity === 'error');
   if (errors.length > 0) throw new DeckValidationError(errors);
   const shrunk: RenderResult['shrunk'] = [];
@@ -113,11 +134,37 @@ export function renderDeck(template: Template, deck: DeckSpec, options: RenderOp
     types.removeOverride(slide.part);
   }
 
+  // A deck may ask for other colours than the template's, for all of its slides or for one. Nothing
+  // below runs for a deck that asks for none, so that such a deck gives the bytes it always gave.
+  // A template may keep its own colours in every deck; validation says so when a deck asks for others.
+  const recoloured = manifest.colors !== false && (deck.colors !== undefined || deck.slides.some((slide) => slide.colors !== undefined));
+  const palette = recoloured ? paletteOf(source, manifest) : undefined;
+  const colorsOf = (colors: DeckSpec['colors']): { map: ColorMap; key: string } | undefined => {
+    const map = palette && colors ? colorMap(palette, colors) : undefined;
+    return map ? { map, key: JSON.stringify(readColors(colors).colors) } : undefined;
+  };
+  const deckColors = colorsOf(deck.colors);
+  // A second colour asked of a template that has none changes nothing: that is said, for the deck
+  // and for a slide, without a slide number in the issue so that no slide is written again for it.
+  if (palette && !palette.accent2) {
+    const lacking = (given: unknown, where: string): void => {
+      if (readColors(given).colors?.accent2) issues.push({ severity: 'warning', message: `${where}the template has no second colour; "accent2" is left out` });
+    };
+    lacking(deck.colors, '');
+    deck.slides.forEach((slide, index) => lacking(slide.colors, `slide ${index + 1}: `));
+  }
+  /** Colours asked for that are close to the page of a slide they are used on, where the page does not change with them. */
+  const nearPage = new Set<string>();
+
   const media = new Map<string, { part: string; info: ImageInfo }>();
-  const addMedia = (assetId: string): { part: string; info: ImageInfo } => {
-    const known = media.get(assetId);
+  const addMedia = (assetId: string, colors?: { map: ColorMap; key: string }): { part: string; info: ImageInfo } => {
+    // A pictogram in other colours is another picture; one that has no colour to change is the same one.
+    const changed = colors ? recolorIcon(assets[assetId] as Uint8Array, colors.map) : undefined;
+    const name = changed ? `${assetId}
+${colors?.key}` : assetId;
+    const known = media.get(name);
     if (known) return known;
-    const data = assets[assetId] as Uint8Array;
+    const data = changed ?? (assets[assetId] as Uint8Array);
     const info = readImageInfo(data);
     let index = media.size + 1;
     let part = `${mediaDir}/slotdeck-${index}.${info.extension}`;
@@ -125,7 +172,7 @@ export function renderDeck(template: Template, deck: DeckSpec, options: RenderOp
     out.write(part, data);
     types.ensureDefault(info.extension, info.contentType);
     const entry = { part, info };
-    media.set(assetId, entry);
+    media.set(name, entry);
     return entry;
   };
 
@@ -141,24 +188,42 @@ export function renderDeck(template: Template, deck: DeckSpec, options: RenderOp
       workbookPart = `${partsDir}embeddings/Microsoft_Excel_Sheet${chartCount}.xlsx`;
     } while (out.has(chartPart) || out.has(workbookPart));
     out.write(workbookPart, buildChartWorkbook(chart));
-    out.write(chartPart, buildChartXml(chart, slot, 'rId1', deck.direction ?? manifest.direction));
+    out.write(chartPart, openableSizes(buildChartXml(chart, slot, 'rId1', deck.direction ?? manifest.direction)));
     writeRels(out, chartPart, [{ id: 'rId1', type: WORKBOOK_REL_TYPE, target: relativeTarget(chartPart, workbookPart), external: false }]);
     types.setOverride(chartPart, CHART_CONTENT_TYPE);
     types.ensureDefault('xlsx', WORKBOOK_CONTENT_TYPE);
     return chartPart;
   };
 
+  // Shapes of template slides, for a free slide to copy: each slide is read once.
+  const sourceShapes = new Map<number, Map<string, Element>>();
+  const shapeFrom = (slideNumber: number, shapeId: string): Element | undefined => {
+    let shapes = sourceShapes.get(slideNumber);
+    if (!shapes) {
+      const ref = pres.slides[slideNumber - 1];
+      shapes = ref && source.has(ref.part) ? indexShapes(rootElement(parseXml(source.readText(ref.part)))) : new Map();
+      sourceShapes.set(slideNumber, shapes);
+    }
+    return shapes.get(shapeId);
+  };
+  const usedSlideParts = new Set<string>();
+
   const newSlideParts: string[] = [];
   deck.slides.forEach((slide, index) => {
     const number = index + 1;
-    const pattern = patterns.get(slide.pattern) as PatternDef;
+    // A slide the software lays out itself has a pattern of its own, worked out for it.
+    const free = isFreeSlide(slide) ? (freeOf(slide) as FreeResolved) : undefined;
+    const pattern = free ? free.plan.pattern : (patterns.get(slide.pattern) as PatternDef);
+    const slideLayout: LayoutMode = free ? 'adaptive' : layout;
     const sourceSlide = pres.slides[pattern.sourceSlide - 1];
     if (!sourceSlide) {
       throw new Error(`Pattern "${pattern.id}" points at slide ${pattern.sourceSlide}, but the template has ${pres.slides.length} slides`);
     }
 
+    usedSlideParts.add(sourceSlide.part);
     const doc = parseXml(source.readText(sourceSlide.part));
     const root = rootElement(doc);
+    if (free) buildFreeSlide(doc, root, free.kit, free.plan, shapeFrom, (deck.direction ?? manifest.direction) === 'rtl');
     // Notes belong to the template's sample content, so they are not carried over.
     let rels = readRels(source, sourceSlide.part).filter((rel) => !isRelType(rel, 'notesSlide'));
     const part = `${slideDir}/slide${number}.xml`;
@@ -167,13 +232,23 @@ export function renderDeck(template: Template, deck: DeckSpec, options: RenderOp
     const shapes = indexShapes(root);
     const sources = slotSources(pattern, directionChanged, slide.items);
     const textScale = bodyTextScale(template.manifest, deck.textScale);
+    // A slide's own colours take the place of the deck's on that slide. A slide that asks for the
+    // template's own (`{}`, or colours that change nothing), in a deck in other colours, is kept
+    // as the template has it. Colours that are no colours at all (null, a value that is no
+    // object, or settings of which none is usable, which the deck's check reports as left out)
+    // ask for nothing: such a slide follows the deck.
+    const read = slide.colors === undefined || slide.colors === null ? undefined : readColors(slide.colors);
+    const ownColors = !!read && (read.colors !== undefined || read.problems.length === 0);
+    const colors = !recoloured ? undefined : ownColors ? (colorsOf(slide.colors) ?? (deckColors ? TEMPLATE_COLORS : undefined)) : deckColors;
+    // The page of the slide as the template has it: what a chart's text has to read on.
+    const pageOf = (): string | undefined => ownBackground(root, schemeOf(source, sourceSlide.part)) ?? inheritedBackground(source, sourceSlide.part)?.color;
 
     for (const slot of effectiveSlots(pattern, slide.items)) {
       const shape = shapes.get(slot.shapeId);
       if (!shape) {
         throw new Error(`Pattern "${pattern.id}": slot "${slot.name}" points at shape #${slot.shapeId}, which is not on template slide ${pattern.sourceSlide}`);
       }
-      const resolved = resolveSlot(slot, { ...slide, slots: slide.slots ?? {} }, deck, layout, sources.get(slot.name));
+      const resolved = resolveSlot(slot, { ...slide, slots: slide.slots ?? {} }, deck, slideLayout, sources.get(slot.name));
       if ('error' in resolved) throw new Error(`slide ${number} / ${slot.name}: ${resolved.error}`);
       const action = resolved.action;
 
@@ -194,14 +269,21 @@ export function renderDeck(template: Template, deck: DeckSpec, options: RenderOp
         if (Object.keys(change).length > 0) adjustText(shape, change);
         // Text that does not fit is set smaller, as far as the manifest allows; the measurer says how far.
         if (measure && manifest.shrinkText) {
-          const fit = measure.fit(pattern, slot, action.paragraphs, fitOptions(manifest, deck, slide));
+          // On a free slide of a deck that asks for larger text, no further than the size the text has without that wish.
+          const fit = measure.fit(pattern, slot, action.paragraphs, fitOptions(manifest, deck, slide, freeTextFloor(free, slot, action.paragraphs, manifest, slide, measure)));
           if (fit && fit.scale < 1) {
             setTextSizes(shape, fit.sizes);
             shrunk.push({ slide: number, slot: sources.get(slot.name) ?? slot.name, size: fit.size, scale: Math.round(fit.scale * 1000) / 1000 });
           }
         }
       } else if (action.type === 'image' && slot.kind === 'image') {
-        const image = addMedia(action.image.asset);
+        let image: { part: string; info: ImageInfo };
+        try {
+          image = addMedia(action.image.asset, slot.imageKind === 'icon' ? colors : undefined);
+        } catch {
+          // Bytes that are no picture, or no bytes at all: the deck's check knows assets by their ids only.
+          throw new DeckValidationError([{ severity: 'error', slide: number, slot: sources.get(slot.name) ?? slot.name, message: `asset "${action.image.asset}" is not a PNG, JPEG or GIF picture` }]);
+        }
         const relId = nextRelId(rels);
         rels.push({ id: relId, type: IMAGE_REL_TYPE, target: relativeTarget(part, image.part), external: false });
         const fill: PictureFill = { relId, width: image.info.width, height: image.info.height, fit: defaultFit(slot) };
@@ -216,7 +298,13 @@ export function renderDeck(template: Template, deck: DeckSpec, options: RenderOp
         }
         setPicture(shape, fill);
       } else if (action.type === 'table' && slot.kind === 'table') {
-        setTable(shape, action.table, tableAtScale(slot, textScale), deck.direction ?? manifest.direction);
+        // The colours of its text are written onto the slide, and change with the slide below.
+        const box = (slot as { box?: SlideBox }).box;
+        // A table of a free slide states its sizes itself and takes the box it was given.
+        const planned = slot as { rowHeights?: number[]; columnWidths?: number[]; columnAligns?: Array<'l' | 'r' | undefined> };
+        setTable(shape, action.table, tableAtScale(slot, textScale), deck.direction ?? manifest.direction, box ? planned.columnAligns : undefined);
+        // Rows whose cells take more lines than their neighbours' are higher, and columns are as wide as what is written in them asks, as the plan worked out.
+        if (box) fitTable(shape, { x: box.x * pres.slideWidth, y: box.y * pres.slideHeight, cx: box.w * pres.slideWidth, cy: box.h * pres.slideHeight }, planned.rowHeights, planned.columnWidths);
       } else if (action.type === 'chart' && slot.kind === 'chart') {
         // The chart takes the place of the sample picture, in the same stacking position.
         const parent = shape.parentNode as Element | null;
@@ -229,7 +317,8 @@ export function renderDeck(template: Template, deck: DeckSpec, options: RenderOp
           : { x: Number(off?.getAttribute('x') ?? 0), y: Number(off?.getAttribute('y') ?? 0), cx: Number(ext?.getAttribute('cx') ?? 0), cy: Number(ext?.getAttribute('cy') ?? 0) };
         if (!(area.cx > 0 && area.cy > 0)) throw new Error(`slide ${number} / ${slot.name}: the chart slot has no area`);
 
-        const chartPart = addChart(action.chart, chartAtScale(slot, textScale));
+        const sized = free ? slot : chartAtScale(slot, textScale);
+        const chartPart = addChart(action.chart, colors && palette ? recolorChart(sized, colors.map, palette, pageOf()) : sized);
         const relId = nextRelId(rels);
         rels.push({ id: relId, type: CHART_REL_TYPE, target: relativeTarget(part, chartPart), external: false });
         const alt = `${action.chart.type} chart: ${action.chart.series.map((series) => series.name).filter(Boolean).join(', ')}`;
@@ -240,15 +329,32 @@ export function renderDeck(template: Template, deck: DeckSpec, options: RenderOp
 
     setSlideNumber(root, number);
 
+    // Every slot is filled: what the slide shows now is what changes colour.
+    if (colors) {
+      const inherited = inheritedBackground(source, sourceSlide.part);
+      // A colour that is the page's own, or close to it, leaves fills, bars and icons unseen on a
+      // page that does not change with the colours. Nothing is refused: the deck is told.
+      const page = ownBackground(root, schemeOf(source, sourceSlide.part)) ?? inherited?.color ?? 'FFFFFF';
+      const asked = readColors(ownColors ? slide.colors : deck.colors).colors;
+      if (colors.map(page) === page) {
+        for (const hex of [palette?.accent ? asked?.accent : undefined, palette?.accent2 ? asked?.accent2 : undefined]) if (hex && contrast(hex, page) < 1.3) nearPage.add(hex);
+      }
+      // A slide in colours of its own takes the background it inherits along; the deck's colours reach it where it is.
+      if (ownColors) ownTheBackground(root, inherited?.element);
+      recolorSlide(root, colors.map, schemeOf(source, sourceSlide.part), inherited?.surface ?? inherited?.color, deckColors?.map);
+    }
+
     // Images that were replaced leave relationships nobody uses; drop them so their media can go too.
     const used = usedRelationshipIds(root);
-    rels = rels.filter((rel) => !isRelType(rel, 'image') || used.has(rel.id));
+    // A free slide keeps nothing of what its base slide showed: only what its own shapes point at.
+    rels = rels.filter((rel) => (free ? isRelType(rel, 'slideLayout') || used.has(rel.id) : !isRelType(rel, 'image') || used.has(rel.id)));
 
-    out.write(part, serializeXml(doc));
+    out.write(part, openableSizes(serializeXml(doc)));
     writeRels(out, part, rels);
     types.setOverride(part, SLIDE_CONTENT_TYPE);
     newSlideParts.push(part);
   });
+  for (const hex of nearPage) issues.push({ severity: 'warning', message: `the colour ${hex} is close to the page's own; fills, chart bars and icons in it will hardly show` });
 
   // Point the presentation at the new slides.
   const sourcePresRels = readRels(source, pres.part);
@@ -277,6 +383,13 @@ export function renderDeck(template: Template, deck: DeckSpec, options: RenderOp
   // Named sections list the template's slide ids, which no longer exist.
   for (const sections of descendants(presRoot, P14, 'sectionLst')) {
     if (sections.parentNode) removeNode(sections.parentNode);
+  }
+
+  // What the slides inherit (a background, the colours of the theme, the text styles of the
+  // presentation) follows the deck's colours too.
+  if (deckColors) {
+    recolorDefaults(presRoot, deckColors.map, source, usedSlideParts);
+    recolorInherited(source, out, usedSlideParts, deckColors.map);
   }
 
   out.write(pres.part, serializeXml(presDoc));

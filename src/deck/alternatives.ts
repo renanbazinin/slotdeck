@@ -357,6 +357,8 @@ function byParts(content: Content, target: PatternDef, shape: Anatomy): Draft {
 export function slideAlternatives(manifest: TemplateManifest, deck: DeckSpec, slide: number, options: AlternativesOptions = {}): SlideAlternative[] {
   const original = deck.slides[slide - 1];
   if (!original) throw new RangeError(`the deck has ${deck.slides.length} slides; there is no slide ${slide}`);
+  // A slide the software lays out itself is its own layout: its blocks say what it shows.
+  if (Array.isArray(original.blocks)) return [];
   const source = manifest.patterns.find((pattern) => pattern.id === original.pattern);
   if (!source) throw new Error(`slide ${slide} uses the pattern "${original.pattern}", which the manifest does not have`);
   const layout = options.layout ?? 'strict';

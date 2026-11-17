@@ -1,8 +1,10 @@
+import { parseHex } from '../color/space.ts';
+import { FREE_STYLE_ROLES, freeBaseRefusal, freeKitOrReason } from '../free/kit.ts';
 import type { Template } from '../render/render.ts';
 import { measurerFor } from '../text/measure.ts';
 import { inspectTemplate } from './inspect.ts';
 import type { ShapeInfo, TemplateInfo } from './inspect.ts';
-import { effectiveSlots, textBudget, widenFactor } from './manifest.ts';
+import { effectiveSlots, templateScaleProblem, textBudget, widenFactor } from './manifest.ts';
 import type { SlotDef } from './manifest.ts';
 import { filler } from './sample.ts';
 
@@ -12,6 +14,24 @@ export interface ManifestIssue {
   pattern?: string;
   slot?: string;
   message: string;
+}
+
+/** What makes a manifest no list of patterns with a list of slots each, as errors; empty when it is one. */
+function shapeIssues(manifest: unknown): ManifestIssue[] {
+  const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+  const patterns = isObject(manifest) ? manifest.patterns : undefined;
+  if (!Array.isArray(patterns)) return [{ severity: 'error', message: 'patterns is no list of patterns, such as [{ "id": "cover", "sourceSlide": 1, "slots": [...] }]' }];
+  const issues: ManifestIssue[] = [];
+  patterns.forEach((pattern: unknown, index) => {
+    if (!isObject(pattern)) {
+      issues.push({ severity: 'error', message: `pattern ${index + 1} is no object with an id, a slide and slots` });
+      return;
+    }
+    const at = typeof pattern.id === 'string' ? { pattern: pattern.id } : {};
+    if (!Array.isArray(pattern.slots)) issues.push({ severity: 'error', ...at, message: 'slots is no list of slots, such as [{ "name": "title", "kind": "text", "shapeId": "2" }]' });
+    else if (!pattern.slots.every(isObject)) issues.push({ severity: 'error', ...at, message: 'slots holds something that is no slot: each is an object with a name, a kind and a shape' });
+  });
+  return issues;
 }
 
 /**
@@ -24,6 +44,10 @@ export interface ManifestIssue {
  */
 export function checkManifest(template: Template, inspected?: TemplateInfo): ManifestIssue[] {
   const { manifest } = template;
+  // A manifest written by hand may be of any shape: patterns that are no list of objects, or slots
+  // that are none, are said, and nothing more of such a manifest is read.
+  const shape = shapeIssues(manifest);
+  if (shape.length > 0) return shape;
   const info = inspected ?? inspectTemplate(template.pkg);
   const issues: ManifestIssue[] = [];
   const ids = new Set<string>();
@@ -128,6 +152,57 @@ export function checkManifest(template: Template, inspected?: TemplateInfo): Man
             const shape = slot && shapes.get(slot.shapeId);
             if (slot && shape) tryBudget(slot, shape, count);
           }
+        }
+      }
+    }
+  }
+  // Settings of the whole template: its text size, the colours it names and the frame of its free
+  // slides. A manifest written by hand may hold anything here; null is a setting that is not given.
+  const scaleProblem = templateScaleProblem(manifest.textScale);
+  if (scaleProblem) issues.push({ severity: 'error', message: scaleProblem });
+  const colors: unknown = manifest.colors;
+  if (colors !== undefined && colors !== null && colors !== false) {
+    if (typeof colors !== 'object' || Array.isArray(colors)) {
+      issues.push({ severity: 'error', message: `colors is ${JSON.stringify(colors)}; it is an object such as { "accent": "0E7C7B" }, or false for a template that keeps its own colours` });
+    } else {
+      for (const [name, value] of Object.entries(colors)) {
+        if (name !== 'accent' && name !== 'accent2') issues.push({ severity: 'warning', message: `colors has no setting called "${name}"; it is ignored` });
+        else if (value !== undefined && parseHex(value) === undefined) issues.push({ severity: 'error', message: `colors.${name} is ${JSON.stringify(value)}; a colour is six hex digits such as "0E7C7B"` });
+      }
+    }
+  }
+  if (manifest.free) {
+    const base = manifest.free.base;
+    const gone = base !== undefined && !ids.has(base);
+    if (gone) issues.push({ severity: 'error', message: `free.base names the pattern "${base}", which the manifest does not have` });
+    const parts = [...FREE_STYLE_ROLES, 'panel'] as readonly string[];
+    // A manifest written by hand may hold anything here.
+    const stated = Object.entries((manifest.free.styles ?? {}) as Record<string, unknown>);
+    const usable: Array<[string, { slide: number; shape: string }]> = [];
+    for (const [role, given] of stated) {
+      const source = given as { slide?: unknown; shape?: unknown } | null;
+      if (!parts.includes(role)) issues.push({ severity: 'warning', message: `free.styles names "${role}"; a free slide is made of ${parts.join(', ')}` });
+      else if (!source || typeof source !== 'object' || typeof source.slide !== 'number' || (typeof source.shape !== 'string' && typeof source.shape !== 'number')) {
+        issues.push({ severity: 'error', message: `free.styles.${role} is ${JSON.stringify(given)}; it names a shape of the template, such as { "slide": 7, "shape": "7" }` });
+      } else if (!info.slides[source.slide - 1]?.shapes.some((shape) => shape.id === String(source.shape))) {
+        issues.push({ severity: 'error', message: `free.styles.${role} points at shape #${source.shape} of slide ${source.slide}, which the template does not have` });
+      } else usable.push([role, { slide: source.slide, shape: String(source.shape) }]);
+    }
+    // A layout that is there is not yet a frame, and a shape that is there not yet one a free slide
+    // can copy. What cannot be used is passed over when a slide is made, so it is said here.
+    const named = base !== undefined && !gone;
+    if (named || usable.length > 0) {
+      const kit = freeKitOrReason(template);
+      if (typeof kit !== 'string') {
+        if (named && kit.base !== base) {
+          const why = freeBaseRefusal(template, base) ?? `the layout "${base}" gives no frame of its own`;
+          issues.push({ severity: 'warning', message: `free.base names the pattern "${base}", which cannot be the frame of free slides: ${why}; they stand on "${kit.base}"` });
+        }
+        for (const [role, source] of usable) {
+          const used = role === 'panel' ? kit.panel : kit.styles[role as (typeof FREE_STYLE_ROLES)[number]];
+          if (used && used.slide === source.slide && used.shapeId === source.shape) continue;
+          const what = role === 'panel' ? 'no layout of the manifest sets text on' : 'no layout of the manifest uses as a text that can be copied';
+          issues.push({ severity: 'warning', message: `free.styles.${role} points at shape #${source.shape} of slide ${source.slide}, which ${what}; the software's own choice is used` });
         }
       }
     }

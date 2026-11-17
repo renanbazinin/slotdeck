@@ -45,6 +45,8 @@ export interface EditDeckResult {
   summary: string;
   /** Slide numbers in the new deck that were written or rewritten. */
   rewritten: number[];
+  /** With `colorSlides`: the numbers those slides have in the new deck. */
+  recolored?: number[];
 }
 
 function canMakePhotos(options: PictureOptions & { assets?: Array<{ kind: string }> }): boolean {
@@ -85,5 +87,7 @@ export async function generateDeck(template: Template, brief: Brief, options: Ge
 export async function editDeck(template: Template, deck: DeckSpec, instruction: string, options: EditDeckOptions): Promise<EditDeckResult> {
   const edit = await planEdit(template, deck, instruction, canMakePhotos(options) ? options : { ...options, imageDensity: 'none' });
   const output = await picturesAndPptx(template, edit.deck, options);
-  return { ...output, deck: edit.deck, warnings: edit.warnings, summary: edit.summary, rewritten: edit.rewritten };
+  const result: EditDeckResult = { ...output, deck: edit.deck, warnings: edit.warnings, summary: edit.summary, rewritten: edit.rewritten };
+  if (edit.recolored) result.recolored = edit.recolored;
+  return result;
 }

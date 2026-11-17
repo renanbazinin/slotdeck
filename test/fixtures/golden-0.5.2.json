@@ -1,0 +1,46 @@
+{
+  "patterns.en.deck.json": {
+    "parts": "7ecad9a80bb66193",
+    "warnings": 0
+  },
+  "patterns.en.deck.json textScale 1.25": {
+    "parts": "e9b3ff965acd783a",
+    "warnings": 0
+  },
+  "patterns.he.deck.json": {
+    "parts": "60bedc63b732d9c8",
+    "warnings": 0
+  },
+  "showcase rescue-dog": {
+    "parts": "4b56a565be80cd01",
+    "warnings": 0
+  },
+  "sampleDeck demo min": {
+    "parts": "41777eab0a83dc46",
+    "warnings": 0
+  },
+  "sampleDeck demo max": {
+    "parts": "a72086fdb17f2ffa",
+    "warnings": 0
+  },
+  "deck with its own layout": {
+    "parts": "69a154fa1a86da9f",
+    "warnings": 0
+  },
+  "fixture rtl": {
+    "parts": "c2662c26faea9636",
+    "warnings": 0
+  },
+  "fixture ltr": {
+    "parts": "7d51118ae574812d",
+    "warnings": 0
+  },
+  "fixture cards x5": {
+    "parts": "fa7dc7ae06ca1365",
+    "warnings": 0
+  },
+  "fixture table": {
+    "parts": "a469f54c024c5043",
+    "warnings": 0
+  }
+}

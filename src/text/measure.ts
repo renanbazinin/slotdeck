@@ -3,6 +3,7 @@
 import type { PptxPackage } from '../pptx/package.ts';
 import type { Template } from '../render/render.ts';
 import { detectDirection, marksRightToLeft } from '../render/text.ts';
+import type { FreeDrawn } from '../free/plan.ts';
 import { inspectTemplate } from '../template/inspect.ts';
 import type { ShapeInfo, TemplateInfo } from '../template/inspect.ts';
 import { rowTextIds } from '../render/repeat.ts';
@@ -248,6 +249,37 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
    * and the text of such an item is measured in the box the renderer gives it.
    */
   const frameOf = (pattern: PatternDef, slot: TextSlotDef, items?: number): TextFrame | undefined => {
+    // A text of a slide the software laid out is a copy of a template shape: it is set in that shape's typeface, in its own box.
+    const styleOf = (slot as { styleOf?: { slide: number; shapeId: string } }).styleOf;
+    if (styleOf && slot.box && slot.box.w > 0 && slot.box.h > 0) {
+      const copied = styles.frame(styleOf.slide, styleOf.shapeId, slot.styleRun ?? 'first', { width: slot.box.w * styles.slideWidth, height: slot.box.h * styles.slideHeight });
+      if (!copied) return undefined;
+      // The copy is drawn with the insets, the wrapping, the columns and the bullet's hang that
+      // the slide's plan gave it, not with its source's: the slot says which. Of the source's
+      // insets only what its outline keeps clear stays. The copy keeps the first paragraph's
+      // look for every paragraph, and does not shrink by itself.
+      const drawn = (slot as { drawn?: FreeDrawn }).drawn ?? { inset: 0, wrap: true };
+      // The copy states no space before or after its paragraphs: what there is between two of
+      // them is the slot's own gap.
+      const first: ParagraphStyle = { ...(copied.paragraphs[0] as ParagraphStyle), before: { points: 0 }, after: { points: 0 } };
+      const paragraph: ParagraphStyle = drawn.hang === undefined ? first : { ...first, bullet: drawn.hang > 0, marginStart: drawn.hang, indent: -drawn.hang };
+      const columns = drawn.columns ?? 1;
+      const side = drawn.inset + copied.clear.x;
+      return {
+        ...copied,
+        // Between two columns a gap is kept free; a text in columns may run on under the box drawn for it.
+        width: copied.width - (columns - 1) * (drawn.gap ?? 0),
+        height: drawn.height ?? copied.height,
+        paragraphs: [paragraph],
+        sample: [],
+        insets: { left: side, right: side, top: copied.clear.y, bottom: copied.clear.y },
+        fontScale: 1,
+        lineReduction: 0,
+        columns,
+        vertical: false,
+        wrap: drawn.wrap,
+      };
+    }
     const shape = shapeOf(pattern.sourceSlide, slot.shapeId);
     if (!shape) return undefined;
     // The shape's own size is read exactly from the slide; a slot that moves its box states another.

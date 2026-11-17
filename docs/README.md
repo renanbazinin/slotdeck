@@ -38,6 +38,8 @@ slotdeck makes new PowerPoint files from an existing PowerPoint template.
 | [chat-tools.md](chat-tools.md) | Give a chat model the four presentation tools and store what they produce |
 | [providers.md](providers.md) | Connect your own language model or image source, including an internal gateway |
 | [layout-freedom.md](layout-freedom.md) | Vary the number of cards, enlarge text, derive several patterns from one slide, and find other layouts for a slide |
+| [free-slides.md](free-slides.md) | Put on a slide what no layout of the template holds: any number of texts, cards, charts, tables and pictures, laid out by the software in the template's look |
+| [colors.md](colors.md) | Give a deck, or single slides, other colours than the template's |
 | [languages.md](languages.md) | Make right-to-left decks from a left-to-right template, or the reverse |
 | [text-fit.md](text-fit.md) | Measure text with the template's fonts: overflow in lines, shrinking to fit, budgets from measurement |
 | [preview.md](preview.md) | Get a picture of each slide without PowerPoint, and know how close it is |
@@ -60,7 +62,9 @@ slotdeck makes new PowerPoint files from an existing PowerPoint template.
 | Show a plan first, write later | `planOutline`, `editPlan`, `writeDeck` | 1 each, `writeDeck` plus repairs |
 | Change an existing deck by instruction | `editDeck` (with pictures and pptx) or `planEdit` (JSON only) | 1 or 2 plus repairs |
 | Let a chat model do all of this | `presentationTools` | as above |
-| Give slides that the template has no layout for (goals, steps, a timeline) one made for the deck | `composeLayouts: 2` on the planner or the chat tools | 1, then 1 or 2 per layout |
+| Give slides that the template has no layout for (goals, steps, a timeline) one made for the deck | `composeLayouts: 2` with `free: false` on the planner or the chat tools | 1, then 1 or 2 per layout |
+| Put twelve charts, or a chart with three cards, on one slide | a free slide: `freeSlide` in a deck, or the planner's own choice | none |
+| Make a deck blue, or one slide red | `colors` in the deck or the slide; `recolorDeck`; `accent_color` in the chat tools | none |
 | Describe a new template | `draftManifest` | 1 per slide, plus 1 |
 | Verify a manifest against its pptx | `checkManifest` | none |
 | See whether a manifest's budgets hold | `sampleDeck` then `renderDeck` | none |
@@ -85,8 +89,8 @@ slotdeck makes new PowerPoint files from an existing PowerPoint template.
 - All binary data is `Uint8Array`. In Node a `Buffer` is a `Uint8Array`, so `fs.readFileSync(path)` can be
   passed directly.
 - Functions that call a model are `async`. `renderDeck`, `validateDeck`, `slideAlternatives`, `checkManifest`,
-  `sampleDeck`, `changeManifest`, `prepareManifest`, `suggestChanges`, `patternVariants`, `inspectTemplate` and
-  `studioView` are synchronous.
+  `sampleDeck`, `changeManifest`, `prepareManifest`, `suggestChanges`, `patternVariants`, `inspectTemplate`,
+  `studioView`, `freeSlide`, `recolorDeck` and `templatePalette` are synchronous.
 - A deck never contains binary data. Pictures are referenced by an **asset id** and passed to the renderer as
   a map from id to bytes.
 - Nothing is written to disk and nothing is sent anywhere by slotdeck itself, except what your own provider

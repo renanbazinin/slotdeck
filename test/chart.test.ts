@@ -6,7 +6,7 @@ import type { ChartValue, DeckSpec, JsonRequest, LlmProvider, SlideSpec, Templat
 import { statedNumbers } from '../src/deck/numbers.ts';
 import { readRels, resolveTarget } from '../src/pptx/package.ts';
 import { NS, descendants, parseXml, path, rootElement } from '../src/pptx/xml.ts';
-import { buildChartWorkbook, buildChartXml } from '../src/render/chart.ts';
+import { axisLabels, buildChartWorkbook, buildChartXml, formatCode, numberLook, plotMargins, roundAxis, roundSpan, seriesColor, shownAs } from '../src/render/chart.ts';
 import { buildFixturePptx, fixtureManifest } from './fixture.ts';
 
 const pptx = buildFixturePptx();
@@ -201,4 +201,151 @@ test('the planner asks for chart data and flags numbers the brief does not state
 test('numbers stated in a text', () => {
   assert.deepEqual([...statedNumbers('320 adoptions, 3K hours, 1,200 visits, 45% and 7.5 days')].sort((a, b) => a - b), [3, 7.5, 45, 320, 1200, 3000]);
   assert.deepEqual([...statedNumbers('no figures here')], []);
+});
+
+// ---- A chart whose place is known (the charts of a slide the software lays out itself) --------
+
+test('a chart slot that states no place is drawn as it always was', () => {
+  const slot = chartManifest().patterns.at(-1)?.slots[1] as Parameters<typeof buildChartXml>[1];
+  const xml = buildChartXml({ ...column, series: [...column.series, { name: 'Returns', values: [4, 3, 6] }] }, slot, 'rId1');
+  // PowerPoint lays the plot out and picks the end of the axis; numbers are written as they are given; colours repeat.
+  assert.ok(xml.includes('<c:layout/>') && xml.includes('<c:formatCode>General</c:formatCode>') && xml.includes('<c:legend><c:legendPos val="b"/><c:overlay val="0"/></c:legend>'));
+  assert.ok(!xml.includes('<c:max ') && !xml.includes('<c:majorUnit ') && !xml.includes('<c:tickLblSkip ') && !xml.includes('rot="0"'));
+});
+
+test('the numbers of a chart are written with thousands apart, in the unit and with the decimals its values have', () => {
+  const written = (values: number[], percent = false) => {
+    const look = numberLook(values, percent);
+    return [formatCode(look), ...values.map((value) => shownAs(value, look))];
+  };
+  assert.deepEqual(written([16440, 6028]), ['#,##0', '16,440', '6,028']);
+  // A million and more is written in millions, with the decimals the values have there, up to two; others are
+  // rounded to two, as a reader says them, or to three where two would write two values alike. Thousands only
+  // where that loses nothing of a value.
+  assert.deepEqual(written([1250000, 1410000, 1385000]), ['#,##0.00,,"M"', '1.25M', '1.41M', '1.39M']);
+  assert.deepEqual(written([1381000, 1384000]), ['#,##0.000,,"M"', '1.381M', '1.384M']);
+  assert.deepEqual(written([2400000, 1250000]), ['#,##0.00,,"M"', '2.40M', '1.25M']);
+  assert.deepEqual(written([2000000, 1000000]), ['#,##0,,"M"', '2M', '1M']);
+  assert.deepEqual(written([12500, 18000]), ['#,##0', '12,500', '18,000']);
+  assert.deepEqual(written([1234567]), ['#,##0.00,,"M"', '1.23M']);
+  assert.deepEqual(written([12000, 250000]), ['#,##0,"K"', '12K', '250K']);
+  // A value keeps the decimals it has, up to two: 46.5 is not shown as 47.
+  assert.deepEqual(written([46.5, 22.3, 18], true), ['0.0"%"', '46.5%', '22.3%', '18.0%']);
+  assert.deepEqual(written([45, 30], true), ['0"%"', '45%', '30%']);
+  assert.deepEqual(written([0.5, 0.25, -3]), ['#,##0.00', '0.50', '0.25', '-3.00']);
+  // An axis in a unit writes nothing as a bare 0.
+  assert.equal(formatCode(numberLook([12000, 18000], false), 0, true), '#,##0,"K";-#,##0,"K";0');
+});
+
+test('a value axis ends on a round number that is near the largest value, in few steps of whole numbers', () => {
+  const axis = (most: number, steps: number, grain = 1) => roundAxis(most, steps, grain);
+  assert.deepEqual(axis(18, 8), { max: 20, step: 5 });
+  assert.deepEqual(axis(44, 3), { max: 50, step: 25 });
+  assert.deepEqual(axis(167, 8), { max: 175, step: 25 });
+  assert.deepEqual(axis(167, 6), { max: 200, step: 50 });
+  assert.deepEqual(axis(291, 5), { max: 300, step: 100 });
+  assert.deepEqual(axis(100, 4), { max: 100, step: 25 });
+  // Steps are whole numbers of what the values are written to: thousands, tenths.
+  assert.deepEqual(axis(1790000, 6, 1000), { max: 2000000, step: 500000 });
+  assert.deepEqual(axis(46.5, 6, 0.1), { max: 50, step: 10 });
+  assert.deepEqual(axis(0.37, 5, 0.01), { max: 0.4, step: 0.1 });
+  for (const most of [0.003, 0.7, 3, 7, 19, 64, 99, 101, 250, 999, 12345, 7.7e8]) {
+    for (const steps of [2, 3, 4, 6, 8]) {
+      const { max, step } = roundAxis(most, steps);
+      assert.ok(max >= most - 1e-9 && max / step <= steps + 1e-9 && max < 2.5 * most + 1e-9, `${most} in ${steps} steps: ${max} by ${step}`);
+    }
+  }
+});
+
+test('a value axis has three to five round labels and ends at the half step over the largest value', () => {
+  const axis = (low: number, high: number, steps: number, more: Partial<Parameters<typeof roundSpan>[2]> = {}) => roundSpan(low, high, { steps, grain: 1, ...more });
+  // 105 in a low plot: labels at 0, 50 and 100, and the plot ends at 125, not at 200 with labels at 0, 100, 200.
+  assert.deepEqual(axis(0, 105, 2), { min: 0, max: 125, step: 50 });
+  assert.deepEqual(axisLabels({ min: 0, max: 125, step: 50 }), [0, 50, 100]);
+  // With room for more labels, 0 to 100 by 25, and the plot to 112.5.
+  assert.deepEqual(axis(0, 105, 4), { min: 0, max: 112.5, step: 25 });
+  // Whole steps before steps that write a decimal on every label: 0, 2, 4, 6 for 7.4, not 0.0, 2.5, 5.0, 7.5.
+  assert.deepEqual(axis(3.2, 7.4, 3, { grain: 0.1 }), { min: 0, max: 7.4, step: 2 });
+  assert.deepEqual(axis(1250000, 1790000, 4, { grain: 10000, unit: 1000000 }), { min: 0, max: 2000000, step: 1000000 });
+  // A line that stays far above nothing starts at the step under its lowest value.
+  assert.deepEqual(axis(32, 44, 4, { from: 32 }), { min: 30, max: 45, step: 5 });
+  // Values under nothing start at the step under the lowest, and a step lower only where the number at the end
+  // of the lowest bar needs more of the plot than that leaves it.
+  assert.deepEqual(axis(-31, 4, 4), { min: -40, max: 5, step: 10 });
+  assert.deepEqual(axis(-31, 4, 4, { under: 0.15 }), { min: -40, max: 5, step: 10 });
+  assert.deepEqual(axis(-8.7, 10.5, 4, { grain: 0.1 }), { min: -10, max: 12.5, step: 5 });
+  assert.deepEqual(axis(-8.7, 10.5, 4, { grain: 0.1, under: 0.2 }), { min: -20, max: 15, step: 10 });
+  for (const high of [0.003, 0.7, 3, 7, 19, 64, 99, 101, 250, 999, 12345, 7.7e8]) {
+    for (const low of [0, -0.3 * high, 0.7 * high]) {
+      for (const steps of [2, 3, 4, 6, 8]) {
+        const from = low > 0 ? low : undefined;
+        const { min, max, step } = roundSpan(low, high, { steps, from });
+        const labels = axisLabels({ min, max, step }).length;
+        assert.ok(max >= high - 1e-9 && min <= (from ?? Math.min(0, low)) + 1e-9, `${low} to ${high}: ${min} to ${max}`);
+        assert.ok(labels >= 3 && labels <= Math.min(5, steps + 1), `${low} to ${high} in ${steps} steps: ${labels} labels`);
+      }
+    }
+  }
+});
+
+test('colours past the end of the chart colours are tints of them, never the first colour again', () => {
+  const colors = ['0E7C7B', 'F4A259', '1B2A41'];
+  const seven = Array.from({ length: 7 }, (_, index) => seriesColor(colors, index, 'FFFFFF'));
+  assert.deepEqual(seven.slice(0, 3), colors);
+  assert.equal(new Set(seven).size, 7);
+  // A chart whose place is known draws its slices so; another repeats its colours, as it always did.
+  const pie: ChartValue = { type: 'pie', categories: ['a', 'b', 'c', 'd'], series: [{ name: 's', values: [40, 30, 20, 10] }] };
+  const slot = { ...(chartManifest().patterns.at(-1)?.slots[1] as Parameters<typeof buildChartXml>[1]), colors };
+  const fills = (xml: string) => [...xml.matchAll(/<c:dPt>.*?<a:srgbClr val="([0-9A-F]{6})"\/>/g)].map((match) => match[1]);
+  assert.deepEqual(fills(buildChartXml(pie, slot, 'rId1')), ['0E7C7B', 'F4A259', '1B2A41', '0E7C7B']);
+  const placed = fills(buildChartXml(pie, { ...slot, drawn: { width: 300, height: 200, ground: 'FFFFFF' } }, 'rId1'));
+  assert.deepEqual(placed, [...colors, seven[3]]);
+});
+
+test('a chart whose place is known: a counted plot, upright names, the axis it is given, bars no thicker than they read', () => {
+  const slot = chartManifest().patterns.at(-1)?.slots[1] as Parameters<typeof buildChartXml>[1];
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const year: ChartValue = { type: 'column', categories: months, series: [{ name: 'Rides', values: months.map((_, index) => 1000 + 150 * index) }] };
+  const at = (chart: ChartValue, drawn: NonNullable<typeof slot.drawn>, more: Partial<typeof slot> = {}) => {
+    const xml = buildChartXml(chart, { ...slot, ...more, drawn }, 'rId1');
+    rootElement(parseXml(xml));
+    return xml;
+  };
+  const layoutOf = (xml: string) => {
+    const found = /<c:plotArea><c:layout><c:manualLayout><c:layoutTarget val="inner"\/><c:xMode val="edge"\/><c:yMode val="edge"\/><c:x val="([\d.]+)"\/><c:y val="([\d.]+)"\/><c:w val="([\d.]+)"\/><c:h val="([\d.]+)"\/>/.exec(xml);
+    assert.ok(found, 'the plot has a place of its own');
+    return found.slice(1).map(Number) as [number, number, number, number];
+  };
+  // A small chart 150 pt wide, its numbers on an axis that ends where it is told: text of 9 pt.
+  const small = at(year, { width: 150, height: 90, axis: { max: 3000, step: 1000 }, numbers: false }, { detail: 'compact' });
+  assert.ok(small.includes('<c:max val="3000"/><c:min val="0"/>') && small.includes('<c:majorUnit val="1000"/>'));
+  // Names stand upright, and every second one is written: twelve of them share the plot's 112 pt, 9.3 pt each, and "Jan" asks for 18.
+  assert.ok(small.includes('<a:bodyPr rot="0" vert="horz"/>') && small.includes('<c:tickLblSkip val="2"/>'));
+  assert.ok(small.includes('<c:formatCode>#,##0</c:formatCode>') && small.includes('formatCode="#,##0"'));
+  // The plot: the axis labels (5 characters) at the left, the names under it, a little air above and at the right.
+  const [x, y, w, h] = layoutOf(small);
+  const margins = plotMargins({ horizontal: false, size: 9, names: 3, axis: 5, legend: false });
+  assert.deepEqual(margins, { left: (5 * 0.55 + 1) * 9, right: 4.5, top: 0.7 * 9, bottom: 2.1 * 9 });
+  // With a legend of its own under the names, the names keep less: the legend's line gives them air.
+  assert.equal(plotMargins({ horizontal: false, size: 9, names: 3, axis: 5, legend: true }).bottom, 1.7 * 9 + 1.9 * 9);
+  assert.ok(Math.abs(x - margins.left / 150) < 1e-3 && Math.abs(y - margins.top / 90) < 1e-3 && Math.abs(w - (150 - margins.left - margins.right) / 150) < 1e-3 && Math.abs(h - (90 - margins.top - margins.bottom) / 90) < 1e-3);
+  // Numbers at the bars in place of the axis: the axis is not shown, the largest bar ends where the plot ends, and the number has its room above.
+  const numbered = at({ ...column }, { width: 150, height: 90, axis: { max: 95 }, numbers: true, valueAxis: false }, { detail: 'compact' });
+  assert.ok(/<c:valAx>(?:(?!<\/c:valAx>).)*?<c:delete val="1"\/>/.test(numbered) && /<c:catAx>(?:(?!<\/c:catAx>).)*?<c:delete val="0"\/>/.test(numbered));
+  assert.ok(numbered.includes('<c:showVal val="1"/>') && numbered.includes('<c:max val="95"/>') && !numbered.includes('<c:majorUnit'));
+  assert.ok(Math.abs(layoutOf(numbered)[1] - (1.3 * 9) / 90) < 1e-3);
+  // Three columns in a wide frame are no wider than 11% of it; four horizontal bars no thicker than 2.6 times the text.
+  const gap = (xml: string) => Number(/<c:gapWidth val="(\d+)"\/>/.exec(xml)?.[1]);
+  assert.ok(gap(at(column, { width: 600, height: 300 })) > 150 && gap(at(year, { width: 600, height: 300 })) === 60);
+  assert.ok(gap(at({ ...column, type: 'bar' }, { width: 600, height: 300 })) > 150);
+  // Beside horizontal bars every category is named; with a value under nothing the names stand at the foot of the plot.
+  assert.ok(at({ ...column, type: 'bar' }, { width: 300, height: 120 }).includes('<c:tickLblSkip val="1"/>'));
+  assert.ok(at({ ...column, series: [{ name: 's', values: [-5, 10, 3] }] }, { width: 300, height: 200 }).includes('<c:tickLblPos val="low"/>'));
+  // A legend of its own stands on the line kept for it at the foot; a chart told that its slide has one draws none.
+  const pair: ChartValue = { ...column, series: [...column.series, { name: 'Returns', values: [4, 3, 6] }] };
+  assert.match(at(pair, { width: 300, height: 200 }), /<c:legend><c:legendPos val="b"\/><c:layout><c:manualLayout><c:xMode val="edge"\/><c:yMode val="edge"\/><c:x val="[\d.]+"\/><c:y val="0\.92\d*"\/><\/c:manualLayout><\/c:layout><c:overlay val="0"\/><\/c:legend>/);
+  assert.ok(!at(pair, { width: 300, height: 200, legend: false }).includes('<c:legend>'));
+  // A bare chart keeps the whole frame for its plot, and its bars the height the plan gives them.
+  const bare = at(column, { width: 60, height: 30, axis: { max: 120 } }, { detail: 'spark' });
+  assert.ok(bare.includes('<c:max val="120"/>') && bare.includes('<c:x val="0.04"/><c:y val="0.06"/><c:w val="0.92"/><c:h val="0.88"/>'));
 });

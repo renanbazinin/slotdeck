@@ -158,6 +158,9 @@ const textOnlyOutline = {
   ],
 };
 const brief = { prompt: 'The year ahead: three goals, grow, keep and learn', slideCount: 5, textOnly: true, language: 'en', fields };
+// The tests below are about layouts made for a deck. None is made while free slides are on offer,
+// so they plan with free slides turned off, as a deck was planned before there were any.
+const made = { layout: 'adaptive', free: false } as const;
 
 test('planOutline with composeLayouts makes the layout a slide asks for and gives it to that slide', async () => {
   const template = demo();
@@ -168,7 +171,7 @@ test('planOutline with composeLayouts makes the layout a slide asks for and give
     designs: [{ ...design, base: undefined }],
   });
   const stages: string[] = [];
-  const plan = await planOutline(template, brief, { llm, layout: 'adaptive', composeLayouts: 2, onProgress: (event) => stages.push(event.stage) });
+  const plan = await planOutline(template, brief, { llm, ...made, composeLayouts: 2, onProgress: (event) => stages.push(event.stage) });
 
   assert.deepEqual(plan.slides.map((slide) => slide.pattern), ['cover', 'text-only', 'three-goals', 'text-only', 'closing'], 'only slide 3: the first and last slides and unknown numbers are left alone');
   assert.equal(plan.layouts?.length, 1);
@@ -200,7 +203,7 @@ test('a layout that cannot be made leaves its slides as planned, and the deck is
   const template = demo();
   const broken = { id: 'three-goals', description: 'x', keep: ['title'], elements: [{ name: 'goal1Text', style: 'T99', role: 'text', optional: false, sample: 'x', column: 1, row: 6, width: 4, height: 4 }] };
   const { llm } = planner({ outline: textOnlyOutline, decision: { layouts: [{ instruction: 'Three goals.', slides: [3] }] }, designs: [broken, broken] });
-  const result = await composeLayouts(template, await planOutline(template, brief, { llm, layout: 'adaptive' }), { llm, layout: 'adaptive' });
+  const result = await composeLayouts(template, await planOutline(template, brief, { llm, ...made }), { llm, ...made });
   assert.deepEqual(result.made, []);
   assert.equal(result.failed.length, 1);
   assert.deepEqual(result.failed[0]?.slides, [3]);
@@ -215,14 +218,14 @@ test('a layout that cannot be made leaves its slides as planned, and the deck is
       return textOnlyOutline;
     },
   };
-  const plan = await planOutline(template, brief, { llm: failing, layout: 'adaptive', composeLayouts: 1 });
+  const plan = await planOutline(template, brief, { llm: failing, ...made, composeLayouts: 1 });
   assert.deepEqual(plan.slides.map((slide) => slide.pattern), textOnlyOutline.slides.map((slide) => slide.pattern));
 });
 
 test('an empty answer from the decision makes nothing and calls no designer', async () => {
   const template = demo();
   const { llm, requests } = planner({ outline: textOnlyOutline, decision: { layouts: [] } });
-  const plan = await planOutline(template, brief, { llm, layout: 'adaptive', composeLayouts: 2 });
+  const plan = await planOutline(template, brief, { llm, ...made, composeLayouts: 2 });
   assert.equal(plan.layouts, undefined);
   assert.equal(requests.length, 2, 'the outline and the decision');
 });
@@ -235,7 +238,7 @@ test('two layouts that chose the same id are both kept, the second under a free 
     decision: { layouts: [{ instruction: 'Three goals.', slides: [2] }, { instruction: 'Three costs.', slides: [4] }] },
     designs: [design, design],
   });
-  const plan = await planOutline(template, brief, { llm, layout: 'adaptive', composeLayouts: 2 });
+  const plan = await planOutline(template, brief, { llm, ...made, composeLayouts: 2 });
   assert.deepEqual(plan.layouts?.map((layout) => layout.id), ['three-goals', 'three-goals-2']);
   assert.deepEqual(plan.slides.map((slide) => slide.pattern), ['cover', 'three-goals', 'text-only', 'three-goals-2', 'closing']);
   // Both build onto the template together, as rendering will build them.
@@ -271,10 +274,23 @@ test('planDeck passes composeLayouts through, and the option is off unless set',
     decision: { layouts: [] },
     content: { s1: { title: 'T' }, s2: { title: 'Goals', body: ['Grow'] }, s3: { title: 'Thanks' } },
   });
-  await planDeck(template, { ...brief, slideCount: 3 }, { llm, layout: 'adaptive' });
+  await planDeck(template, { ...brief, slideCount: 3 }, { llm, ...made });
   assert.ok(!requests.some((request) => request.system.startsWith('You review the plan')), 'no decision without the option');
-  await planDeck(template, { ...brief, slideCount: 3 }, { llm, layout: 'adaptive', composeLayouts: 1 });
+  await planDeck(template, { ...brief, slideCount: 3 }, { llm, ...made, composeLayouts: 1 });
   assert.ok(requests.some((request) => request.system.startsWith('You review the plan')));
+});
+
+test('no layout is made while free slides are on offer: a free slide is what such content gets', async () => {
+  const template = demo();
+  const { llm, requests } = planner({ outline: textOnlyOutline, decision: { layouts: [{ instruction: 'Three goals.', slides: [3] }] }, designs: [threeGoals(template)] });
+  // Free slides are on offer unless they are turned off, and the outline says so.
+  const plan = await planOutline(template, brief, { llm, layout: 'adaptive', composeLayouts: 2 });
+  assert.equal(requests.length, 1, 'the outline alone: no look for slides that want a new layout');
+  assert.match(requests[0]?.prompt ?? '', /\n- free: A slide the software lays out itself/);
+  assert.equal(plan.layouts, undefined);
+  // The step on its own makes nothing either.
+  assert.deepEqual(await composeLayouts(template, plan, { llm, layout: 'adaptive' }), { plan, made: [], failed: [] });
+  assert.equal(requests.length, 1);
 });
 
 test('a plan\'s own layouts survive editPlan while a slide uses them', async () => {
@@ -300,7 +316,7 @@ test('the chat tools make new layouts for a plan when asked to, mark them, and r
   const content = { s1: { title: 'The year ahead' }, s2: { title: 'Where we stand', body: ['We grew.'] }, s3: goalSlots, s4: { title: 'Costs', body: ['Two hires.'] }, s5: { title: 'Thank you' } };
   const { llm } = planner({ outline: textOnlyOutline, decision: { layouts: [{ instruction: 'Three goals.', slides: [3] }] }, designs: [design], content });
   const { presentationTools, memoryStore, TOOL_NAMES } = await import('../src/index.ts');
-  const tools = presentationTools({ template, llm, store: memoryStore(), fields, layout: 'adaptive', composeLayouts: 1, thumbnail: (id) => `/thumbnails/${id}.png` });
+  const tools = presentationTools({ template, llm, store: memoryStore(), fields, ...made, composeLayouts: 1, thumbnail: (id) => `/thumbnails/${id}.png` });
   const planned = await tools.call(TOOL_NAMES.plan, { topic: brief.prompt, text_only: true, slide_count: 5, language: 'en' });
   const slides = planned.output.slides as Array<{ layout: string; layout_description?: string; new_layout?: boolean }>;
   assert.equal(slides[2]?.layout, 'three-goals');
@@ -319,13 +335,13 @@ test('only slides of content may get a new layout: a section divider keeps its o
   const template = demo();
   const outline = { title: 'T', slides: [{ pattern: 'cover', purpose: 'Open' }, { pattern: 'text-only', purpose: 'Goals' }, { pattern: 'section', purpose: 'Part two' }, { pattern: 'quote', purpose: 'A word' }, { pattern: 'text-only', purpose: 'Costs' }, { pattern: 'closing', purpose: 'Thanks' }] };
   const { llm, requests } = planner({ outline, decision: { layouts: [{ instruction: 'Three goals.', slides: [3, 4, 2] }] }, designs: [{ ...threeGoals(template), base: undefined }] });
-  const plan = await planOutline(template, { ...brief, slideCount: 6 }, { llm, layout: 'adaptive', composeLayouts: 1 });
+  const plan = await planOutline(template, { ...brief, slideCount: 6 }, { llm, ...made, composeLayouts: 1 });
   assert.match(requests[1]?.prompt ?? '', /Only slides 2, 5 may get one/);
   assert.deepEqual(plan.slides.map((slide) => slide.pattern), ['cover', 'three-goals', 'section', 'quote', 'text-only', 'closing']);
 
   // A deck with no slide of content asks nothing.
   const bare = planner({ outline: { title: 'T', slides: [outline.slides[0], outline.slides[2], outline.slides[5]] }, decision: { layouts: [] } });
-  await planOutline(template, { ...brief, slideCount: 3 }, { llm: bare.llm, layout: 'adaptive', composeLayouts: 1 });
+  await planOutline(template, { ...brief, slideCount: 3 }, { llm: bare.llm, ...made, composeLayouts: 1 });
   assert.equal(bare.requests.length, 1);
 });
 

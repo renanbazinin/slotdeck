@@ -67,7 +67,9 @@ operations (`changeManifest`) or by instruction (`editManifest`), and verify it 
 | `language` | string | no | BCP 47 tag of the template's sample text. Decks default to it. |
 | `alignOnDirectionChange` | `"flip"` or `"keep"` | no | What happens to left and right paragraph alignment in a deck that reads the other way. `flip` (default) mirrors it. `keep` leaves it as designed. A text slot can override this. |
 | `textScale` | number | no | Enlarges the body text of every deck made from this template, as a factor on the designed size: `1.3` turns 9 pt into about 12 pt. For a template whose body text is too small to read comfortably. Budgets shrink to match. See "Larger text" in [layout-freedom.md](layout-freedom.md). |
-| `shrinkText` | `{ to, minSize? }` | no | Lets text that does not fit its box be set smaller: down to `to` of its size (`0.85` is 85%) and never under `minSize` points. Acts only for a template loaded with fonts. See "Shrinking text to fit" in [text-fit.md](text-fit.md). |
+| `shrinkText` | `{ to, minSize? }` | no | Lets text that does not fit its box be set smaller: down to `to` of its size (`0.85` is 85%) and never under `minSize` points. Acts only for a template loaded with fonts. On a free slide of a deck that asks for larger text (`textScale`), a text is set no smaller than it is drawn without that wish. See "Shrinking text to fit" in [text-fit.md](text-fit.md). |
+| `colors` | `{ accent?, accent2? }` or `false` | no | The template's main and second colour, six hex digits each, for decks that ask for other colours: a deck's `accent` takes the place of this one. Left out, the software finds them by how much each colour is used. `false` keeps every deck in the template's own colours. See [colors.md](colors.md). |
+| `free` | `{ base?, styles? }` or `false` | no | Free slides, which the software lays out itself. `base` is the id of the pattern whose frame they stand on: one with a title that leaves room under it, and without a row of items; `styles` names, for a part of a free slide, the template shape it is a copy of (`{ "heading": { "slide": 7, "shape": "7" } }`). Left out, the software chooses. `false` stops free slides being offered when a deck is planned; a stored deck that has one still renders. See [free-slides.md](free-slides.md). |
 
 ## `PatternDef`
 
@@ -152,6 +154,7 @@ The shape must not be inside a group.
 | `colors` | string[] | Series colours in order, hex without `#`. They repeat when there are more series. |
 | `text` | `{ size?, bold?, color?, font? }` | Formatting of axis labels, data labels and the legend. |
 | `lineColor` | string | Colour of gridlines and axis lines, hex without `#`. |
+| `detail` | `"full"`, `"compact"` or `"spark"` | How much the chart shows besides its data. `full` (the default): numbers on the bars, gridlines, axes and a legend. `compact`: no numbers and no gridlines, for a chart a few inches wide. `spark`: no axes and no legend either, the plot filling the frame, for a chart among many. Free slides choose it by the size of each chart. Set in the manifest itself; `setSlot` does not take it. |
 
 ## `RepeatDef`: a row or grid of items
 
