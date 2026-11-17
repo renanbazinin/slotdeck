@@ -7,7 +7,7 @@ import type { Template } from '../render/render.ts';
 import type { PatternDef, TemplateManifest } from '../template/manifest.ts';
 import { freeSlotName, isFreeBlockKind } from './blocks.ts';
 import { freeKitOrReason } from './kit.ts';
-import { freeBodySize } from './plan.ts';
+import { freeBodySize, readableSize } from './plan.ts';
 import { freeFor } from './resolve.ts';
 
 /** What a deck has to draw on, as far as free slides care. */
@@ -104,6 +104,8 @@ export interface PlannedFree {
   base?: string | undefined;
   /** Texts a person asked a length of, in characters, by slot name (`b1Text`). */
   lengths?: Readonly<Record<string, number>> | undefined;
+  /** For some of those texts: how many paragraphs they will have, by slot name. Left out, a text is taken to have paragraphs of about 300 characters. */
+  paragraphs?: Readonly<Record<string, number>> | undefined;
 }
 
 /**
@@ -116,15 +118,17 @@ export interface PlannedFree {
  * slots to count in besides, such as `b2Caption`: a change to a deck passes the optional slots
  * that hold a value on the slide, so that a caption or a heading the slide has can be written
  * again. A text whose length a person asked for (`lengths`) is set out for that length instead
- * of the usual one. A sentence instead when the template cannot carry the slide.
+ * of the usual one, in the number of paragraphs `paragraphs` gives it where it gives one. A
+ * sentence instead when the template cannot carry the slide.
  */
 export function freePattern(template: Template, deck: Pick<DeckSpec, 'direction' | 'textScale'>, planned: PlannedFree, icons: boolean, withParts?: readonly string[]): { pattern: PatternDef; base: string } | string {
   const slide: Pick<SlideSpec, 'blocks' | 'arrange' | 'slots' | 'base'> = { blocks: planned.blocks, slots: {} };
   if (planned.arrange) slide.arrange = planned.arrange;
   if (planned.base !== undefined) slide.base = planned.base;
-  const planning: { icons: boolean; withParts?: readonly string[]; lengths?: Readonly<Record<string, number>> } = { icons };
+  const planning: { icons: boolean; withParts?: readonly string[]; lengths?: Readonly<Record<string, number>>; paragraphs?: Readonly<Record<string, number>> } = { icons };
   if (withParts && withParts.length > 0) planning.withParts = withParts;
   if (planned.lengths && Object.keys(planned.lengths).length > 0) planning.lengths = planned.lengths;
+  if (planned.lengths && planned.paragraphs && Object.keys(planned.paragraphs).length > 0) planning.paragraphs = planned.paragraphs;
   const resolved = freeFor(template, deck, slide, planning);
   return typeof resolved === 'string' ? resolved : { pattern: resolved.plan.pattern, base: resolved.kit.base };
 }
@@ -167,4 +171,76 @@ export function blocksOfRuns(runs: ReadonlyArray<{ kind: unknown; count?: unknow
     if (blocks.length >= MOST_BLOCKS) break;
   }
   return blocks;
+}
+
+/** What one free slide of running text holds, in characters. */
+export interface FreeTextRoom {
+  /** At the template's own text size (with the template's and the deck's factor). */
+  comfortable: number;
+  /** Set smaller where it must, down to four fifths of that size: what any free slide of one text holds. */
+  dense: number;
+  /** Set dense (`FreeArrange.dense`): down to the least size that reads, in two or three columns, in the most room the frame has. */
+  densest: number;
+  /** The sizes those are set at, in points, at their most. */
+  sizes: { comfortable: number; dense: number; densest: number };
+}
+
+// Remembered for the manifest object it was worked out under, as the comfortable number of blocks is.
+const textRooms = new WeakMap<Template, { manifest: TemplateManifest; known: Map<string, FreeTextRoom | undefined> }>();
+/** The lengths `freeTextRoom` tries, in characters: from the shortest long text (a text of 600 characters or fewer is set larger, on a narrower line) up, in steps of 50. */
+const ROOM_LEAST = 650;
+const ROOM_MOST = 8000;
+const ROOM_STEP = 50;
+
+/**
+ * How many characters a free slide of one running text holds on this template, for a deck in this
+ * direction and at this text size: at the template's own size, at four fifths of it, and set dense.
+ * `paragraphs` is the number of paragraphs the text has. Left out, it is taken to have paragraphs
+ * of about 300 characters, and set dense, to be written as a writer told a length writes it: in
+ * any number of paragraphs up to the 12 a text set dense may have. `densest` is then the most a
+ * slide can be asked for and hold. More paragraphs hold less, and a few can take more lines than
+ * many: each ends on a line of its own, with space under it. `dense` and `densest` are the longest
+ * text for which that slide, and every shorter one, holds it; `comfortable` is the longest of
+ * those that is also set at the template's own size. `undefined` when the template cannot carry a
+ * free slide. Work of the engine alone, with no model call, remembered for the template, the
+ * deck's direction and text size, and the number of paragraphs.
+ */
+export function freeTextRoom(template: Template, deck: Pick<DeckSpec, 'direction' | 'textScale'>, paragraphs?: number): FreeTextRoom | undefined {
+  let cache = textRooms.get(template);
+  if (!cache || cache.manifest !== template.manifest) textRooms.set(template, (cache = { manifest: template.manifest, known: new Map() }));
+  const key = `${deck.direction ?? ''}|${deck.textScale ?? 1}|${paragraphs ?? ''}`;
+  if (cache.known.has(key)) return cache.known.get(key);
+  const kit = template.manifest.free === false ? undefined : freeKitOrReason(template);
+  let found: FreeTextRoom | undefined;
+  if (kit !== undefined && typeof kit !== 'string') {
+    const body = freeBodySize(kit, deck.textScale ?? 1);
+    const least = readableSize(kit.slideWidth);
+    /** The budget of the text of a slide of so many characters, and the size it is set at. */
+    const at = (chars: number, dense: boolean): { held: number; size: number } => {
+      const count = paragraphs ?? Math.min(12, Math.max(1, Math.round(chars / 300)));
+      const resolved = freeFor(template, deck, { blocks: ['text'], slots: {}, ...(dense ? { arrange: { dense: true } } : {}) }, { icons: false, lengths: { b1Text: chars }, ...(dense && paragraphs === undefined ? {} : { paragraphs: { b1Text: count } }) });
+      const slot = typeof resolved === 'string' ? undefined : resolved.plan.pattern.slots.find((entry) => entry.name === freeSlotName(1, 'Text'));
+      return slot?.kind === 'text' ? { held: slot.maxChars ?? 0, size: slot.fontSize ?? slot.size ?? 0 } : { held: 0, size: 0 };
+    };
+    const room = { comfortable: 0, dense: 0, densest: 0 };
+    const sizes = { comfortable: body, dense: body, densest: body };
+    const open = { dense: true, densest: true };
+    for (let chars = ROOM_LEAST; chars <= ROOM_MOST && (open.dense || open.densest); chars += ROOM_STEP) {
+      if (open.dense) {
+        const plain = at(chars, false);
+        if (plain.held >= chars) {
+          [room.dense, sizes.dense] = [chars, plain.size];
+          if (plain.size >= Math.floor(body * 2) / 2 - 0.01) [room.comfortable, sizes.comfortable] = [chars, plain.size];
+        } else open.dense = false;
+      }
+      if (open.densest) {
+        const dense = at(chars, true);
+        if (dense.held >= chars && dense.size >= least - 1e-9) [room.densest, sizes.densest] = [chars, dense.size];
+        else open.densest = false;
+      }
+    }
+    found = { ...room, densest: Math.max(room.densest, room.dense), sizes };
+  }
+  cache.known.set(key, found);
+  return found;
 }

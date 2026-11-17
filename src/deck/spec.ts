@@ -37,6 +37,18 @@ export interface DeckSpec {
    */
   patterns?: string[];
   slides: SlideSpec[];
+  /**
+   * The language the document the deck was made from is written in, as a BCP 47 tag, where the
+   * planner said (`DeckPlan.documentLanguage`). A later change sets the document into its slides
+   * as it is only where that is the deck's language.
+   */
+  documentLanguage?: string;
+  /**
+   * The document the deck was made from (`Brief.document`), word for word. A later change draws
+   * on it: a slide that is written again says its own passages of it. Rendering and validation do
+   * not read it.
+   */
+  document?: string;
 }
 
 /** The id a slide carries in `pattern` when the software lays it out itself (see {@link SlideSpec.blocks}). */
@@ -61,6 +73,15 @@ export interface FreeArrange {
    * chart, table or picture among a few other blocks leads by itself.
    */
   lead?: 'left' | 'right' | 'top' | 'none';
+  /**
+   * The slide carries a text a person asked to have whole: an amount of text they asked for, or
+   * their own text. A free slide of one text, with or without a heading. Where that text is too
+   * long for four fifths of the template's text size it is set smaller, down to the least size that
+   * still reads (9 pt on a slide 13.33 inches wide, less on a narrower one), in two or three
+   * columns, in the most room the frame has. A text that fits is set out as without it. Set by the
+   * planner; left out, the slide is set out as before.
+   */
+  dense?: boolean;
 }
 
 /**
@@ -99,6 +120,11 @@ export interface SlideSpec {
   base?: string;
   /** Colours for this slide alone, in place of the deck's. */
   colors?: DeckColors;
+  /**
+   * In a deck made from a document: the passages of it this slide carries, by number from 1, as
+   * `documentPassages` numbers them. Rendering does not read it.
+   */
+  passages?: number[];
 }
 
 /** Whether a slide is one the software lays out itself: it lists its `blocks`. */

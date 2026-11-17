@@ -682,7 +682,8 @@ test('the tools are declared for their template: four tools, each with its argum
   assert.deepEqual(Object.keys(toolNamed(tools, TOOL_NAMES.plan).parameters.properties), ['topic', 'slide_count', 'language', 'image_density', 'text_size', 'text_only', 'instructions', 'accent_color', 'layouts']);
   assert.deepEqual(Object.keys(toolNamed(tools, TOOL_NAMES.editPlan).parameters.properties), ['plan_id', 'instruction', 'accent_color', 'layouts']);
   assert.deepEqual(Object.keys(toolNamed(tools, TOOL_NAMES.create).parameters.properties), ['plan_id']);
-  assert.deepEqual(Object.keys(toolNamed(tools, TOOL_NAMES.edit).parameters.properties), ['presentation_id', 'instruction', 'accent_color', 'color_slides', 'layouts']);
+  // A change that would cut a slide's text is made only once the person accepts it: accept_cut comes last.
+  assert.deepEqual(Object.keys(toolNamed(tools, TOOL_NAMES.edit).parameters.properties), ['presentation_id', 'instruction', 'accent_color', 'color_slides', 'layouts', 'accept_cut']);
   assert.deepEqual(toolNamed(tools, TOOL_NAMES.edit).parameters.required, ['presentation_id']);
 
   // Each layout is named with the first sentence of its description, so that an id is not all a chat model has.
@@ -704,10 +705,18 @@ test('the tools are declared for their template: four tools, each with its argum
         'Slides that are there already keep their layout unless the instruction says otherwise. An empty list lifts the limit.',
     );
   }
-  // The planner cannot take a number of slides from the topic, so the chat model is told to pass it.
-  assert.equal(toolNamed(tools, TOOL_NAMES.plan).parameters.properties.slide_count?.description, 'Number of slides. Set it whenever the user names a number: it is not read from the topic.');
+  // The planner cannot take a number of slides from the topic, so the chat model is told to pass it,
+  // and that the planner keeps it: long text is set smaller on a free slide of text, never spread.
+  assert.equal(
+    toolNamed(tools, TOOL_NAMES.plan).parameters.properties.slide_count?.description,
+    'Number of slides in all. Set it whenever the user names a number of slides ("2 slides", "a five-slide deck"): it is not read from the topic or the instructions. ' +
+      'Leave it out when they name none: the planner then chooses the number. With it the presentation has exactly that many slides: long text is set smaller to fit, and no slide is added.',
+  );
   assert.match(toolNamed(tools, TOOL_NAMES.plan).parameters.properties.text_only?.description ?? '', /or charts\. Not together with layouts: the layouts named then decide\.$/);
-  assert.match(toolNamed(tools, TOOL_NAMES.editPlan).parameters.properties.instruction?.description ?? '', /figures they gave\. Leave it empty when only the colour changes$/);
+  assert.match(
+    toolNamed(tools, TOOL_NAMES.editPlan).parameters.properties.instruction?.description ?? '',
+    /figures they gave\. Text the user gives for a slide goes in whole and word for word, in quotation marks\. Leave it empty when only the colour changes$/,
+  );
   // A colour alone changes a plan too, so the instruction is required of neither tool that changes something.
   assert.deepEqual(toolNamed(tools, TOOL_NAMES.editPlan).parameters.required, ['plan_id']);
   assert.equal(
@@ -721,7 +730,8 @@ test('the tools are declared for their template: four tools, each with its argum
   );
   assert.equal(
     toolNamed(tools, TOOL_NAMES.plan).parameters.properties.instructions?.description,
-    'Everything else the user asked for, in their own words: audience, tone, and every wish about how slides look or are arranged that has no argument of its own ("three columns", "no cover slide"). Pass a wish on even when it seems unusual.',
+    'Everything else the user asked for, in their own words: audience, tone, every amount of text they ask for ("500 words on each slide", "a paragraph of about 80 words on pricing"), ' +
+      'and every wish about how slides look or are arranged that has no argument of its own ("three columns", "no cover slide"). Pass a wish on even when it seems unusual or long.',
   );
   // The descriptions say what can be asked for.
   assert.match(toolNamed(tools, TOOL_NAMES.plan).description, /Pass on every wish the user has about how it looks or is built: in slide_count, layouts, text_only, text_size, image_density and accent_color where one fits/);

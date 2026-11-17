@@ -113,6 +113,8 @@ interface DeckSpec {
   colors?: DeckColors;          // colours in place of the template's, for every slide
   patterns?: string[];          // the only patterns the deck was asked to use; the planner keeps to it
   slides: SlideSpec[];
+  documentLanguage?: string;    // the language that document is written in, as the planner read it (BCP 47)
+  document?: string;            // the document the deck was made from (Brief.document), word for word
 }
 interface SlideSpec {
   pattern: string;
@@ -122,6 +124,7 @@ interface SlideSpec {
   arrange?: FreeArrange;        // a free slide: how its parts are set out
   base?: string;                // a free slide: the pattern whose frame it stands on
   colors?: DeckColors;          // colours for this slide alone, in place of the deck's
+  passages?: number[];          // a deck made from a document: the passages of it this slide carries
 }
 interface DeckColors {
   accent?: string;                  // takes the place of the template's main colour; six hex digits
@@ -226,7 +229,33 @@ written by calls of its own, three at a time, before that call. A part of a free
 content is taken off the slide and named in `warnings`; it does not make the function throw. Of the photos a
 writer describes for one free slide, six are kept, and the warnings name the rest. Every number a chart shows
 must appear in the brief, or `warnings` names it; the check does not tell whether a number stands in the right
-chart.
+chart. A slide asked for words whose slot was told the whole length (`Write 500 words, as was asked`) and came
+back under 0.85 of the least it was told is sent back once; still short, `warnings` says so.
+
+### `planTextFit`
+
+```ts
+function planTextFit(template: Template, plan: DeckPlan, options?: Pick<PlanOptions, 'patterns' | 'free' | 'icons' | 'assets' | 'layout' | 'numberPatterns'>): SlideTextFit[];
+```
+
+What each slide of a plan that has asked words or passages of a document will carry, worked out by code
+alone before anything is written: the words it holds, the size its running text is set at on a free slide, and
+whether it is set dense. A slide that holds less than its words is cut to what it holds when the deck is
+written. `[]` for a plan with neither.
+
+### `documentPassages`, `MOST_DOCUMENT_CHARS`
+
+```ts
+function documentPassages(document: string): DocumentPassage[];
+const MOST_DOCUMENT_CHARS = 12000;
+```
+
+The passages of a document (`Brief.document`), numbered as the planner numbers them: each paragraph, a long one
+cut at the ends of its sentences, short lines of one section together, a list, a table. A short line on its own,
+or one that starts with `#`, is a heading over the passages after it; a run of three short lines or more with no
+stops, one under another, is text, all of it. A tab at the start of a line, as text pasted from a word processor
+has it, sets the line in and makes no table. Pure: the same text always gives the same passages. A brief's
+document is at most `MOST_DOCUMENT_CHARS` characters; a longer one is a `PlanError`.
 
 ### `planEdit`
 
@@ -245,7 +274,15 @@ change had words for while it marked no part to be written, when the slide's tit
 `rewritten`). How a slide is set out is
 changed by a value the plan states; the plan's `auto` and 0 hand a slide back to the software only where the
 plan changes that slide. A title the writer leaves out stays, and the title of a slide of ten parts or more is
-changed, not removed. See "Free slides in an edit" in [generating.md](generating.md).
+changed, not removed. See "Free slides in an edit" in [generating.md](generating.md). A slide asked for words
+keeps them on that slide: the edit adds no slide for a text. With `stopBeforeCut`, a slide that would hold less
+than was asked for it stops the edit before anything is written, with a `TextCutError`; what it holds is counted
+as it will be written, with the heading or caption it keeps. A part added beside a dense text, or a text from the
+document, leaves the text less room: a text that still holds there stays as it is, and one that does not is
+written again for that room, and cut. Of a deck made from a document (`DeckSpec.document`), the plan of the
+change names the passages each slide carries; a slide whose passages change is written again, its text set by
+code as the document has it where it holds it and the document is in the deck's language
+(`DeckSpec.documentLanguage`), unless the plan says the instruction asks for that text in other words.
 
 ### `recolorDeck`
 
@@ -311,6 +348,20 @@ class PlanError extends Error {}
 Thrown when no usable plan can be made, and by `writeDeck` for a plan whose counts cannot be written (a
 number of items the pattern does not take, a free slide of more than 400 parts). The message says why.
 
+### `TextCutError`
+
+```ts
+class TextCutError extends PlanError {
+  readonly fits: SlideTextFit[]; // the slides that would hold less than they carry, numbered as after the change
+}
+```
+
+Thrown by `planEdit` with `stopBeforeCut` when a slide it writes would hold less text than was asked for it, or
+than it carries.
+Nothing was written. The message names each slide and the words it would hold, counted as the slide would be
+written. A slide whose parts and passages stay, asked for no length (other words, a new title, another
+language), does not throw it.
+
 ### `TEXT_SIZES`
 
 ```ts
@@ -333,6 +384,7 @@ interface Brief {
   textOnly?: boolean; // every slide plain text: only the template's plain text patterns are offered
   patterns?: string[]; // the only patterns the person asked for, `free` among them for free slides; kept with the plan and the deck
   colors?: DeckColors; // colours in place of the template's; copied to the deck
+  document?: string; // a document to make the deck from, word for word; at most MOST_DOCUMENT_CHARS characters
 }
 type ImageDensity = 'none' | 'low' | 'medium' | 'high';
 
@@ -365,9 +417,37 @@ interface OutlineEntry {
   items?: number;
   blocks?: FreeBlockKind[]; // a free slide (pattern 'free'): its parts in reading order
   arrange?: FreeArrange;    // a free slide: how its parts are set out, where the plan says so
-  words?: number;           // the words of running text asked for this slide ("200 words"), 1 to 3000
+  words?: number;           // the words of running text asked for this slide ("200 words"), 1 to 3000; never spread over more slides
+  passages?: number[];      // a deck made from a document: the passages this slide carries
 }
-interface DeckPlan { version: 1; title: string; brief: Brief; slides: OutlineEntry[]; layouts?: PatternDesign[] }
+interface DocumentPassage {
+  number: number;           // from 1, in the document's order
+  kind: 'text' | 'list' | 'table';
+  text: string;             // as the document has it: a list one item to a line, a table one row to a line
+  section?: string;         // the heading it stands under
+  continues?: true;         // goes on from the passage before it
+  leads?: true;             // ends with a colon, and goes on a slide with the passage after it
+  chars: number;            // the characters a slide shows of it
+  paragraphs: number;       // the paragraphs a slide shows of it
+}
+interface SlideTextFit {
+  slide: number;            // from 1
+  words: number;            // the words asked for the slide, or those of its passages
+  holds: number;            // the words it holds: `words` when it holds them all
+  size?: number;            // the size its running text is set at, in points, on a free slide
+  templateSize?: number;    // the size running text has on a free slide of the template when nothing makes it smaller
+  dense?: true;             // set dense (FreeArrange.dense)
+  most?: number;            // set dense: the most words it holds at the least size that reads
+  passages?: string;        // a slide of a document: its passages, as "p3-p5"
+}
+interface DeckPlan {
+  version: 1;
+  title: string;
+  brief: Brief;
+  slides: OutlineEntry[];
+  layouts?: PatternDesign[];
+  documentLanguage?: string; // a deck made from a document: the language the document is written in, as the planner read it (BCP 47)
+}
 interface PlanResult { deck: DeckSpec; warnings: Issue[]; outline: OutlineEntry[] }
 
 interface ComposeLayoutsResult {
@@ -389,6 +469,7 @@ interface EditOptions extends PlanOptions {
   colors?: DeckColors | null;       // sets the deck's colours by code, as recolorDeck; null returns to the template's
   colorSlides?: number[];           // gives `colors` to these slides alone, numbered as before the edit
   deckPatterns?: string[] | null;   // the person's list of patterns from now on; null or [] lifts the limit
+  stopBeforeCut?: boolean;          // a slide that would hold less than was asked for it throws TextCutError before writing
 }
 interface EditResult {
   deck: DeckSpec;
@@ -440,6 +521,7 @@ interface FreeSlideContent {
   blocks: FreeBlockContent[];
   columns?: number;                           // how many blocks stand side by side on one line
   lead?: 'left' | 'right' | 'top' | 'none';   // where the first block stands when it is the main one
+  dense?: boolean;                            // a long text a person asked to have whole (FreeArrange.dense); kept both ways
   base?: string;                              // the pattern whose frame the slide stands on
   colors?: DeckColors;                        // colours for this slide alone
 }
@@ -470,11 +552,15 @@ function isFreeSlide(slide: Pick<SlideSpec, 'blocks'>): boolean;
 const FREE_PATTERN: 'free';
 const FREE_BLOCK_KINDS: readonly ['text', 'list', 'card', 'figure', 'step', 'quote', 'note', 'chart', 'table', 'photo', 'graphic'];
 type FreeBlockKind = (typeof FREE_BLOCK_KINDS)[number];
-interface FreeArrange { columns?: number; lead?: 'left' | 'right' | 'top' | 'none' }
+interface FreeArrange { columns?: number; lead?: 'left' | 'right' | 'top' | 'none'; dense?: boolean }
 ```
 
 A slide is a free slide when it lists `blocks`; its `pattern` is then `FREE_PATTERN`. `FreeArrange` is the type
-of `SlideSpec.arrange`.
+of `SlideSpec.arrange`. `dense` is set by the planner on a free slide of one text that carries an amount of text
+a person asked for, or their own text: where that text is too long for four fifths of the template's size, it
+is set smaller, down to the least size that reads (9 pt on a slide 13.33 inches wide), in two or three columns
+in the most room the frame has. A text that fits is set out as without it. See "A long text a person asked
+for" in [free-slides.md](free-slides.md).
 
 ### `freeBaseRefusal`
 
@@ -521,6 +607,21 @@ exception: a `TypeError`, `RangeError` or `SyntaxError` of the software itself, 
 presentation that is no longer what the tools saved brings about, is told as one sentence that says so. What
 the `llm`, the `images` provider, the `store` or the `review` throws is always passed on as its message. See
 "Errors" in [chat-tools.md](chat-tools.md).
+
+With `documents: true` the plan tool takes `documents`, the names of texts the person gave in the
+conversation. The app passes those texts with every call, as `call(name, args, { signal, documents })`, and
+the slides carry the texts the chat model names word for word. See "Texts the person gave" in
+[chat-tools.md](chat-tools.md).
+
+### `describeDocuments`
+
+```ts
+function describeDocuments(documents: readonly ChatDocument[]): string;
+```
+
+The line for the chat model's system prompt that lists the texts a person gave in the conversation, each with
+its words and first words, and says how to pass one to the plan tool. It lists the last ten that have a name
+and a text, and returns `''` for none. Give it the list the tools are given with each call.
 
 ### `TOOL_NAMES`
 
@@ -586,10 +687,19 @@ interface PresentationToolsOptions {
   preview?: PreviewProvider; // draws every presentation the tools create or change
   newId?: (kind: 'plan' | 'deck') => string;
   onProgress?: (event: GenerateProgress, tool: string) => void;
+  documents?: boolean; // the plan tool takes the names of texts the person gave; off unless true
 }
 interface PresentationTools {
   definitions: ToolDefinition[];
-  call(name: string, args: unknown, context?: { signal?: AbortSignal }): Promise<ToolResult>;
+  call(name: string, args: unknown, context?: ToolCallContext): Promise<ToolResult>;
+}
+interface ToolCallContext {
+  signal?: AbortSignal;
+  documents?: readonly ChatDocument[]; // the texts of the conversation, read by the plan tool of tools built with documents: true
+}
+interface ChatDocument {
+  name: string; // the name the chat model sees and passes: a file name, "pasted text 1"
+  text: string; // the text as the person gave it
 }
 interface ToolDefinition { name: string; description: string; parameters: JsonSchema }
 interface ToolResult { output: Record<string, unknown>; plan?: DeckPlan; deck?: DeckSpec; pptx?: Uint8Array; previews?: SlidePreview[] }

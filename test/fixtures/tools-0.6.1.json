@@ -1,0 +1,471 @@
+{
+  "fixture": [
+    {
+      "name": "plan_presentation",
+      "description": "Plans a presentation: decides the slides, the layout of each and the point each makes. Nothing is written or rendered yet. Pass on every wish the user has about how it looks or is built: in slide_count, layouts, text_only, text_size, image_density and accent_color where one fits, and otherwise in instructions in the user's own words. A slide can also hold what no layout has (several charts, tables or pictures on one slide, or any number of cards or figures): pass such a wish on in instructions, in the user's words. Show the plan to the user and get their approval or changes before creating the presentation.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "topic": {
+            "type": "string",
+            "description": "What the presentation is about, with every fact, figure and name the user gave. Numbers not stated here will not appear on slides."
+          },
+          "slide_count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30,
+            "description": "Number of slides. Set it whenever the user names a number: it is not read from the topic."
+          },
+          "language": {
+            "type": "string",
+            "description": "BCP 47 tag of the language to write in, e.g. \"he\" or \"en\". Defaults to the template language."
+          },
+          "image_density": {
+            "type": "string",
+            "enum": [
+              "none",
+              "low",
+              "medium",
+              "high"
+            ],
+            "description": "How many slides carry a photo. Defaults to medium."
+          },
+          "text_size": {
+            "type": "string",
+            "enum": [
+              "normal",
+              "large",
+              "x-large"
+            ],
+            "description": "Size of body text. Larger text means less of it per slide. Defaults to normal."
+          },
+          "text_only": {
+            "type": "boolean",
+            "description": "True when the user asks for a presentation of text only. Every slide is then plain text: a title with paragraphs or a list, with no pictures, icons, cards, figures, tables or charts. Not together with layouts: the layouts named then decide."
+          },
+          "instructions": {
+            "type": "string",
+            "description": "Everything else the user asked for, in their own words: audience, tone, and every wish about how slides look or are arranged that has no argument of its own (\"three columns\", \"no cover slide\"). Pass a wish on even when it seems unusual."
+          },
+          "accent_color": {
+            "type": "string",
+            "description": "Only when the user asks for a colour: the main colour as six hex digits (RRGGBB), in place of the template's. For a colour given by name choose a shade that suits a presentation (dark green 1E6B3A, not 00FF00)."
+          },
+          "layouts": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "content",
+                "closing",
+                "free"
+              ]
+            },
+            "description": "Only when the user limits the layouts. Every slide then uses one of them, so name the opening and closing layouts too unless the user wants none. The layouts:\n- content: Title, body, photo and icon.\n- closing: Closing words.\n- free: A slide laid out by the software from the parts asked for."
+          }
+        },
+        "required": [
+          "topic"
+        ]
+      }
+    },
+    {
+      "name": "edit_presentation_plan",
+      "description": "Changes a plan the user has not approved yet: add, remove, reorder or re-purpose slides, change the layout of a slide or what it shows, the length, the language or the colour. Returns a new plan with a new id.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "plan_id": {
+            "type": "string",
+            "description": "Id of the plan to change"
+          },
+          "instruction": {
+            "type": "string",
+            "description": "What to change, in the user's words, with any new facts or figures they gave. Leave it empty when only the colour changes"
+          },
+          "accent_color": {
+            "type": "string",
+            "description": "Only when the user asks for a colour: the main colour as six hex digits (RRGGBB), in place of the template's. For a colour given by name choose a shade that suits a presentation (dark green 1E6B3A, not 00FF00). \"template\" returns to the template's colours."
+          },
+          "layouts": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "content",
+                "closing",
+                "free"
+              ]
+            },
+            "description": "Only when the user changes which layouts may be used: the only layouts allowed from now on. They are described under plan_presentation. Slides that are there already keep their layout unless the instruction says otherwise. An empty list lifts the limit."
+          }
+        },
+        "required": [
+          "plan_id"
+        ]
+      }
+    },
+    {
+      "name": "create_presentation",
+      "description": "Writes and renders the presentation of an approved plan, as a PowerPoint file. Call it only after the user approved the plan.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "plan_id": {
+            "type": "string",
+            "description": "Id of the approved plan"
+          }
+        },
+        "required": [
+          "plan_id"
+        ]
+      }
+    },
+    {
+      "name": "edit_presentation",
+      "description": "Changes a presentation that was already created: rewrite or shorten a slide, add or remove slides, change the layout of a slide or the number of cards on it, put several charts, tables or pictures on one slide, make the text larger or smaller, change a picture, translate, change the colour of the presentation or of one slide. Only the slides the change touches are rewritten. Returns a new presentation with a new id.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "presentation_id": {
+            "type": "string",
+            "description": "Id of the presentation to change"
+          },
+          "instruction": {
+            "type": "string",
+            "description": "What to change, in the user's words, with any new facts or figures they gave. Leave it out when only the colour changes"
+          },
+          "accent_color": {
+            "type": "string",
+            "description": "Only when the user asks for a colour: the main colour as six hex digits (RRGGBB), in place of the template's. For a colour given by name choose a shade that suits a presentation (dark green 1E6B3A, not 00FF00). \"template\" returns to the template's colours."
+          },
+          "color_slides": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "The slides to colour, by number, when the user wants the colour on some slides only. Left out, the whole presentation takes it."
+          },
+          "layouts": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "content",
+                "closing",
+                "free"
+              ]
+            },
+            "description": "Only when the user changes which layouts may be used: the only layouts allowed from now on. They are described under plan_presentation. Slides that are there already keep their layout unless the instruction says otherwise. An empty list lifts the limit."
+          }
+        },
+        "required": [
+          "presentation_id"
+        ]
+      }
+    }
+  ],
+  "demo": [
+    {
+      "name": "plan_presentation",
+      "description": "Plans a presentation: decides the slides, the layout of each and the point each makes. Nothing is written or rendered yet. Pass on every wish the user has about how it looks or is built: in slide_count, layouts, text_only, text_size, image_density and accent_color where one fits, and otherwise in instructions in the user's own words. Show the plan to the user and get their approval or changes before creating the presentation.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "topic": {
+            "type": "string",
+            "description": "What the presentation is about, with every fact, figure and name the user gave. Numbers not stated here will not appear on slides."
+          },
+          "slide_count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30,
+            "description": "Number of slides. Set it whenever the user names a number: it is not read from the topic."
+          },
+          "language": {
+            "type": "string",
+            "description": "BCP 47 tag of the language to write in, e.g. \"he\" or \"en\". Defaults to the template language."
+          },
+          "image_density": {
+            "type": "string",
+            "enum": [
+              "none",
+              "low",
+              "medium",
+              "high"
+            ],
+            "description": "How many slides carry a photo. Defaults to medium."
+          },
+          "text_size": {
+            "type": "string",
+            "enum": [
+              "normal",
+              "large",
+              "x-large"
+            ],
+            "description": "Size of body text. Larger text means less of it per slide. Defaults to normal."
+          },
+          "text_only": {
+            "type": "boolean",
+            "description": "True when the user asks for a presentation of text only. Every slide is then plain text: a title with paragraphs or a list, with no pictures, icons, cards, figures, tables or charts. Not together with layouts: the layouts named then decide."
+          },
+          "instructions": {
+            "type": "string",
+            "description": "Everything else the user asked for, in their own words: audience, tone, and every wish about how slides look or are arranged that has no argument of its own (\"three columns\", \"no cover slide\"). Pass a wish on even when it seems unusual."
+          },
+          "accent_color": {
+            "type": "string",
+            "description": "Only when the user asks for a colour: the main colour as six hex digits (RRGGBB), in place of the template's. For a colour given by name choose a shade that suits a presentation (dark green 1E6B3A, not 00FF00)."
+          },
+          "layouts": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "section"
+              ]
+            },
+            "description": "Only when the user limits the layouts. Every slide then uses one of them, so name the opening and closing layouts too unless the user wants none. The layouts:\n- section: A section header layout with a title and brief explanatory subtitle against a..."
+          }
+        },
+        "required": [
+          "topic"
+        ]
+      }
+    },
+    {
+      "name": "edit_presentation_plan",
+      "description": "Changes a plan the user has not approved yet: add, remove, reorder or re-purpose slides, change the layout of a slide or what it shows, the length, the language or the colour. Returns a new plan with a new id.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "plan_id": {
+            "type": "string",
+            "description": "Id of the plan to change"
+          },
+          "instruction": {
+            "type": "string",
+            "description": "What to change, in the user's words, with any new facts or figures they gave. Leave it empty when only the colour changes"
+          },
+          "accent_color": {
+            "type": "string",
+            "description": "Only when the user asks for a colour: the main colour as six hex digits (RRGGBB), in place of the template's. For a colour given by name choose a shade that suits a presentation (dark green 1E6B3A, not 00FF00). \"template\" returns to the template's colours."
+          },
+          "layouts": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "section"
+              ]
+            },
+            "description": "Only when the user changes which layouts may be used: the only layouts allowed from now on. They are described under plan_presentation. Slides that are there already keep their layout unless the instruction says otherwise. An empty list lifts the limit."
+          }
+        },
+        "required": [
+          "plan_id"
+        ]
+      }
+    },
+    {
+      "name": "create_presentation",
+      "description": "Writes and renders the presentation of an approved plan, as a PowerPoint file. Call it only after the user approved the plan.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "plan_id": {
+            "type": "string",
+            "description": "Id of the approved plan"
+          }
+        },
+        "required": [
+          "plan_id"
+        ]
+      }
+    },
+    {
+      "name": "edit_presentation",
+      "description": "Changes a presentation that was already created: rewrite or shorten a slide, add or remove slides, change the layout of a slide or the number of cards on it, make the text larger or smaller, change a picture, translate, change the colour of the presentation or of one slide. Only the slides the change touches are rewritten. Returns a new presentation with a new id.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "presentation_id": {
+            "type": "string",
+            "description": "Id of the presentation to change"
+          },
+          "instruction": {
+            "type": "string",
+            "description": "What to change, in the user's words, with any new facts or figures they gave. Leave it out when only the colour changes"
+          },
+          "accent_color": {
+            "type": "string",
+            "description": "Only when the user asks for a colour: the main colour as six hex digits (RRGGBB), in place of the template's. For a colour given by name choose a shade that suits a presentation (dark green 1E6B3A, not 00FF00). \"template\" returns to the template's colours."
+          },
+          "color_slides": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "The slides to colour, by number, when the user wants the colour on some slides only. Left out, the whole presentation takes it."
+          },
+          "layouts": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "section"
+              ]
+            },
+            "description": "Only when the user changes which layouts may be used: the only layouts allowed from now on. They are described under plan_presentation. Slides that are there already keep their layout unless the instruction says otherwise. An empty list lifts the limit."
+          }
+        },
+        "required": [
+          "presentation_id"
+        ]
+      }
+    }
+  ],
+  "demo/free-off": [
+    {
+      "name": "plan_presentation",
+      "description": "Plans a presentation: decides the slides, the layout of each and the point each makes. Nothing is written or rendered yet. Pass on every wish the user has about how it looks or is built: in slide_count, layouts, text_only, text_size and image_density where one fits, and otherwise in instructions in the user's own words. Show the plan to the user and get their approval or changes before creating the presentation.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "topic": {
+            "type": "string",
+            "description": "What the presentation is about, with every fact, figure and name the user gave. Numbers not stated here will not appear on slides."
+          },
+          "slide_count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30,
+            "description": "Number of slides. Set it whenever the user names a number: it is not read from the topic."
+          },
+          "language": {
+            "type": "string",
+            "description": "BCP 47 tag of the language to write in, e.g. \"he\" or \"en\". Defaults to the template language."
+          },
+          "image_density": {
+            "type": "string",
+            "enum": [
+              "none",
+              "low",
+              "medium",
+              "high"
+            ],
+            "description": "How many slides carry a photo. Defaults to medium."
+          },
+          "text_size": {
+            "type": "string",
+            "enum": [
+              "normal",
+              "large",
+              "x-large"
+            ],
+            "description": "Size of body text. Larger text means less of it per slide. Defaults to normal."
+          },
+          "text_only": {
+            "type": "boolean",
+            "description": "True when the user asks for a presentation of text only. Every slide is then plain text: a title with paragraphs or a list, with no pictures, icons, cards, figures, tables or charts. Not together with layouts: the layouts named then decide."
+          },
+          "instructions": {
+            "type": "string",
+            "description": "Everything else the user asked for, in their own words: audience, tone, and every wish about how slides look or are arranged that has no argument of its own (\"three columns\", \"no cover slide\"). Pass a wish on even when it seems unusual."
+          },
+          "layouts": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "section"
+              ]
+            },
+            "description": "Only when the user limits the layouts. Every slide then uses one of them, so name the opening and closing layouts too unless the user wants none. The layouts:\n- section: A section header layout with a title and brief explanatory subtitle against a..."
+          }
+        },
+        "required": [
+          "topic"
+        ]
+      }
+    },
+    {
+      "name": "edit_presentation_plan",
+      "description": "Changes a plan the user has not approved yet: add, remove, reorder or re-purpose slides, change the layout of a slide or what it shows, the length or the language. Returns a new plan with a new id.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "plan_id": {
+            "type": "string",
+            "description": "Id of the plan to change"
+          },
+          "instruction": {
+            "type": "string",
+            "description": "What to change, in the user's words, with any new facts or figures they gave"
+          },
+          "layouts": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "section"
+              ]
+            },
+            "description": "Only when the user changes which layouts may be used: the only layouts allowed from now on. They are described under plan_presentation. Slides that are there already keep their layout unless the instruction says otherwise. An empty list lifts the limit."
+          }
+        },
+        "required": [
+          "plan_id",
+          "instruction"
+        ]
+      }
+    },
+    {
+      "name": "create_presentation",
+      "description": "Writes and renders the presentation of an approved plan, as a PowerPoint file. Call it only after the user approved the plan.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "plan_id": {
+            "type": "string",
+            "description": "Id of the approved plan"
+          }
+        },
+        "required": [
+          "plan_id"
+        ]
+      }
+    },
+    {
+      "name": "edit_presentation",
+      "description": "Changes a presentation that was already created: rewrite or shorten a slide, add or remove slides, change the layout of a slide or the number of cards on it, make the text larger or smaller, change a picture, translate. Only the slides the change touches are rewritten. Returns a new presentation with a new id.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "presentation_id": {
+            "type": "string",
+            "description": "Id of the presentation to change"
+          },
+          "instruction": {
+            "type": "string",
+            "description": "What to change, in the user's words, with any new facts or figures they gave"
+          },
+          "layouts": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "section"
+              ]
+            },
+            "description": "Only when the user changes which layouts may be used: the only layouts allowed from now on. They are described under plan_presentation. Slides that are there already keep their layout unless the instruction says otherwise. An empty list lifts the limit."
+          }
+        },
+        "required": [
+          "presentation_id",
+          "instruction"
+        ]
+      }
+    }
+  ]
+}

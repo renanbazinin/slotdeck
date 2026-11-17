@@ -19,18 +19,28 @@ import { MOST_PHOTOS, partLabel } from './free.ts';
 import { REPEAT_TITLE, mergeRange, partOf, partRanges, rangeSchema, rangeTask, readRange, titled } from './parts.ts';
 import type { FreeJob, PartRange, RangeAnswer } from './parts.ts';
 
-export function systemPrompt(language: string, source: 'brief' | 'deck'): string {
+/**
+ * The rules every planning and writing call is given. `document` says the deck is made from a
+ * document: its text is then said in its own words, and its figures may be used.
+ */
+export function systemPrompt(language: string, source: 'brief' | 'deck', document = false): string {
+  const limits = document
+    ? `- Character limits are hard and count spaces. Stay under them. A slide that has text from the document says that text, in its words and order: shorten it only where a limit ${source === 'brief' ? 'makes you' : 'or the request makes you'}, by leaving out what matters least, never by summing it up. Text in another language than the deck's is translated closely, sentence by sentence. Where a slot says how much to write, write about that much; elsewhere keep slide text short: a phrase beats a sentence.`
+    : '- Character limits are hard and count spaces. Stay under them. Where a slot says how much to write, write about that much; elsewhere keep slide text short: a phrase beats a sentence.';
+  const figures =
+    source === 'brief'
+      ? `- Every figure on a slide must come from the brief${document ? ' or the document' : ''}. Never make up statistics, quotes or names.`
+      : `- Every figure on a slide must come from the request${document ? ', the document or the deck as it is' : ' or from the deck as it is'}. Never make up statistics, quotes or names.`;
+  const topics = source === 'brief' ? (document ? '- Follow the brief. Do not add topics that neither the brief nor the document calls for.' : '- Follow the brief. Do not add topics it does not call for.') : '- Do what the request asks and nothing more.';
   return [
     "You write presentation decks for a fixed slide template. You do not place or size anything: you choose from the template's slide patterns and write the content for their slots.",
     '',
     'Rules:',
     `- Write all slide text in the language with BCP 47 tag "${language}".`,
-    '- Character limits are hard and count spaces. Stay under them. Where a slot says how much to write, write about that much; elsewhere keep slide text short: a phrase beats a sentence.',
+    limits,
     '- Plain text only: no markdown, no bullet characters, no line breaks inside a string, no placeholder text.',
-    source === 'brief'
-      ? '- Every figure on a slide must come from the brief. Never make up statistics, quotes or names.'
-      : '- Every figure on a slide must come from the request or from the deck as it is. Never make up statistics, quotes or names.',
-    source === 'brief' ? '- Follow the brief. Do not add topics it does not call for.' : '- Do what the request asks and nothing more.',
+    figures,
+    topics,
   ].join('\n');
 }
 
@@ -177,6 +187,14 @@ export interface WriteJob extends WriteItem {
    * the purpose last, since a slide should not show an instruction.
    */
   fallback?: string;
+  /** For a slide that carries passages of the deck's document: what they are called ("p4-p6") and their text, as the writer is shown it. */
+  passage?: { label: string; text: string };
+  /**
+   * The running slot that code set to the slide's passages, word for word (in `carried`). The
+   * writer does not write it, and what the check of the deck says of it is never sent back to the
+   * writer: it stays with the deck as it is.
+   */
+  filled?: string;
 }
 
 /**
@@ -223,6 +241,12 @@ export interface WriteArgs {
   measure?: TextMeasurer | undefined;
   /** A second look at each draft that renders: what it finds goes back to the model with the limits the draft broke. */
   review?: ((deck: DeckSpec) => Issue[] | Promise<Issue[]>) | undefined;
+  /**
+   * What the caller finds wrong with each draft besides the check of the deck, such as a text
+   * written well short of the length asked for it. It goes back to the model like any problem of
+   * a slide that was written. `round` is 0 for the first answer and counts the repairs after it.
+   */
+  notes?: ((deck: DeckSpec, issues: Issue[], round: number) => Issue[]) | undefined;
   layout: LayoutMode;
   maxRepairs: number;
   onRepair?: (attempt: number, issues: number) => void;
@@ -659,7 +683,7 @@ export async function writeSlides(args: WriteArgs): Promise<{ deck: DeckSpec; is
   const apart = jobs.filter(isFreeJob).filter(writtenApart);
   const parts = apart.length > 0 ? await writeApart(args, apart, check, off) : new Map<number, Record<string, SlotValue>>();
 
-  const build = async (answer: unknown): Promise<{ deck: DeckSpec; issues: Issue[]; drafts: Map<number, FreeDraft> }> => {
+  const build = async (answer: unknown, round: number): Promise<{ deck: DeckSpec; issues: Issue[]; drafts: Map<number, FreeDraft> }> => {
     const content = (typeof answer === 'object' && answer !== null ? answer : {}) as Record<string, unknown>;
     const written = new Map<number, SlideSpec>();
     const drafts = new Map<number, FreeDraft>();
@@ -682,6 +706,7 @@ export async function writeSlides(args: WriteArgs): Promise<{ deck: DeckSpec; is
       const draft = drafts.get(job.number);
       if (draft && isFreeJob(job)) issues.push(...freeNotes(job, draft, issues, context));
     }
+    if (args.notes) issues.push(...args.notes(deck, issues, round));
     // A draft with errors cannot be rendered, so there is nothing yet for a review to look at.
     if (args.review && !issues.some((issue) => issue.severity === 'error')) issues.push(...(await args.review(deck)));
     return { deck, issues, drafts };
@@ -692,12 +717,15 @@ export async function writeSlides(args: WriteArgs): Promise<{ deck: DeckSpec; is
   // slide kept as it was is not the writer's to mend.
   const freeJobs = new Map(together.filter(isFreeJob).map((job) => [job.number, job]));
   const asked = new Map([...freeJobs].map(([number, job]) => [number, new Set(job.pattern.slots.map((planned) => planned.slot.name))]));
+  // A text code set from a document is not the writer's to mend.
+  const filledSlots = new Map(together.flatMap((job) => (job.filled ? [[job.number, job.filled] as const] : [])));
   // `sent` gathers, for each free slide, the slots a round's problems are about.
   const repairable = (draft: { issues: Issue[]; drafts: Map<number, FreeDraft> }, sent?: Map<number, Set<string>>): string[] =>
     draft.issues.flatMap((issue) => {
       if (issue.slide === undefined || !numbers.has(issue.slide)) return [];
       const free = draft.drafts.get(issue.slide);
       const slot = free ? plannedSlot(free, issue.slot) : issue.slot;
+      if (slot !== undefined && filledSlots.get(issue.slide) === slot) return [];
       if (free && issue.slot && (!slot || !asked.get(issue.slide)?.has(slot))) return [];
       // Nor is a chart or a table that is as large as the slide had it.
       const job = freeJobs.get(issue.slide);
@@ -734,7 +762,8 @@ export async function writeSlides(args: WriteArgs): Promise<{ deck: DeckSpec; is
   const room = contentRoom(together, context);
   // A deck whose every slide was written apart has nothing left to ask for here.
   let answer: unknown = together.length > 0 ? await args.ask(args.request, schema, room) : {};
-  let draft = await build(answer);
+  let round = 0;
+  let draft = await build(answer, round);
   for (let attempt = 1; attempt <= args.maxRepairs && together.length > 0; attempt++) {
     const sent = new Map<number, Set<string>>();
     const problems = repairable(draft, sent);
@@ -747,7 +776,8 @@ export async function writeSlides(args: WriteArgs): Promise<{ deck: DeckSpec; is
       'Return the full content again with these problems fixed. Change nothing else.',
     ].join('\n\n');
     answer = mended(answer, await args.ask(repair, schema, room), sent);
-    draft = await build(answer);
+    round = attempt;
+    draft = await build(answer, round);
   }
 
   // After the last repair a free slide is made with what it has: a part whose content is still
@@ -762,6 +792,6 @@ export async function writeSlides(args: WriteArgs): Promise<{ deck: DeckSpec; is
       found = true;
     }
   }
-  if (found) draft = await build(answer);
+  if (found) draft = await build(answer, round);
   return { deck: draft.deck, issues: tellUnwritten(draft.issues) };
 }

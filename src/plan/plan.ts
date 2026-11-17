@@ -5,11 +5,13 @@ import type { Issue, LayoutMode } from '../deck/validate.ts';
 import { FREE_PATTERN } from '../deck/spec.ts';
 import type { DeckColors, DeckSpec, FreeArrange, FreeBlockKind } from '../deck/spec.ts';
 import { describeBlocks } from '../free/blocks.ts';
-import { blockRuns } from '../free/offer.ts';
+import { freeKit } from '../free/kit.ts';
+import { blockRuns, freeTextRoom } from '../free/offer.ts';
+import { freeBodySize } from '../free/plan.ts';
 import type { FreeOffer } from '../free/offer.ts';
 import type { JsonRequest, JsonSchema, LlmProvider } from '../llm/provider.ts';
 import type { Template } from '../render/render.ts';
-import { TEXT_SIZES, itemRange } from '../template/manifest.ts';
+import { TEXT_SIZES, itemRange, textBudget } from '../template/manifest.ts';
 import { measurerFor } from '../text/measure.ts';
 import type { Direction, PatternDef, TemplateManifest, TextSize } from '../template/manifest.ts';
 import { budgetScale, buildCatalog, describeCatalog, isPlainText, outlineEntrySchema, outlineSchema, planPattern, readItems } from './catalog.ts';
@@ -18,8 +20,72 @@ import { withLayouts } from '../template/compose.ts';
 import type { PatternDesign } from '../template/compose.ts';
 import { FREE_CHANGE_RULE, FREE_OUTLINE_RULE, MOST_PARTS, describeEntry, entryBlocks, freeKnown, freeLine, freeOnOffer, freeReading, freeWritePattern, isFreeEntry, kindsUsed, namesFree, readShows, withFreePhotos } from './free.ts';
 import type { FreeReading } from './free.ts';
-import { charsOfWords, freeLengths, heldBy, homeFor, partPurpose, partsFor, readWords, shortOfWords, spreads, withLength, wordsOfChars, wordsRule } from './length.ts';
-import type { LengthPlanning, TextHome } from './length.ts';
+import {
+  DOCUMENT_CHANGE_RULES,
+  DOCUMENT_OPENING,
+  DOCUMENT_VARY,
+  MOST_DOCUMENT_CHARS,
+  MOST_DOCUMENT_SLIDES,
+  askedSlidesProperty,
+  atomsOf,
+  documentBlock,
+  documentChars,
+  documentLanguageProperty,
+  documentRules,
+  documentWriteRule,
+  fillParagraphs,
+  inLanguage,
+  grossGap,
+  isFixedCount,
+  keptCheck,
+  keptIssues,
+  keptWarnings,
+  leftOutProperty,
+  minMax,
+  needOf,
+  packPassages,
+  passageText,
+  purposeOf,
+  readAskedSlides,
+  readDocument,
+  readLanguageTag,
+  readPassageNumbers,
+  settlePassages,
+  shapeOf,
+  slideDocument,
+  slideText,
+  textCut,
+  textCutDense,
+} from './document.ts';
+import type { DocumentPlan, KeptCheck, SlideDocument } from './document.ts';
+import {
+  WORDS_CHANGE_RULE,
+  charsOfWords,
+  densable,
+  documentRoom,
+  freeLengths,
+  heldBy,
+  homeFor,
+  homeForChars,
+  partPurpose,
+  readWords,
+  runningNames,
+  runningSize,
+  setSmall,
+  shortOfWords,
+  shortOfWordsDense,
+  tensDown,
+  textRoom,
+  toldAsAsked,
+  withLength,
+  withPassages,
+  wordsOfChars,
+  wordsRule,
+  writtenLength,
+  writtenShort,
+  writtenUnder,
+} from './length.ts';
+import type { LengthPlanning, TextHome, ToldLength } from './length.ts';
 import { composeForPlan, usedLayouts } from './layouts.ts';
 import type { ComposeLayoutsResult } from './layouts.ts';
 import type { DeckReview } from './review.ts';
@@ -67,6 +133,17 @@ export interface Brief {
    * out of the words of a brief: a colour the person asked for is stated here.
    */
   colors?: DeckColors;
+  /**
+   * A document to make the deck from, word for word: a report, minutes, an article. The slides
+   * carry its own text, every part of it, in its order, cut only where a slide's limits leave no
+   * room, over as many slides as it takes. With a fixed `slideCount`, or a number of slides the
+   * brief names, it goes on that many slides, set smaller where it must (see `FreeArrange.dense`).
+   * `prompt` then says what the deck is for, and `instructions` any wish ("only the risks", "a
+   * short summary"). A line ends a paragraph; a line that starts with "-", "•" or a number is a
+   * list item; a short line on its own, or one that starts with "#", is a heading. At most
+   * `MOST_DOCUMENT_CHARS` characters. Left out or blank, the deck is planned as before.
+   */
+  document?: string;
 }
 
 export type PlanProgress =
@@ -141,9 +218,18 @@ export interface OutlineEntry {
   /**
    * The words of running text asked for this slide ("200 words"), where an amount was asked. The
    * plan gives such a slide a layout or a free slide that holds the text, and the writer is told
-   * the length. A slide whose text was spread over several slides has its share here.
+   * the length. A slide asked for more than one slide holds at the template's size is set smaller
+   * on a free slide (`arrange.dense`); it is never spread over more slides. On a slide that carries
+   * passages of a document it asks for a shorter text, and is read only when it is under four
+   * fifths of the passages' words.
    */
   words?: number;
+  /**
+   * In a deck made from a document: the passages this slide carries, by number from 1, as
+   * `documentPassages` numbers them. Set by the planner. A text that went over several slides has
+   * its own run of passages on each.
+   */
+  passages?: number[];
 }
 
 export interface PlanResult {
@@ -387,53 +473,75 @@ export const SLIDE_KIND_RULE =
  * one rule says how such a slide names its parts. Without it the prompt is what it was before
  * there were free slides.
  */
-function outlinePrompt(brief: Brief, catalog: Catalog, count: { min: number; max: number }, density: ImageDensity, textScale = 1, limited = false, free?: FreeOffer): string {
+function outlinePrompt(
+  brief: Brief,
+  catalog: Catalog,
+  count: { min: number; max: number },
+  density: ImageDensity,
+  textScale = 1,
+  limited = false,
+  free?: FreeOffer,
+  document?: { block: string; rules: string[] },
+): string {
   const size = count.min === count.max ? `exactly ${count.min}` : `${count.min} to ${count.max}`;
   // The person's own list comes before the wish for text only: it names the patterns outright.
   const textOnly = brief.textOnly === true && !limited;
   const photos = free && density !== 'none' ? withFreePhotos(DENSITY_GUIDANCE[density]) : DENSITY_GUIDANCE[density];
+  // A deck made from a document says it right after the brief, passage by passage, and is planned by rules of its own.
+  const opening = document
+    ? [`- ${DOCUMENT_OPENING}`]
+    : // A deck of one or two slides has no room for an opening and a closing slide: its slides carry the content.
+      count.max >= 3
+      ? ['- A deck of three or more slides opens with an opening pattern and ends with a closing pattern when the list has them, unless the brief asks for a deck without them.']
+      : [];
   return [
     briefText(brief),
+    ...(document ? [document.block] : []),
     `Plan a deck of ${size} ${count.max === 1 ? 'slide' : 'slides'}. Choose one pattern for each slide from this list ("?" marks an optional slot):`,
     [describeCatalog(catalog, textScale), ...(free ? [freeLine(free.kinds, { comfortable: free.comfortable, alone: catalog.patterns.length === 0, plain: textOnly })] : [])].filter(Boolean).join('\n'),
     [
       `- ${wishesRule('brief')}`,
       ...(free ? [`- ${FREE_OUTLINE_RULE}`] : []),
-      // A deck of one or two slides has no room for an opening and a closing slide: its slides carry the content.
-      ...(count.max >= 3
-        ? ['- A deck of three or more slides opens with an opening pattern and ends with a closing pattern when the list has them, unless the brief asks for a deck without them.']
-        : []),
+      ...opening,
       '- For a pattern with a row of items, set "items" to the number the brief asks for, or else the number the content really has. Do not pad a list to fill a row.',
       `- ${columnsRule('brief')}`,
       `- ${wordsRule('brief')}`,
+      ...(document ? document.rules.map((rule) => `- ${rule}`) : []),
       '- Choose a pattern only when the content can fill every required slot within its limits.',
       ...(textOnly
         ? ['- The deck is text only, and every pattern in the list is plain text. Using the same pattern for several slides in a row is expected.']
-        : [`- ${SLIDE_KIND_RULE}`, ...(limited ? [] : ['- Otherwise vary the patterns across the deck.', `- ${photos}`])]),
+        : [`- ${SLIDE_KIND_RULE}`, ...(limited ? [] : [document ? `- ${DOCUMENT_VARY}` : '- Otherwise vary the patterns across the deck.', `- ${photos}`])]),
     ].join('\n'),
   ].join('\n\n');
 }
 
-/** A slide in the list a writer is given: `s3: cards. Three goals`. A free slide says which of its parts are what. */
-const slideLine = (job: WriteJob): string => `s${job.number}: ${job.pattern.def.id}${job.free ? ` (${describeParts(job.free.blocks)})` : ''}. ${job.purpose}`;
+/**
+ * A slide in the list a writer is given: `s3: cards. Three goals`. A free slide says which of its
+ * parts are what, and a slide that carries passages of a document has their text under its line.
+ */
+const slideLine = (job: WriteJob): string => `s${job.number}: ${job.pattern.def.id}${job.free ? ` (${describeParts(job.free.blocks)})` : ''}. ${job.purpose}${job.passage ? `\n${slideText(job.number, job.passage)}` : ''}`;
 
 function writePrompt(brief: Brief, jobs: WriteJob[], context: CatalogContext): string {
   // A slide of many parts is written by calls of its own. The writer of the others is told that it is there.
   const here = jobs.filter((job) => !writtenApart(job));
   const apart = jobs.filter(writtenApart);
+  // Slides with text from a document are written in its words: the rules for that come once, before the supplies.
+  const fromDocument = here.some((job) => job.passage) ? [documentWriteRule(here.some((job) => job.filled))] : [];
   return [
     briefText(brief),
     `Write the content of each slide of this deck:\n${here.map(slideLine).join('\n')}`,
     ...(apart.length > 0 ? [`These slides of the deck are written apart, not here:\n${apart.map((job) => `s${job.number}: ${FREE_PATTERN} (${describeBlocks(job.free?.blocks ?? [])}). ${job.purpose}`).join('\n')}`] : []),
+    ...fromDocument,
     ...suppliesText(here, context),
     'Fill every required property. Leave an optional property out when the slide is better without it.',
   ].join('\n\n');
 }
 
-/** The prompt of a call that writes some parts of one slide by themselves: the brief, the deck around the slide, then the task. */
+/** The prompt of a call that writes some parts of one slide by themselves: the brief, the deck around the slide, then the task, and the slide's text from a document where it has one. */
 function partsPrompt(brief: Brief, jobs: WriteJob[], job: WriteJob, task: string, context: CatalogContext): string {
   const deck = jobs.map((other) => `s${other.number}: ${other.pattern.def.id}${other.free ? ` (${describeBlocks(other.free.blocks)})` : ''}. ${other.purpose}`).join('\n');
-  return [briefText(brief), `The slides of the deck:\n${deck}`, task, ...suppliesText([job], context)].join('\n\n');
+  const fromDocument = job.passage ? [slideText(job.number, job.passage), documentWriteRule(job.filled !== undefined)] : [];
+  return [briefText(brief), `The slides of the deck:\n${deck}`, task, ...fromDocument, ...suppliesText([job], context)].join('\n\n');
 }
 
 /** A deck before its content is written: the slides in order, each with a pattern and the point it makes. */
@@ -445,6 +553,14 @@ export interface DeckPlan {
   slides: OutlineEntry[];
   /** Layouts made for this deck (see `composeLayouts`). Slides use them by their ids. */
   layouts?: PatternDesign[];
+  /**
+   * For a deck made from a document (`Brief.document`): the language the document is written in,
+   * as a BCP 47 tag, as the planner read it. Code sets the document into a slide word for word only
+   * where that is the deck's language; in another, the writer translates it. Left out, as in a plan
+   * stored before it was asked, the document is taken to be in the deck's language when it is
+   * written in that language's script.
+   */
+  documentLanguage?: string;
 }
 
 interface Planning {
@@ -462,6 +578,24 @@ interface Planning {
   template: Template;
   /** Free slides as they are on offer for a new slide: the kinds of part, and how many read well. `undefined` when none is offered. */
   free?: FreeOffer;
+  /** The document the deck is made from, read into passages. `undefined` when there is none. */
+  document?: DocumentPlan;
+}
+
+/**
+ * The document a brief gives, read into passages: `undefined` for none, or a blank one. One that
+ * is no text, or longer than a deck is made from, is a {@link PlanError} that says so. `written` is
+ * the language it is written in, where the planner said.
+ */
+export function documentOf(brief: Pick<Brief, 'document'>, language: string, written?: string): DocumentPlan | undefined {
+  const value: unknown = brief.document;
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string') throw new PlanError('"document" must be text');
+  if (value.trim() === '') return undefined;
+  const chars = documentChars(value);
+  if (chars > MOST_DOCUMENT_CHARS) throw new PlanError(`The document is ${chars} characters, and a deck is made from at most ${MOST_DOCUMENT_CHARS} (about 1,800 words): pass the part the deck is about`);
+  const document = readDocument(value, language, written);
+  return document.passages.length > 0 ? document : undefined;
 }
 
 interface PlanningStage {
@@ -477,6 +611,8 @@ interface PlanningStage {
   hard?: boolean;
   /** The plan at hand has a free slide, which is written and kept whatever is on offer for a new one. */
   hasFree?: boolean;
+  /** The language the brief's document is written in, where the planner said (`DeckPlan.documentLanguage`). */
+  documentLanguage?: string | undefined;
 }
 
 /**
@@ -493,12 +629,15 @@ function planning(loaded: Template, brief: Brief, options: PlanOptions, stage: P
   const layout = options.layout ?? 'strict';
   const language = brief.language ?? manifest.language ?? 'en';
   const direction = brief.direction ?? directionOf(language);
-  // A share of pictures that is not one of the list ("many", or "toString", which every object has) is the usual one.
-  const density: ImageDensity = typeof brief.imageDensity === 'string' && Object.hasOwn(DENSITY_GUIDANCE, brief.imageDensity) ? brief.imageDensity : 'medium';
+  const document = documentOf(brief, language, stage.documentLanguage);
+  // A share of pictures that is not one of the list ("many", or "toString", which every object has)
+  // is the usual one. A deck made from a document is about its text, and has few.
+  const density: ImageDensity = typeof brief.imageDensity === 'string' && Object.hasOwn(DENSITY_GUIDANCE, brief.imageDensity) ? brief.imageDensity : document ? 'low' : 'medium';
   const fields = brief.fields ?? {};
 
   const numbers = options.numberPatterns ?? 'from-brief';
-  const figures = numbers === 'always' || (numbers === 'from-brief' && hasFigures(withoutColorCodes(`${brief.prompt} ${brief.instructions ?? ''}`, brief.colors)));
+  // The figures of a document are the brief's too.
+  const figures = numbers === 'always' || (numbers === 'from-brief' && hasFigures(withoutColorCodes(`${brief.prompt} ${brief.instructions ?? ''}${document ? ` ${document.text}` : ''}`, brief.colors)));
   // A size that is not one of the list ("huge", or "__proto__", which every object has) is the usual one.
   const textScale = typeof brief.textSize === 'string' && Object.hasOwn(TEXT_SIZES, brief.textSize) ? TEXT_SIZES[brief.textSize] : 1;
   const context: CatalogContext = { layout, fields, icons: options.icons ?? [], assets: options.assets ?? [], imageDensity: density, figures, textScale, templateScale: manifest.textScale ?? 1 };
@@ -538,6 +677,7 @@ function planning(loaded: Template, brief: Brief, options: PlanOptions, stage: P
   }
   const planned: Planning = { layout, language, direction, density, fields, context, catalog, byId: new Map(catalog.patterns.map((pattern) => [pattern.def.id, pattern])), lists, template };
   if (free.offer) planned.free = free.offer;
+  if (document) planned.document = document;
   return planned;
 }
 
@@ -550,15 +690,16 @@ interface FreeAnswer extends FreeReading {
 /**
  * Reads an outline from a model's answer. `free` says free slides may be among its slides, and
  * what their parts may be. `final` says no further answer will be asked for: what is wrong with
- * the parts of a free slide is then put right here and is no problem any more.
+ * the parts of a free slide is then put right here and is no problem any more. `passages` is the
+ * number of passages of the document a deck is made from: each slide then says which it carries.
  */
-function readOutline(answer: unknown, byId: Map<string, UsablePattern>, free?: FreeAnswer, final = false): { title: string; entries: OutlineEntry[]; problem?: string; hint?: string } {
+function readOutline(answer: unknown, byId: Map<string, UsablePattern>, free?: FreeAnswer, final = false, passages?: number): { title: string; entries: OutlineEntry[]; problem?: string; hint?: string } {
   const raw = answer as { title?: unknown; slides?: unknown } | null;
   const list = Array.isArray(raw?.slides) ? raw.slides : [];
   const problems: string[] = [];
   let counts = false;
   const entries = list.map((item, index) => {
-    const raw = item as { pattern?: unknown; purpose?: unknown; items?: unknown; words?: unknown };
+    const raw = item as { pattern?: unknown; purpose?: unknown; items?: unknown; words?: unknown; passages?: unknown };
     const entry: OutlineEntry = { pattern: cleanText(raw?.pattern), purpose: cleanText(raw?.purpose) };
     const pattern = byId.get(entry.pattern);
     if (pattern) {
@@ -577,6 +718,10 @@ function readOutline(answer: unknown, byId: Map<string, UsablePattern>, free?: F
     }
     const words = readWords(raw?.words);
     if (words !== undefined) entry.words = words;
+    if (passages !== undefined) {
+      const own = readPassageNumbers(raw?.passages, passages);
+      if (own.length > 0) entry.passages = own;
+    }
     return entry;
   });
   const unknown = entries.filter((entry) => !byId.has(entry.pattern) && !isFreeEntry(entry)).map((entry) => entry.pattern || '(empty)');
@@ -611,31 +756,88 @@ export async function planOutline(template: Template, brief: Brief, options: Pla
     throw new PlanError(`Template "${template.manifest.name}" has no plain text pattern, so a text-only deck cannot be planned from it`);
   }
   const byId = new Map(catalog.patterns.map((pattern) => [pattern.def.id, pattern]));
-  const count =
-    typeof brief.slideCount === 'number'
-      ? { min: brief.slideCount, max: brief.slideCount }
-      : (brief.slideCount ?? { min: 6, max: 10 });
+  const given = typeof brief.slideCount === 'number' ? { min: brief.slideCount, max: brief.slideCount } : brief.slideCount;
+  // A deck made from a document has as many slides as its text takes, where the brief names no number.
+  const doc = planned.document;
+  const rooms = doc ? documentRooms(template, planned, catalog) : undefined;
+  const own = doc && rooms ? Math.max(1, Math.ceil(doc.chars / rooms.target)) : 0;
+  const count = given ?? (doc ? { min: 1, max: Math.min(MOST_DOCUMENT_SLIDES, Math.max(10, own + 4)) } : { min: 6, max: 10 });
   // Choosing a pattern for each slide needs little reasoning, and is much quicker with little.
-  const ask = asker(options.llm, systemPrompt(language, 'brief'), options.signal, 'low');
+  const ask = asker(options.llm, systemPrompt(language, 'brief', doc !== undefined), options.signal, 'low');
   const reading: FreeAnswer | undefined = free ? { ...freeReading(free.kinds, context), offered: true } : undefined;
-  const schema = outlineSchema(catalog, count, free);
-  // A free slide names its parts, which is a little more to say for each slide.
-  const room = planRoom(count.max) + (free ? FREE_ENTRY_ROOM * count.max : 0);
+  const passages = doc?.passages.length;
+  const asksCount = brief.slideCount === undefined;
+  const schema = outlineSchema(catalog, count, free, passages !== undefined ? { passages, askedSlides: asksCount } : undefined);
+  // A free slide names its parts, which is a little more to say for each slide; a slide of a deck
+  // made from a document names its passages, and the answer those it leaves out, the slides the
+  // brief asks for and the language of the document.
+  const room = planRoom(count.max) + (free ? FREE_ENTRY_ROOM * count.max : 0) + (passages !== undefined ? 8 * count.max + 2 * passages + DOCUMENT_ROOM : 0);
 
   options.onProgress?.({ stage: 'outline' });
-  const request = outlinePrompt(brief, catalog, count, density, budgetScale(context), limited, free);
-  let outline = readOutline(await ask(request, schema, room), byId, reading);
-  if (outline.problem) {
-    const retry = `${request}\n\nYour previous answer could not be used: ${outline.problem}. Answer again using only the listed patterns${outline.hint ?? ''}.`;
-    outline = readOutline(await ask(retry, schema, room), byId, reading, true);
-    if (outline.problem) throw new PlanError(`The model did not produce a usable outline: ${outline.problem}`);
+  const told = doc && rooms ? { block: documentBlock(doc), rules: documentRules({ slides: own, chars: rooms.target, given }) } : undefined;
+  const request = outlinePrompt(brief, catalog, count, density, budgetScale(context), limited, free, told);
+  const read = (answer: unknown, final: boolean) => readOutline(answer, byId, reading, final, passages);
+  let answer = await ask(request, schema, room);
+  let outline = read(answer, false);
+  // Of a deck made from a document, an answer that places little of it, or that does not have the
+  // number of slides it says the brief asks for, is asked for again with the problems of patterns.
+  const missed = passages !== undefined ? documentProblems(outline.entries, answer, passages, asksCount, given) : [];
+  if (outline.problem || missed.length > 0) {
+    const problem = [outline.problem, ...missed].filter(Boolean).join('; ');
+    const placing = passages !== undefined ? ', with every passage on one slide or in "left_out"' : '';
+    const retry = outline.problem
+      ? `${request}\n\nYour previous answer could not be used: ${problem}. Answer again using only the listed patterns${outline.hint ?? ''}${placing}.`
+      : `${request}\n\nYour previous answer could not be used: ${problem}. Answer again${placing}.`;
+    const first = { answer, outline };
+    answer = await ask(retry, schema, room);
+    outline = read(answer, true);
+    if (outline.problem) {
+      // How a document is placed is put right in code: an answer that was asked again for that alone is used as it was.
+      if (first.outline.problem) throw new PlanError(`The model did not produce a usable outline: ${outline.problem}`);
+      ({ answer, outline } = first);
+    }
   }
-  // A slide that was asked an amount of text gets the room for it, or the slides it takes.
-  const slides = fitOutline(outline.entries, lengthPlanning(template, planned, catalog), count.max);
+  const lp = lengthPlanning(template, planned, catalog);
+  let slides: OutlineEntry[];
+  let documentLanguage: string | undefined;
+  if (doc && rooms) {
+    // The passages are put right in code, then each slide gets the room for its own, on that slide
+    // where the number of slides is fixed, over more slides where it is not and they need them.
+    const said = answer as { left_out?: unknown; asked_slides?: unknown; document_language?: unknown } | null;
+    const asked = asksCount ? readAskedSlides(said?.asked_slides) : undefined;
+    const fixed = isFixedCount(brief.slideCount) || asked !== undefined;
+    const most = fixed ? outline.entries.length : asksCount ? MOST_DOCUMENT_SLIDES : count.max;
+    // The language the document is written in, as the answer says: code sets it into a slide as it
+    // is only where that is the deck's language. One the text's own script belies is not kept.
+    documentLanguage = readLanguageTag(said?.document_language, doc.text);
+    const read = documentLanguage ? inLanguage(doc, language, documentLanguage) : doc;
+    const sizeOf = (numbers: readonly number[]) => needOf(read, numbers, language);
+    const settled = settlePassages(outline.entries, readPassageNumbers(said?.left_out, read.passages.length), read, {
+      carries: carriesText(byId, context),
+      fixed,
+      slides: own,
+      room: Math.max(0, most - outline.entries.length),
+      textHome: () => {
+        // Where neither a layout of plain text nor a free slide is on offer, the layout of most running text.
+        const home = textHomeOf(lp);
+        if (home) return 'blocks' in home ? { pattern: FREE_PATTERN, blocks: ['text'] } : { pattern: home.pattern };
+        const roomiest = [...catalog.patterns].sort((a, b) => textRoom(b, context) - textRoom(a, context))[0];
+        return { pattern: roomiest?.def.id ?? (outline.entries[0] as OutlineEntry).pattern };
+      },
+      sizeOf,
+    }).entries;
+    const placed = fitDocument(settled, read, lp, { most: fixed ? settled.length : most, fixed, target: rooms.target });
+    slides = fitOutline(placed, lp, (entry) => (entry.passages?.length ?? 0) > 0);
+  } else {
+    // A slide that was asked an amount of text gets the room for it, on that slide.
+    slides = fitOutline(outline.entries, lp);
+  }
   const plan: DeckPlan = { version: 1, title: outline.title, brief, slides };
+  if (documentLanguage) plan.documentLanguage = documentLanguage;
   // A layout made for the deck would be one the person did not name. And where free slides are on
-  // offer, a free slide is what the deck gets for content that no layout shows.
-  if (!options.composeLayouts || limited || free) return plan;
+  // offer, a free slide is what the deck gets for content that no layout shows. A deck made from a
+  // document carries its text, which the template's own layouts and free slides are planned for.
+  if (!options.composeLayouts || limited || free || doc) return plan;
   options.onProgress?.({ stage: 'layouts' });
   return (await composeForPlan(template, plan, catalog.patterns, { llm: options.llm, max: options.composeLayouts, ...(options.signal ? { signal: options.signal } : {}) })).plan;
 }
@@ -663,8 +865,8 @@ function lengthPlanning(loaded: Template, planned: Planning, catalog: Catalog): 
     plainText: (id) => plain.includes(id),
     plain,
     free: kinds.has('text')
-      ? (blocks, arrange, lengths) => {
-          const written = freeWritePattern(loaded, { direction, textScale: context.textScale }, { blocks, arrange, lengths }, context);
+      ? (blocks, arrange, lengths, paragraphs) => {
+          const written = freeWritePattern(loaded, { direction, textScale: context.textScale }, { blocks, arrange, lengths, ...(paragraphs ? { paragraphs } : {}) }, context);
           return 'pattern' in written ? written.pattern : undefined;
         }
       : undefined,
@@ -689,34 +891,419 @@ export function freePartsOf(def: PatternDef | undefined, kinds: ReadonlySet<Free
 
 /**
  * The slides of an outline, with room given to the text asked for some of them. Such a slide
- * keeps its layout when that holds the text, or moves to one that does (see `homeFor`). Where
- * none does and the slide is plain text, its text goes over as many slides as it needs while the
- * deck may have up to `most`, each with its share of the words and its purpose numbered
- * ("(1/2)"). A slide that still holds less is told when the deck is written. `settled` names the
- * slides fitted already, which a change to a plan passes as they are: a slide left short because
- * the deck had no room for more stays so until its words change.
+ * keeps its layout when that holds the text, or moves to one that does (see `homeFor`): a free
+ * slide of that text alone set smaller where it needs it (`arrange.dense`). A text is never spread
+ * over more slides. A slide that still holds less is cut to what it holds: the plan says so
+ * (`planTextFit`), and the deck when it is written. `settled` names the slides fitted already,
+ * which a change to a plan passes as they are.
  */
-export function fitOutline(entries: OutlineEntry[], planning: LengthPlanning, most: number, settled?: (entry: OutlineEntry) => boolean): OutlineEntry[] {
+export function fitOutline(entries: OutlineEntry[], planning: LengthPlanning, settled?: (entry: OutlineEntry) => boolean): OutlineEntry[] {
   if (!entries.some((entry) => entry.words !== undefined)) return entries;
-  let spare = Math.max(0, most - entries.length);
-  return entries.flatMap((entry): OutlineEntry[] => {
-    if (entry.words === undefined || settled?.(entry)) return [entry];
+  return entries.map((entry) => {
+    if (entry.words === undefined || settled?.(entry)) return entry;
     const current: TextHome = isFreeEntry(entry) ? { blocks: entry.blocks, arrange: entry.arrange } : { pattern: entry.pattern, items: entry.items };
     const found = homeFor(current, entry.words, planning);
-    const placed = found.home === current ? entry : placeEntry(entry, found.home);
-    const parts = found.holds || !spreads(found.home, planning) ? 1 : partsFor(entry.words, wordsOfChars(found.room, planning.language), spare);
-    spare -= parts - 1;
-    if (parts === 1) return [placed];
-    const words = Math.ceil(entry.words / parts);
-    return Array.from({ length: parts }, (_, at) => ({ ...placed, words, purpose: partPurpose(entry.purpose, at + 1, parts) }));
+    return found.home === current ? entry : placeEntry(entry, found.home);
   });
 }
+
+/** Whether a pattern has a table slot, for a table of a slide's passages. */
+const hasTableSlot = (pattern: UsablePattern | undefined): boolean => pattern?.slots.some((planned) => planned.slot.kind === 'table') ?? false;
+
+/**
+ * Whether a slide of a plan has a table for a table of its passages: a free slide with a table
+ * part, or a layout with a table slot. On a slide without, a table's rows are running text.
+ */
+const showsTable = (entry: OutlineEntry, byId: ReadonlyMap<string, UsablePattern>): boolean =>
+  byId.has(entry.pattern) ? hasTableSlot(byId.get(entry.pattern)) : isFreeEntry(entry) && entryBlocks(entry).includes('table');
 
 /** An outline entry given another home for its text: a layout with its items, or a free slide of these parts. */
 function placeEntry(entry: OutlineEntry, home: TextHome): OutlineEntry {
   const { pattern: _pattern, items: _items, blocks: _blocks, arrange: _arrange, ...rest } = entry;
   if ('blocks' in home) return { pattern: FREE_PATTERN, ...rest, blocks: home.blocks, ...(home.arrange ? { arrange: home.arrange } : {}) };
   return { pattern: home.pattern, ...rest, ...(home.items !== undefined ? { items: home.items } : {}) };
+}
+
+/**
+ * The output tokens an outline made from a document, or a change to one, takes for what it says
+ * besides its slides: the passages it leaves out, the slides the brief asks for, and the language
+ * of the document.
+ */
+const DOCUMENT_ROOM = 40;
+
+/**
+ * Whether a slide can carry passages where it stands first or last: a free slide, or a layout with
+ * room for running text. An opening or a closing slide that cannot gives its passages to the slide
+ * next to it.
+ */
+const carriesText =
+  (byId: ReadonlyMap<string, UsablePattern>, context: CatalogContext) =>
+  (entry: { pattern: string; blocks?: unknown }): boolean =>
+    isFreeEntry(entry) || !byId.has(entry.pattern) || textRoom(byId.get(entry.pattern) as UsablePattern, context) > 0;
+
+/**
+ * How much of a document one slide holds, in characters: `comfortable` at the template's own text
+ * size, and `target`, what an outline is told to give a slide. Of a free slide of text where those
+ * are on offer, as the engine sets one out, nine tenths of it in round fifties; else of the layout
+ * of plain text that holds most.
+ */
+function documentRooms(loaded: Template, planned: Planning, catalog: Catalog): { comfortable: number; target: number } {
+  const { context, direction, free } = planned;
+  const room = free?.kinds.includes('text') ? freeTextRoom(loaded, { direction, textScale: context.textScale }) : undefined;
+  if (room && room.comfortable > 0) return { comfortable: room.comfortable, target: Math.max(50, Math.floor((0.9 * room.comfortable) / 50) * 50) };
+  const plain = catalog.patterns.filter((pattern) => isPlainText(pattern.def)).map((pattern) => heldBy(pattern, context));
+  const comfortable = Math.max(0, ...plain) || 500;
+  return { comfortable, target: comfortable };
+}
+
+/**
+ * What an outline of a deck made from a document is asked again for: too few passages placed, not
+ * the number of slides it says the brief asks for, or a slide of three or fewer that carries none.
+ * `given` is the number of slides the brief gives.
+ */
+function documentProblems(entries: OutlineEntry[], answer: unknown, passages: number, asksCount: boolean, given?: { min: number; max: number }): string[] {
+  const said = answer as { left_out?: unknown; asked_slides?: unknown } | null;
+  const leftOut = readPassageNumbers(said?.left_out, passages);
+  const gap = grossGap(entries, leftOut, passages);
+  const asked = asksCount ? readAskedSlides(said?.asked_slides) : undefined;
+  const count = asked !== undefined && entries.length > 0 && entries.length !== asked ? `the brief asks for ${asked} ${asked === 1 ? 'slide' : 'slides'} and the answer has ${entries.length}: answer with exactly ${asked}` : undefined;
+  const bare = bareSlides(entries, asked ?? (given && given.min === given.max ? given.min : undefined), passages - leftOut.length, 'brief');
+  return [gap, count, bare].filter((problem): problem is string => problem !== undefined);
+}
+
+/**
+ * What an answer of three slides or fewer, where their number is fixed (`count`), is asked again
+ * for: a slide that carries no passage, where there are passages enough (`placeable`) for each.
+ * Such a deck carries the document on every slide unless the brief or the request asks for an
+ * opening or a closing slide, which only the model can tell: an answer that keeps one when asked
+ * again stands.
+ */
+function bareSlides(entries: readonly OutlineEntry[], count: number | undefined, placeable: number, asked: 'brief' | 'request'): string | undefined {
+  if (count === undefined || count > 3 || entries.length > 3 || placeable < entries.length) return undefined;
+  const bare = entries.flatMap((entry, at) => ((entry.passages?.length ?? 0) > 0 ? [] : [at + 1]));
+  if (bare.length === 0) return undefined;
+  const which = bare.length === 1 ? `slide ${bare[0]} carries` : `slides ${bare.join(' and ')} carry`;
+  return `${which} no passage, and a deck of three slides or fewer carries the document on every slide unless the ${asked} asks for an opening or a closing slide`;
+}
+
+/**
+ * Where a slide added for a text goes: the layout of plain text on offer that holds least, else a
+ * free slide of text. `undefined` where neither is on offer.
+ */
+function textHomeOf(planning: LengthPlanning): TextHome | undefined {
+  const rooms = planning.plain
+    .flatMap((id) => {
+      const pattern = planning.layout(id);
+      return pattern ? [{ id, room: heldBy(pattern, planning.context) }] : [];
+    })
+    .filter((one) => one.room > 0)
+    .sort((a, b) => a.room - b.room);
+  if (rooms[0]) return { pattern: rooms[0].id };
+  return planning.free ? { blocks: ['text'] } : undefined;
+}
+
+/** Whole slides shared out in proportion to what each asks, by the largest remainders, never more than it asks. */
+function sharedOut(wants: readonly number[], spare: number): number[] {
+  const total = wants.reduce((sum, want) => sum + want, 0);
+  if (total <= spare) return [...wants];
+  const exact = wants.map((want) => (spare * want) / total);
+  const given = exact.map(Math.floor);
+  let left = spare - given.reduce((sum, one) => sum + one, 0);
+  const order = exact.map((value, at) => ({ at, rest: value - Math.floor(value) })).sort((a, b) => b.rest - a.rest || a.at - b.at);
+  for (const { at } of order) {
+    if (left <= 0) break;
+    if ((given[at] as number) < (wants[at] as number)) {
+      given[at] = (given[at] as number) + 1;
+      left--;
+    }
+  }
+  return given;
+}
+
+/** What fitting the passages of a document to the slides of a plan needs besides them. */
+export interface DocumentFit {
+  /** The most slides the plan may have. */
+  most: number;
+  /** The number of slides is fixed: each slide stays one slide, and none is added. */
+  fixed: boolean;
+  /** The characters of the document a slide is planned to hold, where the number of slides is not fixed. */
+  target?: number;
+  /** Slides fitted already, which are passed as they are, unless the passages are shared again (`balance`). */
+  settled?: (entry: OutlineEntry) => boolean;
+  /**
+   * With a fixed number of slides: where a slide holds less than its passages and the slides carry
+   * the passages in runs, the passages are shared again over those slides, fitted already or not,
+   * and where one still holds less, over the slides of text that carry none too. Defaults to `fixed`.
+   */
+  balance?: boolean;
+}
+
+/**
+ * The slides of an outline made from a document, each given the room for its passages. A slide
+ * keeps its layout where that holds them, or moves to one that does (see `homeForChars`): a free
+ * slide of that text, set smaller where it needs it (`arrange.dense`). Words asked for a slide of
+ * at least four fifths of the words of its passages ask for no shorter text, and are dropped. A
+ * table of the passages goes into a table where the slide has one, and needs no room of its text;
+ * on a slide without, its rows are running text, and need their room. Where passages are shared
+ * out again, the table of a slide goes to the slide that carries the table of its passages.
+ *
+ * Where the number of slides is not fixed, a slide whose passages are much more than a slide holds
+ * at the template's size goes over more slides, each with its own run of passages, as many as the
+ * plan has room for; a slide asked to be shorter never does. Where it is fixed, no slide is added:
+ * a slide that holds less is set smaller, and when one still holds less the passages are shared
+ * again over the slides that carry them, where those carry them in order. Where one holds less even
+ * so, the slides of text that carry none take their share too: no slide of the number asked for
+ * stands empty while another is cut. A slide asked to be shorter than its passages keeps them, and
+ * the passages are shared again only between such slides. A slide that still holds less is cut,
+ * and the plan says so (`planTextFit`).
+ */
+export function fitDocument(entries: OutlineEntry[], doc: DocumentPlan, planning: LengthPlanning, fit: DocumentFit): OutlineEntry[] {
+  const { language } = planning;
+  const sizeOf = (numbers: readonly number[]) => needOf(doc, numbers, language);
+  const homeOf = (entry: OutlineEntry): TextHome => (isFreeEntry(entry) ? { blocks: entry.blocks, arrange: entry.arrange } : { pattern: entry.pattern, items: entry.items });
+  /** Whether a home has a table for a table of its passages. On one without, the table's rows are running text. */
+  const tableIn = (home: TextHome): boolean => ('blocks' in home ? home.blocks.includes('table') : hasTableSlot(planning.layout(home.pattern)));
+  /** An entry homed for some passages, from the home it has (`home`): it stays as it is where that holds them. */
+  const homed = (entry: OutlineEntry, home: TextHome, numbers: readonly number[], need = needOf(doc, numbers, language, tableIn(home))): { entry: OutlineEntry; holds: boolean } => {
+    const found = homeForChars(home, need, planning, { shape: shapeOf(doc, numbers, tableIn(home)), dense: true, join: true });
+    return { entry: found.home === home ? entry : placeEntry(entry, found.home), holds: found.holds };
+  };
+  const isTable = (number: number): boolean => doc.passages[number - 1]?.kind === 'table';
+  const text = textHomeOf(planning);
+  /**
+   * Where passages that a slide with a table carried (its home `tabled`, `undefined` where none
+   * did) are shared out again, the home of one slide of them (`from`): the table goes with the
+   * table of the passages. A slide whose passages (`numbers`) have it gets a table, and the slide
+   * that had it loses its table where they do not. A layout with a table goes whole to the slide
+   * with the table, and one that loses it starts from a slide of text; a free slide's table is a
+   * part of the slide with the table.
+   */
+  const tableFor = (from: TextHome, tabled: TextHome | undefined, numbers: readonly number[]): TextHome => {
+    const table = numbers.some(isTable);
+    if (!tabled || tableIn(from) === table) return from;
+    if (table) return !('blocks' in tabled) ? tabled : 'blocks' in from ? { ...from, blocks: [...from.blocks, 'table'] } : { blocks: ['text', 'table'] };
+    if (from !== tabled) return from;
+    return 'blocks' in from ? { ...from, blocks: from.blocks.filter((kind) => kind !== 'table') } : (text ?? from);
+  };
+  /** The home with a table of a slide that carried a table of its passages. */
+  const tabledOf = (home: TextHome, numbers: readonly number[]): TextHome | undefined => (tableIn(home) && numbers.some(isTable) ? home : undefined);
+  const balance = fit.balance ?? fit.fixed;
+  /**
+   * Whether a slide is a slide of text, which passages shared again may go into where it carries
+   * none: a free slide of texts and photos, or a layout of plain text with room for running text.
+   * A chart, a table, a list or a layout of any other kind is about what it shows, and stays so.
+   */
+  const ofText = (entry: OutlineEntry): boolean => {
+    if (isFreeEntry(entry)) return densable(entryBlocks(entry), true);
+    const pattern = planning.layout(entry.pattern, entry.items);
+    return planning.plainText(entry.pattern) && pattern !== undefined && textRoom(pattern, planning.context) > 0;
+  };
+  const carried = entries.map((entry) => {
+    // Passages shared again are shared over every slide that carries some, in order: a slide
+    // fitted already is no gap they are moved across.
+    if (!balance && fit.settled?.(entry)) return { entry };
+    const home = homeOf(entry);
+    const carry = slideDocument(doc, entry.passages, entry.words, language, tableIn(home));
+    if (!carry) return { entry };
+    const base: OutlineEntry = { ...entry, passages: carry.own };
+    if (carry.asked === undefined) delete base.words;
+    return { entry: base, carry, home };
+  });
+
+  if (!fit.fixed) {
+    const target = fit.target ?? Number.POSITIVE_INFINITY;
+    // A slide is cut into parts by all its text: a table may fall on a part with no table, where it is running text.
+    const allText = (numbers: readonly number[]) => needOf(doc, numbers, language, false);
+    const parts = carried.map(({ carry }) => {
+      if (!carry || carry.asked !== undefined || carry.need <= target) return 1;
+      const atoms = atomsOf(doc, carry.own, allText);
+      let k = 1;
+      while (k < atoms.length && minMax(atoms, k) > target) k++;
+      return k;
+    });
+    const more = sharedOut(
+      parts.map((k) => k - 1),
+      Math.max(0, fit.most - entries.length),
+    );
+    return carried.flatMap(({ entry, carry, home }, at): OutlineEntry[] => {
+      if (!carry || !home) return [entry];
+      const k = 1 + (more[at] as number);
+      if (k === 1) return [homed(entry, home, carry.own, carry.need).entry];
+      const groups = packPassages(atomsOf(doc, carry.own, allText), k);
+      return groups.map((group, part) => {
+        const own: OutlineEntry = { ...entry, passages: group, purpose: partPurpose(entry.purpose, part + 1, groups.length) };
+        delete own.words;
+        // A later part starts from a slide of text: a photo or a chart is not shown twice. The table
+        // of the slide goes to the part that carries the table of its passages.
+        const from = tableFor(part === 0 ? home : (text ?? home), tabledOf(home, carry.own), group);
+        const tables = tableIn(from);
+        const found = homeForChars(from, needOf(doc, group, language, tables), planning, { shape: shapeOf(doc, group, tables), dense: true, join: true });
+        return found.home === home ? own : placeEntry(own, found.home);
+      });
+    });
+  }
+
+  const placed = carried.map(({ entry, carry, home }) => (carry && home ? homed(entry, home, carry.own, carry.need) : { entry, holds: true }));
+  const carriers = carried.flatMap((one, at) => (one.carry ? [at] : []));
+  const lists = carriers.map((at) => (carried[at]?.carry as SlideDocument).own);
+  // The slides carry the passages in runs, one after another: each a run with no gap, after the run before.
+  const inRuns = lists.every((list, at) => list.every((number, place) => place === 0 || number === (list[place - 1] as number) + 1) && (at === 0 || (list[0] as number) > ((lists[at - 1] as number[]).at(-1) as number)));
+  /**
+   * Shares the passages of the slides from `from` up to `to` again, where one of them is cut: over
+   * the slides that carry them first. Only where one is cut even so do the slides of text there that
+   * carry none take their share too, so that none stands empty while another is cut.
+   */
+  const shareAgain = (from: number, to: number): void => {
+    const own = carriers.filter((at) => at >= from && at < to);
+    if (own.every((at) => placed[at]?.holds)) return;
+    const atoms = atomsOf(doc, own.flatMap((at) => (carried[at]?.carry as SlideDocument).own), sizeOf);
+    const bare = carried.flatMap((one, at) => (at >= from && at < to && !one.carry && ofText(one.entry) ? [at] : []));
+    // The table of a slide goes with the table of its passages, to the slide that now carries it.
+    const tabled = own.map((at) => carried[at] as { home: TextHome; carry: SlideDocument }).find(({ home, carry }) => tabledOf(home, carry.own))?.home;
+    const share = (over: readonly number[]): void =>
+      packPassages(atoms, over.length).forEach((group, place) => {
+        const at = over[place] as number;
+        const one = carried[at] as { entry: OutlineEntry; home?: TextHome };
+        const home = one.home ?? homeOf(one.entry);
+        // A slide that carried nothing is about the passages it now carries.
+        const entry: OutlineEntry = one.home ? one.entry : { ...one.entry, purpose: purposeOf(doc.passages, group) };
+        if (!one.home) delete entry.words;
+        const from = tableFor(home, tabled, group);
+        placed[at] = homed({ ...(from === home ? entry : placeEntry(entry, from)), passages: group }, from, group);
+      });
+    if (atoms.length < own.length) return;
+    share(own);
+    if (bare.length > 0 && atoms.length >= own.length + bare.length && own.some((at) => !placed[at]?.holds)) share([...own, ...bare].sort((a, b) => a - b));
+  };
+  if (balance && inRuns) {
+    // A slide asked for fewer words than its passages keeps them: it is to be shorter than they are.
+    // The passages are shared again over the slides between two such slides.
+    let from = 0;
+    for (const fence of [...carriers.filter((at) => carried[at]?.carry?.asked !== undefined), entries.length]) {
+      shareAgain(from, fence);
+      from = fence + 1;
+    }
+  }
+  return placed.map((one) => one.entry);
+}
+
+/** What a slide of a plan carries before anything is written: for each slide given words or text from a document. */
+export interface SlideTextFit {
+  /** The slide's number, from 1. */
+  slide: number;
+  /** The words it is to carry: those asked for it, or those of its passages. */
+  words: number;
+  /** The words it holds: `words` when it holds them all. */
+  holds: number;
+  /** The size its running text is set at, in points, on a free slide. */
+  size?: number;
+  /** The size running text has on a free slide of this template when nothing makes it smaller. */
+  templateSize?: number;
+  /** The slide is set dense (`FreeArrange.dense`). */
+  dense?: true;
+  /** For a slide set dense: the most words it holds at the least size that reads. */
+  most?: number;
+  /** For a slide of a document: its passages, as "p3-p5". */
+  passages?: string;
+}
+
+/** A provider for work that asks no model. Planning a slide's room never calls it; should anything, it is told. */
+const NO_MODEL: LlmProvider = {
+  generateJson: async () => {
+    throw new PlanError('No model is asked to work out what the slides of a plan hold');
+  },
+};
+
+/**
+ * Works out, by code alone, what each slide of a plan that has asked words or passages of a
+ * document will carry: the size its text is set at and whether it is cut, as the deck will be
+ * written. What a chat tool says before writing, and what a caller can show beside a plan. A slide
+ * that cannot be built is left out, as is every slide without words or passages: `[]` for a plan
+ * with neither, or one that cannot be planned at all (`writeDeck` says why).
+ */
+export function planTextFit(template: Template, plan: DeckPlan, options: Pick<PlanOptions, 'patterns' | 'free' | 'icons' | 'assets' | 'layout' | 'numberPatterns'> = {}): SlideTextFit[] {
+  const slides: unknown[] = Array.isArray(plan?.slides) ? plan.slides : [];
+  const isEntry = (slide: unknown): slide is OutlineEntry => typeof slide === 'object' && slide !== null && !Array.isArray(slide);
+  const given = plan?.brief?.document;
+  if (!(typeof given === 'string' && given.trim()) && !slides.some((slide) => isEntry(slide) && readWords(slide.words) !== undefined)) return [];
+  let planned: Planning;
+  try {
+    planned = planning(template, plan.brief, { ...options, llm: NO_MODEL }, { layouts: plan.layouts, hasFree: slides.some((slide) => isEntry(slide) && isFreeEntry(slide)), documentLanguage: readLanguageTag(plan.documentLanguage) });
+  } catch (error) {
+    if (error instanceof PlanError) return [];
+    throw error;
+  }
+  const { language, direction, context, byId, document: doc } = planned;
+  const deck = { direction, textScale: context.textScale };
+  const kit = freeKit(template);
+  const templateSize = kit ? freeBodySize(kit, context.textScale) : undefined;
+  return slides.flatMap((entry, index): SlideTextFit[] => {
+    if (!isEntry(entry)) return [];
+    // The passages of a document the slide carries, or else the words asked for it.
+    const carry = doc ? slideDocument(doc, entry.passages, entry.words, language, showsTable(entry, byId)) : undefined;
+    const words = carry ? carry.words : readWords(entry.words);
+    if (words === undefined) return [];
+    const need = carry ? carry.need : charsOfWords(words, language);
+    const roomIn = (pattern: UsablePattern, names?: ReadonlySet<string>): number => (carry ? documentRoom(pattern, context, carry.shape, names) : heldBy(pattern, context, { names, language }));
+    const fit = (room: number): SlideTextFit => ({ slide: index + 1, words, holds: room >= need ? words : Math.floor((words * room) / need) });
+    const named = (found: SlideTextFit): SlideTextFit[] => [carry ? { ...found, passages: carry.label } : found];
+    if (isFreeEntry(entry) && !byId.has(entry.pattern)) {
+      // As writeDeck builds it: its texts set out for the length asked, or for the passages it carries.
+      const blocks = entryBlocks(entry);
+      if (blocks.length > MOST_PARTS) return [];
+      const lengths = freeLengths(blocks, need);
+      const names = new Set(Object.keys(lengths));
+      const written = freeWritePattern(template, deck, { blocks, arrange: entry.arrange, lengths, ...paragraphsFor(carry, names) }, context);
+      if ('reason' in written) return [];
+      const found = fit(roomIn(written.pattern, names));
+      const size = runningSize(written.pattern, names);
+      if (size !== undefined) found.size = size;
+      if (size !== undefined && templateSize !== undefined) found.templateSize = templateSize;
+      if (entry.arrange?.dense === true) {
+        found.dense = true;
+        const room = freeTextRoom(template, deck);
+        if (room) found.most = wordsOfChars(room.densest, language);
+      }
+      return named(found);
+    }
+    const usable = byId.get(entry.pattern);
+    if (!usable) return [];
+    const range = itemRange(usable.def);
+    if (entry.items !== undefined && range && !(Number.isInteger(entry.items) && entry.items >= range.min && entry.items <= range.max)) return [];
+    const sized = entry.items !== undefined ? planPattern(usable.def, context, undefined, entry.items) : undefined;
+    if (sized && !('pattern' in sized)) return [];
+    return named(fit(roomIn(sized ? sized.pattern : usable)));
+  });
+}
+
+/** The paragraphs a free slide's text from a document is set out for, where it goes to one slot. */
+export function paragraphsFor(carry: SlideDocument | undefined, names: ReadonlySet<string>): { paragraphs?: Record<string, number> } {
+  const [name] = [...names];
+  return carry && name !== undefined && names.size === 1 ? { paragraphs: { [name]: carry.shape.paragraphs } } : {};
+}
+
+/**
+ * Where code sets a slide's running text to its passages, as given: the slot and its paragraphs.
+ * Only for a slide whose text is in the deck's script, not asked to be shorter, with no table that
+ * goes into a table, whose pattern has one running text and holds the passages, in as many
+ * paragraphs as that takes or one.
+ * `undefined` for any other: the writer writes it.
+ */
+export function filledText(doc: DocumentPlan, carry: SlideDocument, pattern: UsablePattern, context: CatalogContext, names?: ReadonlySet<string>): { slot: string; value: string | string[] } | undefined {
+  if (!doc.same || carry.asked !== undefined || carry.table) return undefined;
+  if (documentRoom(pattern, context, carry.shape, names) < carry.need) return undefined;
+  const running = runningNames(pattern, names);
+  const [slot] = running;
+  if (slot === undefined || running.length !== 1 || (names && !/^b\d+Text$/.test(slot))) return undefined;
+  const planned = pattern.slots.find((one) => one.slot.name === slot);
+  if (!planned || planned.slot.kind !== 'text') return undefined;
+  // A free slide's text draws no bullets, so an item keeps its own. A layout's list draws its own
+  // bullets, as text from the writer has it: an item's bullet there would show twice.
+  const paragraphs = fillParagraphs(doc.passages, carry.own, { bullets: names !== undefined });
+  if (paragraphs.length === 0) return undefined;
+  if (planned.mode === 'text') return paragraphs.length === 1 ? { slot, value: paragraphs[0] as string } : undefined;
+  const most = textBudget(planned.slot, budgetScale(context)).maxParagraphs;
+  return most === undefined || paragraphs.length <= most ? { slot, value: paragraphs } : undefined;
 }
 
 /**
@@ -805,9 +1392,15 @@ export async function editPlan(
   const request = instruction.trim();
   const brief: Brief = { ...withSettings(template, plan, options).brief, instructions: [plan.brief.instructions?.trim(), request].filter(Boolean).join('\n') };
   const freeSlides = plan.slides.filter(isFreeEntry);
+  // A document the plan was made from is read in the language the planner said it is written in.
+  const storedLanguage = readLanguageTag(plan.documentLanguage);
   // The list is read leniently, the one given with this change too: only a new brief is held to its ids.
-  const planned = planning(template, brief, options, { layouts: plan.layouts, hasFree: freeSlides.length > 0 });
-  const { language, density, catalog, byId, context, free } = planned;
+  const planned = planning(template, brief, options, { layouts: plan.layouts, hasFree: freeSlides.length > 0, documentLanguage: storedLanguage });
+  const { language, density, catalog, byId, context, free, document: doc } = planned;
+  // Of a plan made from a document: how many passages it has, and those its slides carry. The
+  // others are on no slide, and the change is told so.
+  const passages = doc?.passages.length;
+  const placedBefore = new Set(doc ? plan.slides.flatMap((slide) => readPassageNumbers(slide.passages, doc.passages.length)) : []);
   // Of the list the deck is limited to, what is on offer here. The rest would only mislead.
   const onOffer = (planned.lists.limit ?? []).filter((id) => byId.has(id) || (id === FREE_PATTERN && free));
   const limit = onOffer.length > 0 ? onOffer : undefined;
@@ -819,13 +1412,33 @@ export async function editPlan(
   const addedPhotos = free && density !== 'none' ? withFreePhotos(ADDED_DENSITY_GUIDANCE[density]) : ADDED_DENSITY_GUIDANCE[density];
 
   options.onProgress?.({ stage: 'outline' });
+  // Where the plan has words or a document, its lines say what code made of them: a slide cut to
+  // what it holds, text set small, and the most a slide set dense holds. A plan with neither is
+  // shown as before.
+  const fits = doc || plan.slides.some((slide) => readWords(slide.words) !== undefined) ? new Map(planTextFit(template, plan, options).map((fit) => [fit.slide, fit])) : undefined;
+  /** What a slide of a plan made from a document carries of it: its passages and their length. */
+  const carried = (slide: OutlineEntry): string[] => {
+    const carry = doc ? slideDocument(doc, slide.passages, slide.words, language, showsTable(slide, byId)) : undefined;
+    return carry ? [`${carry.label}, ${carry.need} characters`] : [];
+  };
+  const marks = (number: number): string[] => {
+    const fit = fits?.get(number);
+    if (!fit) return [];
+    return [
+      ...(fit.holds < fit.words ? ['cut to fit'] : []),
+      ...(fit.size !== undefined && fit.templateSize !== undefined && setSmall(fit.size, fit.templateSize) ? [`text at ${fit.size} pt`] : []),
+      ...(fit.most !== undefined ? [`at most about ${tensDown(fit.most)} words`] : []),
+    ];
+  };
   const prompt = [
     briefText(plan.brief),
+    // The document comes after the brief, with the passages no slide carries marked.
+    ...(doc ? [documentBlock(doc, { change: true, onNoSlide: new Set(doc.passages.map((passage) => passage.number).filter((number) => !placedBefore.has(number))) })] : []),
     `The plan as it is now${plan.title ? ` ("${plan.title}")` : ''}, in the language with BCP 47 tag "${language}":\n${plan.slides
       .map((slide, index) => {
         const words = readWords(slide.words);
         const shape = isFreeEntry(slide) ? describeEntry({ ...slide, blocks: entryBlocks(slide) }) : slide.items !== undefined ? `${slide.items} items` : '';
-        const said = [shape, words !== undefined ? `${words} words` : ''].filter(Boolean).join('; ');
+        const said = [shape, words !== undefined ? `${words} words` : '', ...carried(slide), ...marks(index + 1)].filter(Boolean).join('; ');
         return `${index + 1}. ${slide.pattern}${said ? ` (${said})` : ''}: ${slide.purpose}`;
       })
       .join('\n')}`,
@@ -844,6 +1457,8 @@ export async function editPlan(
       '- Choose a pattern only when the content can fill every required slot within its limits.',
       `- ${columnsRule('request')}`,
       `- ${wordsRule('request', true)}`,
+      ...(fits ? [`- ${WORDS_CHANGE_RULE}`] : []),
+      ...(doc ? DOCUMENT_CHANGE_RULES.map((rule) => `- ${rule}`) : []),
       `- ${SLIDE_KIND_RULE}`,
       // The whole list stays on offer: the limit was a wish, and the requested change may be another.
       ...(limit
@@ -857,28 +1472,56 @@ export async function editPlan(
       ...(limit || plan.brief.textOnly ? [] : [`- ${addedPhotos}`]),
     ].join('\n'),
   ].join('\n\n');
+  // Of a plan made from a document, each slide names its passages, and the answer those the
+  // request leaves out, the slides it asks for and the language of the document.
+  const more: Record<string, JsonSchema> =
+    passages !== undefined ? { left_out: leftOutProperty(passages, 'request'), asked_slides: askedSlidesProperty('request'), document_language: documentLanguageProperty } : {};
   const schema: JsonSchema = {
     type: 'object',
     properties: {
       summary: { type: 'string', description: 'One sentence saying what you changed, written for the person who asked, in their language' },
       language: { type: 'string', description: 'BCP 47 tag of the deck language after the change' },
       title: { type: 'string', description: 'Title of the deck after the change' },
-      slides: { type: 'array', minItems: 1, items: outlineEntrySchema(catalog, shows) },
+      slides: { type: 'array', minItems: 1, items: outlineEntrySchema(catalog, shows, passages !== undefined ? { passages } : undefined) },
+      ...more,
     },
-    required: ['summary', 'language', 'title', 'slides'],
+    required: ['summary', 'language', 'title', 'slides', ...Object.keys(more)],
   };
 
-  const ask = asker(options.llm, systemPrompt(language, 'brief'), options.signal, 'low');
+  const ask = asker(options.llm, systemPrompt(language, 'brief', doc !== undefined), options.signal, 'low');
   // An edit may add slides, so the room is for a plan somewhat longer than the one it starts from.
-  // Where slides name their parts, that is a little more for each slide, and for each run of parts the plan has.
+  // Where slides name their parts, that is a little more for each slide, and for each run of parts
+  // the plan has; where they name their passages, a little more again.
   const runs = plan.slides.reduce((sum, slide) => sum + (isFreeEntry(slide) ? blockRuns(entryBlocks(slide)).length : 0), 0);
-  const room = planRoom(plan.slides.length + 10) + (shows ? FREE_ENTRY_ROOM * (plan.slides.length + 10 + runs) : 0);
-  let answer = (await ask(prompt, schema, room)) as { summary?: unknown; language?: unknown } | null;
-  let outline = readOutline(answer, byId, reading);
-  if (outline.problem) {
-    answer = (await ask(`${prompt}\n\nYour previous answer could not be used: ${outline.problem}. Answer again using only the listed patterns${outline.hint ?? ''}.`, schema, room)) as typeof answer;
-    outline = readOutline(answer, byId, reading, true);
-    if (outline.problem) throw new PlanError(`The model did not produce a usable plan: ${outline.problem}`);
+  const room =
+    planRoom(plan.slides.length + 10) +
+    (shows ? FREE_ENTRY_ROOM * (plan.slides.length + 10 + runs) : 0) +
+    (passages !== undefined ? 8 * (plan.slides.length + 10) + 2 * passages + DOCUMENT_ROOM : 0);
+  type Answer = { summary?: unknown; language?: unknown; left_out?: unknown; asked_slides?: unknown; document_language?: unknown } | null;
+  let answer = (await ask(prompt, schema, room)) as Answer;
+  let outline = readOutline(answer, byId, reading, false, passages);
+  // An answer that puts no passage on a slide, where the plan had some, and leaves most of them
+  // out of "left_out" too, is asked for again, with any problems of patterns.
+  const gap =
+    passages !== undefined && placedBefore.size > 0 && !outline.entries.some((entry) => (entry.passages?.length ?? 0) > 0)
+      ? grossGap(outline.entries, readPassageNumbers(answer?.left_out, passages), passages)
+      : undefined;
+  // So is one that names three slides or fewer and leaves one of them without passages.
+  const bare = passages !== undefined ? bareSlides(outline.entries, readAskedSlides(answer?.asked_slides), placedBefore.size, 'request') : undefined;
+  if (outline.problem || gap || bare) {
+    const problem = [outline.problem, gap, bare].filter(Boolean).join('; ');
+    const placing = doc ? ', with every passage on one slide or in "left_out"' : '';
+    const retry = outline.problem
+      ? `${prompt}\n\nYour previous answer could not be used: ${problem}. Answer again using only the listed patterns${outline.hint ?? ''}${placing}.`
+      : `${prompt}\n\nYour previous answer could not be used: ${problem}. Answer again${placing}.`;
+    const first = { answer, outline };
+    answer = (await ask(retry, schema, room)) as Answer;
+    outline = readOutline(answer, byId, reading, true, passages);
+    if (outline.problem) {
+      // How a document is placed is put right in code: an answer that was asked again for that alone is used as it was.
+      if (first.outline.problem) throw new PlanError(`The model did not produce a usable plan: ${outline.problem}`);
+      ({ answer, outline } = first);
+    }
   }
 
   const nextLanguage = cleanText(answer?.language) || language;
@@ -887,14 +1530,45 @@ export async function editPlan(
     delete brief.direction; // follows the new language
   }
   delete brief.slideCount; // the plan itself now says how many slides there are
-  // A slide asked an amount of text gets the room for it, and a text that needs more slides may
-  // take up to ten more. A slide the plan has already, with the same layout and words, was fitted
-  // when it was planned and stays as it is: "a better title" does not spread a text that was left
-  // on one slide because the deck had room for no more.
-  const key = (slide: OutlineEntry) => JSON.stringify([slide.pattern, slide.purpose, readWords(slide.words) ?? null, slide.items ?? null, slide.blocks ?? null]);
-  const had = new Set(plan.slides.map(key));
-  const slides = fitOutline(outline.entries, lengthPlanning(template, planned, catalog), outline.entries.length + 10, (slide) => had.has(key(slide)));
+  const lp = lengthPlanning(template, planned, catalog);
+  // Of a plan made from a document, the passages are put right in code: a passage the answer
+  // dropped goes back next to its neighbour, and one that was on no slide stays so unless it is
+  // placed now. The language of the document is the answer's, or else the one the plan had.
+  let entries = outline.entries;
+  const documentLanguage = doc ? (readLanguageTag(answer?.document_language, doc.text) ?? storedLanguage) : undefined;
+  const read = doc ? inLanguage(doc, nextLanguage, documentLanguage) : undefined;
+  if (read && passages !== undefined) {
+    const given = entries;
+    entries = settlePassages(given, readPassageNumbers(answer?.left_out, passages), read, {
+      carries: carriesText(byId, context),
+      // A change keeps the slides its answer has: code adds none.
+      fixed: true,
+      slides: 0,
+      room: 0,
+      textHome: () => ({ pattern: (given[0] as OutlineEntry).pattern }),
+      sizeOf: (numbers) => needOf(read, numbers, language),
+      previous: placedBefore,
+    }).entries;
+  }
+  // A slide asked an amount of text gets the room for it, on that slide: code adds no slide. A
+  // slide the plan has already, with the same layout and words (and passages), was fitted when it
+  // was planned and stays as it is, set dense where it was: an answer that names its parts again
+  // sets out their arrangement anew, which would lose that.
+  const key = (slide: OutlineEntry) =>
+    JSON.stringify([slide.pattern, slide.purpose, readWords(slide.words) ?? null, slide.items ?? null, slide.blocks ?? null, ...(doc ? [slide.passages ?? null] : [])]);
+  const had = new Map(plan.slides.map((slide) => [key(slide), slide]));
+  for (const entry of entries) {
+    const before = had.get(key(entry));
+    if (before?.arrange?.dense === true && isFreeEntry(entry)) entry.arrange = { ...entry.arrange, dense: true };
+  }
+  const settled = (slide: OutlineEntry) => had.has(key(slide));
+  // Each slide whose passages changed gets the room for them on that slide, set smaller where it
+  // needs it. They are shared again only where the request names a number of slides: then over
+  // every slide of that number, one kept as it was too.
+  const placed = read ? fitDocument(entries, read, lp, { most: entries.length, fixed: true, settled, balance: readAskedSlides(answer?.asked_slides) !== undefined }) : entries;
+  const slides = fitOutline(placed, lp, read ? (slide) => settled(slide) || (slide.passages?.length ?? 0) > 0 : settled);
   const next: DeckPlan = { version: 1, title: outline.title || plan.title, brief, slides };
+  if (documentLanguage) next.documentLanguage = documentLanguage;
   const layouts = usedLayouts(plan.layouts, slides);
   if (layouts) next.layouts = layouts;
   return { plan: next, summary: cleanText(answer?.summary) };
@@ -912,7 +1586,9 @@ export async function writeDeck(loaded: Template, plan: DeckPlan, options: PlanO
   // The brief's list of patterns narrows nothing here: the plan has chosen, and a slide a later
   // wish put outside the list is written like any other. Ids the template has lost are dropped.
   // A free slide of the plan is written whatever is on offer for a new one.
-  const { layout, language, direction, fields, context, byId, lists, template } = planning(loaded, brief, options, { layouts, hasFree: plan.slides.some(isFreeEntry) });
+  // A document is set into slides as it is only where the language the planner read it in is the deck's.
+  const documentLanguage = readLanguageTag(plan.documentLanguage);
+  const { layout, language, direction, fields, context, byId, lists, template, document: doc } = planning(loaded, brief, options, { layouts, hasFree: plan.slides.some(isFreeEntry), documentLanguage });
   const colors = storedColors(brief.colors);
   // A slide that lists its parts is a free slide, unless the template has a pattern of its own under that id.
   const isFree = (entry: OutlineEntry) => isFreeEntry(entry) && !byId.has(entry.pattern);
@@ -922,14 +1598,37 @@ export async function writeDeck(loaded: Template, plan: DeckPlan, options: PlanO
   }
   // Slides that hold less text than was asked for them, said with the deck.
   const short: Issue[] = [];
+  // Slots told the whole of the length asked for their slide, held to it once they are written.
+  const told: ToldLength[] = [];
+  // Slides written from their passages of a document, held to its words; and each slide's passages.
+  const kept: KeptCheck[] = [];
+  const carries = new Map<number, number[]>();
   const items: WriteJob[] = plan.slides.map((entry, index): WriteItem | WriteJob => {
     const number = index + 1;
+    // The passages of the deck's document the slide carries: the writer is told their text, and
+    // where the slide holds them, code sets them into it.
+    const carry = doc ? slideDocument(doc, entry.passages, entry.words, language, showsTable(entry, byId)) : undefined;
+    if (carry) carries.set(number, carry.own);
+    const passage = carry && doc ? { passage: { label: carry.label, text: passageText(doc.passages, carry.own) } } : {};
     // An amount of text asked for the slide: the writer is told it, and the deck when the slide holds less.
-    const words = readWords(entry.words);
+    const words = carry ? undefined : readWords(entry.words);
+    // A slide set dense says the size its text is set at when even that holds less.
+    const dense = isFree(entry) && entry.arrange?.dense === true;
     const asked = (pattern: UsablePattern, names?: ReadonlySet<string>): UsablePattern => {
+      if (carry && doc) {
+        const room = documentRoom(pattern, context, carry.shape, names);
+        const size = dense ? runningSize(pattern, names) : undefined;
+        if (room < carry.need) short.push(size !== undefined ? textCutDense(number, carry.label, carry.need, room, size) : textCut(number, carry.label, carry.need, room));
+        const check = keptCheck(doc, number, carry, room, runningNames(pattern, names)[0]);
+        if (check) kept.push(check);
+        return withPassages(pattern, carry.need, context, { names, language, label: carry.label, shape: carry.shape, words: carry.asked });
+      }
       if (words === undefined) return pattern;
       const room = heldBy(pattern, context, { names, language });
-      if (room < charsOfWords(words, language)) short.push(shortOfWords(number, words, room, language));
+      const size = dense ? runningSize(pattern, names) : undefined;
+      if (room < charsOfWords(words, language)) short.push(size !== undefined ? shortOfWordsDense(number, words, room, size, language) : shortOfWords(number, words, room, language));
+      const whole = toldAsAsked(pattern, words, context, { names, language });
+      if (whole) told.push({ slide: number, words, ...whole });
       return withLength(pattern, words, context, { names, language });
     };
     if (isFree(entry)) {
@@ -939,13 +1638,27 @@ export async function writeDeck(loaded: Template, plan: DeckPlan, options: PlanO
       // their word. A slide is held to the parts a model's answer is held to: every part beyond
       // costs its share of a writing call, and a hundred thousand of them never end.
       if (blocks.length > MOST_PARTS) throw new PlanError(`Slide ${number}: a free slide takes at most ${MOST_PARTS} parts, not ${blocks.length}`);
-      // Its texts are set out for the length asked, where one was.
-      const lengths = words !== undefined ? freeLengths(blocks, charsOfWords(words, language)) : undefined;
-      const written = freeWritePattern(loaded, { direction, textScale: context.textScale }, { blocks, arrange: entry.arrange, lengths }, context);
+      // Its texts are set out for the length asked, where one was, or for the passages it carries.
+      const need = carry ? carry.need : words !== undefined ? charsOfWords(words, language) : undefined;
+      const lengths = need !== undefined ? freeLengths(blocks, need) : undefined;
+      const names = new Set(Object.keys(lengths ?? {}));
+      const set = { blocks, arrange: entry.arrange, lengths, ...paragraphsFor(carry, names) };
+      let written = freeWritePattern(loaded, { direction, textScale: context.textScale }, set, context);
       if ('reason' in written) throw new PlanError(`Slide ${number}: the free slide ${written.reason}`);
+      // A text that holds its passages is set by code, and is not the writer's to write.
+      let fill = carry && doc ? filledText(doc, carry, written.pattern, context, names) : undefined;
+      if (fill) {
+        const rest = freeWritePattern(loaded, { direction, textScale: context.textScale }, set, context, new Set([fill.slot]));
+        if ('pattern' in rest) written = rest;
+        else fill = undefined;
+      }
       // The frame it was planned on is kept with the slide, so that it stands on the same one later.
-      const pattern = asked(written.pattern, new Set(Object.keys(lengths ?? {})));
-      const job: WriteJob = { number, pattern, purpose: entry.purpose, free: { blocks, ...(entry.arrange ? { arrange: entry.arrange } : {}), base: written.base } };
+      const pattern = fill ? written.pattern : asked(written.pattern, names);
+      const job: WriteJob = { number, pattern, purpose: entry.purpose, free: { blocks, ...(entry.arrange ? { arrange: entry.arrange } : {}), base: written.base }, ...passage };
+      if (fill) {
+        job.carried = { [fill.slot]: fill.value };
+        job.filled = fill.slot;
+      }
       // What the slide can say should all its parts come back empty and its purpose be empty too:
       // the title of the deck, or else the first words of the brief. A free slide stops no deck.
       const about = cleanText(brief.prompt);
@@ -965,9 +1678,24 @@ export async function writeDeck(loaded: Template, plan: DeckPlan, options: PlanO
     }
     // A row of items gets the slots of exactly the number the plan settled on.
     const sized = entry.items !== undefined ? planPattern(usable.def, context, undefined, entry.items) : undefined;
-    return { number, pattern: asked(sized && 'pattern' in sized ? sized.pattern : usable), purpose: entry.purpose };
+    const pattern = sized && 'pattern' in sized ? sized.pattern : usable;
+    // A text that holds its passages is set by code, and is not the writer's to write.
+    const fill = carry && doc ? filledText(doc, carry, pattern, context) : undefined;
+    if (fill) return { number, pattern: { ...pattern, slots: pattern.slots.filter((planned) => planned.slot.name !== fill.slot) }, purpose: entry.purpose, ...passage, carried: { [fill.slot]: fill.value }, filled: fill.slot };
+    return { number, pattern: asked(pattern), purpose: entry.purpose, ...passage };
   });
-  const system = systemPrompt(language, 'brief');
+  const system = systemPrompt(language, 'brief', doc !== undefined);
+  // A text written well short of the length asked for it goes back once, with the first answer's
+  // problems, and so does a slide that keeps too few of the words of its text from the document.
+  // The issues that send them are the writer's alone: the deck is told after the last answer.
+  const sent = new WeakSet<Issue>();
+  const notes = (deck: DeckSpec, issues: Issue[], round: number): Issue[] =>
+    round > 0
+      ? []
+      : [...writtenUnder(deck, told).map(writtenLength), ...(doc ? keptIssues(doc, kept, deck, issues) : [])].map((issue) => {
+          sent.add(issue);
+          return issue;
+        });
 
   options.onProgress?.({ stage: 'write', slides: items.length });
   const draft = await writeSlides({
@@ -984,7 +1712,11 @@ export async function writeDeck(loaded: Template, plan: DeckPlan, options: PlanO
         language,
         direction,
         brief: [brief.prompt.trim(), brief.instructions?.trim()].filter(Boolean).join('\n'),
-        slides: items.map((item) => written.get(item.number) ?? { pattern: item.pattern.def.id, slots: {} }),
+        slides: items.map((item) => {
+          const slide = written.get(item.number) ?? { pattern: item.pattern.def.id, slots: {} };
+          const own = carries.get(item.number);
+          return own ? { ...slide, passages: own } : slide;
+        }),
       };
       if (context.textScale !== 1) deck.textScale = context.textScale;
       if (plan.title) deck.title = plan.title;
@@ -993,11 +1725,15 @@ export async function writeDeck(loaded: Template, plan: DeckPlan, options: PlanO
       // What the person asked of the whole deck goes with it, so that a later change can keep to it.
       if (colors) deck.colors = colors;
       if (lists.asked) deck.patterns = lists.asked;
+      // The document goes with the deck, so that a later change can draw on it, with the language it is written in.
+      if (doc && documentLanguage) deck.documentLanguage = documentLanguage;
+      if (doc) deck.document = brief.document as string;
       return deck;
     },
     manifest: template.manifest,
     measure: measurerFor(template),
     review: reviewWith(options),
+    ...(told.length > 0 || kept.length > 0 ? { notes } : {}),
     layout,
     maxRepairs: options.maxRepairs ?? 2,
     onRepair: (attempt, issues) => options.onProgress?.({ stage: 'repair', attempt, issues }),
@@ -1005,7 +1741,10 @@ export async function writeDeck(loaded: Template, plan: DeckPlan, options: PlanO
 
   const errors = draft.issues.filter((issue) => issue.severity === 'error');
   if (errors.length > 0) throw new DeckValidationError(errors);
-  return { deck: draft.deck, warnings: [...draft.issues, ...unstatedChartValues(template.manifest, draft.deck), ...short], outline: plan.slides };
+  const issues = draft.issues.filter((issue) => !sent.has(issue));
+  const shortWritten = writtenUnder(draft.deck, told).map((under) => writtenShort(under, language));
+  const keptLeft = doc ? keptWarnings(doc, kept, draft.deck) : [];
+  return { deck: draft.deck, warnings: [...issues, ...unstatedChartValues(template.manifest, draft.deck), ...short, ...keptLeft, ...shortWritten], outline: plan.slides };
 }
 
 /** Brief to deck spec in one go: {@link planOutline}, then {@link writeDeck}. */

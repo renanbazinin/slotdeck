@@ -96,6 +96,8 @@ export interface FreeSlideContent {
   base?: string;
   /** Colours for this slide alone. */
   colors?: DeckColors;
+  /** The slide carries a long text a person asked to have whole (`FreeArrange.dense`): kept when code changes its blocks. */
+  dense?: boolean;
 }
 
 /**
@@ -166,10 +168,11 @@ export function freeSlide(content: FreeSlideContent): SlideSpec {
     }
   });
   const slide: SlideSpec = { pattern: FREE_PATTERN, blocks, slots };
-  if (content.columns !== undefined || content.lead !== undefined) {
+  if (content.columns !== undefined || content.lead !== undefined || content.dense === true) {
     slide.arrange = {};
     if (content.columns !== undefined) slide.arrange.columns = content.columns;
     if (content.lead !== undefined) slide.arrange.lead = content.lead;
+    if (content.dense === true) slide.arrange.dense = true;
   }
   if (content.base !== undefined) slide.base = content.base;
   if (content.colors !== undefined) slide.colors = content.colors;
@@ -227,5 +230,6 @@ export function freeContent(slide: SlideSpec): FreeSlideContent {
   if (slide.arrange?.lead !== undefined) content.lead = slide.arrange.lead;
   if (slide.base !== undefined) content.base = slide.base;
   if (slide.colors !== undefined) content.colors = slide.colors;
+  if (slide.arrange?.dense === true) content.dense = true;
   return content;
 }

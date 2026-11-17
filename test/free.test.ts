@@ -107,6 +107,25 @@ test('freeContent gives back what freeSlide took, so blocks can be added and rem
   assert.equal(without.blocks?.length, 10);
 });
 
+test('freeContent and freeSlide keep a dense slide dense', () => {
+  const text = ['A first paragraph of the text a person asked to have whole.', 'And a second one.'];
+  const dense: SlideSpec = { pattern: 'free', blocks: ['text'], arrange: { dense: true }, slots: { title: 'All of it', b1Text: text } };
+  assert.equal(freeContent(dense).dense, true);
+  assert.deepEqual(freeSlide(freeContent(dense)), dense);
+  const both: SlideSpec = { ...dense, arrange: { columns: 2, dense: true } };
+  assert.deepEqual(freeSlide(freeContent(both)), both);
+  // Code that changes the blocks the way the docs say keeps the flag.
+  const headed = freeSlide({ ...freeContent(dense), blocks: [{ text, heading: 'Why' }] });
+  assert.deepEqual(headed.arrange, { dense: true });
+  // A slide without the flag comes back as before: no `dense` in its content, and no `arrange` added.
+  const plain = freeSlide({ title: 'All of it', blocks: [{ text }] });
+  assert.equal('dense' in freeContent(plain), false);
+  assert.equal(JSON.stringify(freeSlide(freeContent(plain))), JSON.stringify(plain));
+  assert.equal('arrange' in freeSlide(freeContent(plain)), false);
+  const columns = freeSlide({ title: 'All of it', blocks: [{ text }], columns: 1 });
+  assert.equal(JSON.stringify(freeSlide(freeContent(columns))), JSON.stringify({ pattern: 'free', blocks: ['text'], slots: { title: 'All of it', b1Text: text }, arrange: { columns: 1 } }));
+});
+
 test('the slots of a free slide are known from its blocks alone', () => {
   assert.deepEqual(freeSlots(['card', 'chart']).map((entry) => `${entry.name}${entry.part.required ? '' : '?'}`), ['b1Icon?', 'b1Heading', 'b1Text', 'b2Caption?', 'b2Chart']);
   assert.deepEqual(freeSlotDefs(['figure', 'photo']).map((slot) => `${slot.name}:${slot.kind}`), ['title:text', 'b1Value:text', 'b1Label:text', 'b2Photo:image', 'b2Caption:text']);

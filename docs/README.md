@@ -64,6 +64,8 @@ slotdeck makes new PowerPoint files from an existing PowerPoint template.
 | Let a chat model do all of this | `presentationTools` | as above |
 | Give slides that the template has no layout for (goals, steps, a timeline) one made for the deck | `composeLayouts: 2` with `free: false` on the planner or the chat tools | 1, then 1 or 2 per layout |
 | Put twelve charts, or a chart with three cards, on one slide | a free slide: `freeSlide` in a deck, or the planner's own choice | none |
+| Make a deck that carries a person's own document, word for word | `document` in the brief; `documents: true` in the chat tools | as for any deck |
+| Say before writing which slides are set small or cut | `planTextFit` | none |
 | Make a deck blue, or one slide red | `colors` in the deck or the slide; `recolorDeck`; `accent_color` in the chat tools | none |
 | Describe a new template | `draftManifest` | 1 per slide, plus 1 |
 | Verify a manifest against its pptx | `checkManifest` | none |
@@ -90,7 +92,8 @@ slotdeck makes new PowerPoint files from an existing PowerPoint template.
   passed directly.
 - Functions that call a model are `async`. `renderDeck`, `validateDeck`, `slideAlternatives`, `checkManifest`,
   `sampleDeck`, `changeManifest`, `prepareManifest`, `suggestChanges`, `patternVariants`, `inspectTemplate`,
-  `studioView`, `freeSlide`, `recolorDeck` and `templatePalette` are synchronous.
+  `studioView`, `freeSlide`, `recolorDeck`, `templatePalette`, `planTextFit` and `documentPassages` are
+  synchronous.
 - A deck never contains binary data. Pictures are referenced by an **asset id** and passed to the renderer as
   a map from id to bytes.
 - Nothing is written to disk and nothing is sent anywhere by slotdeck itself, except what your own provider

@@ -10,12 +10,14 @@ import { resolveAssets } from './plan/assets.ts';
 import type { ResolveOptions } from './plan/assets.ts';
 import { planPattern } from './plan/catalog.ts';
 import type { AssetDef, CatalogContext, IconDef, ImageDensity } from './plan/catalog.ts';
-import { planEdit, recolorDeck } from './plan/edit.ts';
-import type { EditOptions } from './plan/edit.ts';
+import { MOST_DOCUMENT_CHARS, documentChars, documentKept, documentPassages, passageLabel, passageWords, readPassageNumbers } from './plan/document.ts';
+import type { DocumentPassage } from './plan/document.ts';
+import { TextCutError, planEdit, recolorDeck } from './plan/edit.ts';
+import type { EditOptions, EditResult } from './plan/edit.ts';
 import { entryBlocks, freeOnOffer, isFreeEntry, partLabel, severalOnOneSlide } from './plan/free.ts';
-import { readWords } from './plan/length.ts';
-import { editPlan, patternIds, planOutline, withSettings, writeDeck } from './plan/plan.ts';
-import type { Brief, DeckPlan, PlanOptions, PlanSettings } from './plan/plan.ts';
+import { readWords, setSmall } from './plan/length.ts';
+import { editPlan, patternIds, planOutline, planTextFit, withSettings, writeDeck } from './plan/plan.ts';
+import type { Brief, DeckPlan, OutlineEntry, PlanOptions, PlanSettings, SlideTextFit } from './plan/plan.ts';
 import { previewExtension } from './preview/provider.ts';
 import type { PreviewProvider, SlidePreview } from './preview/provider.ts';
 import { renderDeck } from './render/render.ts';
@@ -89,6 +91,32 @@ export interface PresentationToolsOptions {
   /** Makes ids for plans and decks. Defaults to a short random id. */
   newId?: (kind: 'plan' | 'deck') => string;
   onProgress?: (event: GenerateProgress, tool: string) => void;
+  /**
+   * Whether the plan tool takes `documents`: the names of texts the person gave in the
+   * conversation, which the slides then carry word for word. The app passes the conversation's
+   * texts with every call (`call(name, args, { documents })`) and lists them in the chat's system
+   * prompt with `describeDocuments`. Off unless `true`: the plan tool is then declared without it.
+   */
+  documents?: boolean;
+}
+
+/** A text the person gave in a conversation, as the app lists it for the chat model. */
+export interface ChatDocument {
+  /** The name the chat model sees and passes in `documents`: a file name, "pasted text 1". */
+  name: string;
+  /** The text as the person gave it. */
+  text: string;
+}
+
+/** What the app passes with a tool call. */
+export interface ToolCallContext {
+  signal?: AbortSignal;
+  /**
+   * The texts the person gave in this conversation, the list `describeDocuments` was given:
+   * attached files under their names, long messages as "pasted text 1". Read by the plan tool of
+   * tools built with `documents: true`, for the names the chat model passes, and nowhere else.
+   */
+  documents?: readonly ChatDocument[];
 }
 
 export interface ToolResult {
@@ -110,9 +138,10 @@ export interface PresentationTools {
    * act on, and so does a name that is none of the declared tools. Where the software itself trips
    * (a stored plan that is not what the tools saved), the model is told that in a sentence, not the
    * text of the error. What the app's own model, image provider, store or review throws is passed
-   * on as its message.
+   * on as its message. `context` carries the signal that stops the call and, for tools built with
+   * `documents: true`, the texts of the conversation.
    */
-  call(name: string, args: unknown, context?: { signal?: AbortSignal }): Promise<ToolResult>;
+  call(name: string, args: unknown, context?: ToolCallContext): Promise<ToolResult>;
 }
 
 export const TOOL_NAMES = {
@@ -171,6 +200,38 @@ const ACCENT_ERROR = '"accent_color" must be six hex digits such as 1E6B3A';
 /** The most slides the plan tool takes in `slide_count`: what it declares, and what a larger number is held to. */
 const MOST_SLIDES = 30;
 
+// What makes the chat model pass a person's numbers and text on as they are, and not split,
+// shorten or retell them itself: the planner keeps them, and its plan says what that takes. Where
+// no free slide of text is on offer nothing is set smaller, and the chat model is not told it is.
+const SLIDE_COUNT =
+  'Number of slides in all. Set it whenever the user names a number of slides ("2 slides", "a five-slide deck"): it is not read from the topic or the instructions. ' +
+  'Leave it out when they name none: the planner then chooses the number. ';
+const SLIDE_COUNT_SMALLER = 'With it the presentation has exactly that many slides: long text is set smaller to fit, and no slide is added.';
+const SLIDE_COUNT_HOLDS = 'With it the presentation has exactly that many slides, and no slide is added: a slide holds what its layout holds, and the plan says in holds_words and note what is cut.';
+const AS_ASKED = 'Do not split, shorten or sum up what the user asked for yourself: pass the number of slides and the amount of text as they said them. ';
+const AS_ASKED_SMALLER = 'The planner keeps them, setting long text smaller where it must, and the plan says so in text_pt and note. ';
+const AS_ASKED_HOLDS = 'The planner keeps them, and the plan says in holds_words and note where a slide holds less. ';
+const NAME_DOCUMENTS = 'When the user wants their own text on the slides and the app lists it, name it in documents and do not copy it into topic: the planner reads it word for word. ';
+const GIVEN_TEXT = '. Text the user gives for a slide goes in whole and word for word, in quotation marks';
+// A short paste is not listed, so it cannot be named: this is its way to the slides.
+const UNLISTED_TEXT = " A text of the user's for the slides that the app does not list (a short paste) goes here, whole and word for word, in quotation marks.";
+const ACCEPT_CUT =
+  "Only after the user accepted that a slide's text is cut, when an earlier call with this instruction answered with a note saying so. " +
+  "Left out, a change that would cut a slide's text is not made, and the answer's note says why.";
+/** What the chat model is told to do when a change to a presentation would cut a slide's text: nothing was written. */
+const CUT_NEXT =
+  `Nothing was written. Tell the user what the note says. If they accept that the rest is cut, call ${TOOL_NAMES.edit} again with the same instruction and accept_cut: true; ` +
+  'otherwise change the request (more slides, a shorter text).';
+
+/** The most texts `describeDocuments` lists. Any number may be named: their characters are what is limited. */
+const MOST_DOCUMENTS = 10;
+/** A listed text shorter than this is most often the request itself: a topic is not checked against it. */
+const CHECKED_CHARS = 1500;
+/** A topic with this many runs of four words from one listed text, which make at least half of its runs, copies it. */
+const COPIED_RUNS = 120;
+/** A topic with this many words of three letters or more, three quarters of them found in one listed text, retells it. */
+const RETOLD_WORDS = 40;
+
 // What a chat model is told when the software trips over what it read from the store. The two
 // tools that start from a plan say the first, the one that starts from a presentation the second.
 // The plan tool reads nothing from the store: there the request itself could not be worked out.
@@ -201,12 +262,15 @@ const FREE_LAYOUT_LINE = `- ${FREE_PATTERN}: A slide laid out by the software fr
  * The tool declarations for one template. `layouts` are the layouts a person may limit a
  * presentation to; `colors` says whether a person may ask for a colour, and `freeKinds` the kinds
  * of part a free slide may hold with what the app supplied, or `undefined` when no slide may be a
- * free slide. Only ids, descriptions and switches are read here: nothing that takes time or can
- * fail. What takes time is deciding `freeKinds`, which the caller does once for a loaded template
- * (see `presentationTools`).
+ * free slide. `documents` says whether the plan tool takes the names of texts the person gave.
+ * Only ids, descriptions and switches are read here: nothing that takes time or can fail. What
+ * takes time is deciding `freeKinds`, which the caller does once for a loaded template (see
+ * `presentationTools`).
  */
-function toolDefinitions(layouts: Array<Pick<PatternDef, 'id' | 'description'>>, colors: boolean, freeKinds: readonly FreeBlockKind[] | undefined): ToolDefinition[] {
+function toolDefinitions(layouts: Array<Pick<PatternDef, 'id' | 'description'>>, colors: boolean, freeKinds: readonly FreeBlockKind[] | undefined, documents = false): ToolDefinition[] {
   const free = freeKinds !== undefined;
+  // Long text is set smaller only on a free slide of text: without one, a slide holds what its layout holds.
+  const smaller = freeKinds?.includes('text') === true;
   // Of charts, tables and pictures, those a slide can really be given here: without an image model
   // and without pictures of the app's own, no description promises pictures.
   const several = severalOnOneSlide(freeKinds ?? []);
@@ -218,11 +282,19 @@ function toolDefinitions(layouts: Array<Pick<PatternDef, 'id' | 'description'>>,
   const planProperties: Record<string, JsonSchema> = {
     topic: {
       type: 'string',
-      description: 'What the presentation is about, with every fact, figure and name the user gave. Numbers not stated here will not appear on slides.',
+      description:
+        'What the presentation is about, with every fact, figure and name the user gave. Numbers not stated here will not appear on slides.' +
+        (documents ? ' When documents are named, a sentence or two on what the presentation is for is enough: the planner reads the documents themselves.' : ''),
     },
-    // The planner is given 6 to 10 slides unless a number comes with the call: it cannot take one from the topic.
-    slide_count: { type: 'integer', minimum: 1, maximum: MOST_SLIDES, description: 'Number of slides. Set it whenever the user names a number: it is not read from the topic.' },
-    language: { type: 'string', description: 'BCP 47 tag of the language to write in, e.g. "he" or "en". Defaults to the template language.' },
+    // The planner chooses the number unless one comes with the call: it cannot take one from the topic.
+    slide_count: { type: 'integer', minimum: 1, maximum: MOST_SLIDES, description: SLIDE_COUNT + (smaller ? SLIDE_COUNT_SMALLER : SLIDE_COUNT_HOLDS) },
+    language: {
+      type: 'string',
+      description:
+        'BCP 47 tag of the language to write in, e.g. "he" or "en". Defaults to the template language.' +
+        // A text the person gave is carried in its own words: the chat model does not have it translated unasked.
+        (documents ? ' When documents are named, the language of their text, unless the user asks for another.' : ''),
+    },
     image_density: { type: 'string', enum: ['none', 'low', 'medium', 'high'], description: 'How many slides carry a photo. Defaults to medium.' },
     text_size: { type: 'string', enum: ['normal', 'large', 'x-large'], description: 'Size of body text. Larger text means less of it per slide. Defaults to normal.' },
     text_only: {
@@ -235,9 +307,21 @@ function toolDefinitions(layouts: Array<Pick<PatternDef, 'id' | 'description'>>,
     instructions: {
       type: 'string',
       description:
-        'Everything else the user asked for, in their own words: audience, tone, and every wish about how slides look or are arranged that has no argument of its own ("three columns", "no cover slide"). Pass a wish on even when it seems unusual.',
+        'Everything else the user asked for, in their own words: audience, tone, every amount of text they ask for ("500 words on each slide", "a paragraph of about 80 words on pricing"), ' +
+        'and every wish about how slides look or are arranged that has no argument of its own ("three columns", "no cover slide"). Pass a wish on even when it seems unusual or long.' +
+        (documents ? UNLISTED_TEXT : ''),
     },
   };
+  if (documents) {
+    planProperties.documents = {
+      type: 'array',
+      items: { type: 'string' },
+      description:
+        'The texts of this conversation the presentation is made from, by the names the app lists for them (a file name, "pasted text 1"). ' +
+        'The slides carry every part of them in their own words and order. Name a text whenever the user wants it on the slides, and also when they want a presentation about it, ' +
+        'a summary of it or some parts of it: say which in instructions. Leave it out when the presentation is not made from a text the user gave.',
+    };
+  }
   if (colors) planProperties.accent_color = { type: 'string', description: ACCENT_COLOR };
   if (limitable) {
     planProperties.layouts = {
@@ -268,7 +352,7 @@ function toolDefinitions(layouts: Array<Pick<PatternDef, 'id' | 'description'>>,
     instruction: {
       type: 'string',
       // With a colour and an empty instruction the plan is recoloured by code: no model is asked, and no words about colour join the brief.
-      description: `What to change, in the user's words, with any new facts or figures they gave${colors ? '. Leave it empty when only the colour changes' : ''}`,
+      description: `What to change, in the user's words, with any new facts or figures they gave${GIVEN_TEXT}${colors ? '. Leave it empty when only the colour changes' : ''}`,
     },
     ...changeProperties(),
   };
@@ -278,7 +362,7 @@ function toolDefinitions(layouts: Array<Pick<PatternDef, 'id' | 'description'>>,
     presentation_id: { type: 'string', description: 'Id of the presentation to change' },
     instruction: {
       type: 'string',
-      description: `What to change, in the user's words, with any new facts or figures they gave${colors ? '. Leave it out when only the colour changes' : ''}`,
+      description: `What to change, in the user's words, with any new facts or figures they gave${GIVEN_TEXT}${colors ? '. Leave it out when only the colour changes' : ''}`,
     },
     ...changeProperties(),
   };
@@ -290,6 +374,8 @@ function toolDefinitions(layouts: Array<Pick<PatternDef, 'id' | 'description'>>,
     };
   }
   if (limitable) editProperties.layouts = changedLayouts;
+  // A change that would cut a slide's text is said before anything is written, and made only once the person accepts.
+  editProperties.accept_cut = { type: 'boolean', description: ACCEPT_CUT };
 
   return [
     {
@@ -299,6 +385,10 @@ function toolDefinitions(layouts: Array<Pick<PatternDef, 'id' | 'description'>>,
         `Pass on every wish the user has about how it looks or is built: in ${inWords(wishes)} where one fits, and otherwise in instructions in the user's own words. ` +
         // Said so that the chat model does not tell the user that six charts on one slide cannot be had.
         (free ? `A slide can also hold what no layout has (${several ? `${several}, or ` : ''}any number of cards or figures): pass such a wish on in instructions, in the user's words. ` : '') +
+        // Said so that the chat model does not make 8 slides of 250 words where 2 of 500 were asked for.
+        AS_ASKED +
+        (smaller ? AS_ASKED_SMALLER : AS_ASKED_HOLDS) +
+        (documents ? NAME_DOCUMENTS : '') +
         'Show the plan to the user and get their approval or changes before creating the presentation.',
       parameters: { type: 'object', properties: planProperties, required: ['topic'] },
     },
@@ -357,6 +447,62 @@ function slideLine(deck: DeckSpec, index: number): Record<string, unknown> {
   return line;
 }
 
+/** The passages of the document a plan is made from: none for a plan made from no document. */
+function passagesOf(plan: DeckPlan): DocumentPassage[] {
+  const document: unknown = plan.brief.document;
+  return typeof document === 'string' && document.trim() ? documentPassages(document) : [];
+}
+
+/** How much of its document a plan places: the passages and words of the document, and the passages no slide carries. `undefined` for none. */
+function documentPlaced(passages: readonly DocumentPassage[], slides: readonly OutlineEntry[]): { passages: number; words: number; left_out?: string } | undefined {
+  if (passages.length === 0) return undefined;
+  const numbers = passages.map((passage) => passage.number);
+  const placed = new Set(slides.flatMap((slide) => readPassageNumbers(slide.passages, passages.length)));
+  const missing = numbers.filter((number) => !placed.has(number));
+  return { passages: passages.length, words: passageWords(passages, numbers), ...(missing.length > 0 ? { left_out: passageLabel(missing) } : {}) };
+}
+
+/**
+ * The size a slide's text is set at, where it is well below the template's: under four fifths of
+ * it. Text set down to four fifths was set so without remark before there were asked lengths, and
+ * a remark on every such slide would have the chat model offer more slides on a number the person
+ * gave.
+ */
+const smallSize = (fit: SlideTextFit): number | undefined => (fit.size !== undefined && fit.templateSize !== undefined && setSmall(fit.size, fit.templateSize) ? fit.size : undefined);
+
+/**
+ * What the chat model is to tell the person of a plan before the presentation is made: the slides
+ * whose text is cut first, then those that carry all of it in type well below the template's. ''
+ * when there is nothing to tell.
+ */
+function fitNote(fits: readonly SlideTextFit[]): string {
+  const said: string[] = [];
+  const at = (fit: SlideTextFit): string => {
+    const size = smallSize(fit);
+    return size !== undefined ? ` (text at ${size} pt)` : '';
+  };
+  const [cut, ...more] = fits.filter((fit) => fit.holds < fit.words);
+  if (cut) {
+    said.push(
+      `Not all the text fits: slide ${cut.slide} holds about ${cut.holds} of its ${cut.words} words${at(cut)}` +
+        more.map((fit) => `, slide ${fit.slide} about ${fit.holds} of its ${fit.words}${at(fit)}`).join('') +
+        '. The rest will be cut. Tell the user before creating the presentation, and offer more slides or a shorter text.',
+    );
+  }
+  const whole = fits.filter((fit) => fit.holds >= fit.words && smallSize(fit) !== undefined);
+  const [first] = whole;
+  if (first) {
+    const sizes = whole.map((fit) => fit.size as number);
+    const [least, most] = [Math.min(...sizes), Math.max(...sizes)];
+    const which = whole.length === 1 ? `Slide ${first.slide} carries all its` : `Slides ${inWords(whole.map((fit) => String(fit.slide)))} carry all their`;
+    said.push(
+      `${which} text in smaller type than the template's: ${least === most ? least : `${least} to ${most}`} pt, where the template's is ${first.templateSize} pt. ` +
+        'Tell the user, and offer more slides if they want it larger.',
+    );
+  }
+  return said.join(' ');
+}
+
 /**
  * The colour a chat model gave: six hex digits with or without `#`, or three, which are doubled.
  * `null` for "template", the way back to the template's colours. `undefined` when none was given.
@@ -400,6 +546,101 @@ function slideNumbers(value: unknown, count: number): number[] | undefined {
     throw new ToolInputError(`"color_slides" must be slide numbers from 1 to ${count}`);
   }
   return [...new Set(numbers)].sort((a, b) => a - b);
+}
+
+/** The texts of a list an app passed that can be read: each with a name and a text. */
+function readableDocuments(list: unknown): ChatDocument[] {
+  if (!Array.isArray(list)) return [];
+  return list.filter((item): item is ChatDocument => typeof item === 'object' && item !== null && typeof item.name === 'string' && typeof item.text === 'string');
+}
+
+/** The names a chat model passed in `documents`: trimmed, without the quotes around them, each once. */
+function documentNames(value: unknown): string[] {
+  const given: unknown[] = Array.isArray(value) ? value : typeof value === 'string' ? [value] : [];
+  const names = given
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim().replace(/^["'\u201C\u201D\u201E]+|["'\u201C\u201D\u201E]+$/g, '').trim())
+    .filter(Boolean);
+  return [...new Set(names)];
+}
+
+/** Marks that set the direction of text: no part of a word. */
+const BIDI_MARKS = /[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
+/**
+ * A name as names are compared. A file name may come in decomposed letters (as from a Mac) or with
+ * direction marks, and a chat model gives it back composed and without them.
+ */
+const nameKey = (name: string): string => name.normalize('NFC').replace(BIDI_MARKS, '').trim();
+
+/** A listed text by the name a chat model gave: that name, else the one that differs only in case, else the one name it begins ("plan 2027" finds "Plan 2027.docx"). */
+function findDocument(list: readonly ChatDocument[], name: string): ChatDocument | undefined {
+  const key = nameKey(name);
+  const exact = list.find((document) => nameKey(document.name) === key);
+  if (exact) return exact;
+  const lower = key.toLowerCase();
+  const lowerOf = (document: ChatDocument): string => nameKey(document.name).toLowerCase();
+  for (const matches of [(document: ChatDocument) => lowerOf(document) === lower, (document: ChatDocument) => lowerOf(document).startsWith(lower)]) {
+    const found = list.filter(matches);
+    if (found.length === 1) return found[0];
+  }
+  return undefined;
+}
+
+/** The words of a text as texts are compared (a topic with a listed text, two named texts): runs of letters and digits, in lower case. */
+const wordsOf = (text: string): string[] => text.normalize('NFC').replace(BIDI_MARKS, '').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+/** Every run of four words in a row. */
+const runsOf = (words: readonly string[]): string[] => words.slice(3).map((_, index) => words.slice(index, index + 4).join(' '));
+/** A Hebrew word of four letters or more without the one-letter prefix it may have, so that "and the plan" finds "the plan". */
+const stemOf = (word: string): string => (/^[א-ת]{4,}$/.test(word) && /^[והבלמשכ]/.test(word) ? word.slice(1) : word);
+
+/** Whether `said` copies `text`: many of its runs of four words are the text's, and they make at least half of its runs. */
+function copies(said: string, text: string): boolean {
+  const theirs = new Set(runsOf(wordsOf(text)));
+  const runs = runsOf(wordsOf(said));
+  const found = runs.filter((run) => theirs.has(run)).length;
+  return found >= COPIED_RUNS && found >= runs.length / 2;
+}
+
+/** Whether `said` retells `text`: it is long, and three quarters of its words of three letters or more are words of the text. */
+function retells(said: string, text: string): boolean {
+  const theirs = new Set(wordsOf(text).flatMap((word) => [word, stemOf(word)]));
+  const mine = wordsOf(said).filter((word) => word.length >= 3 && !/^\d+$/.test(word));
+  return mine.length >= RETOLD_WORDS && mine.filter((word) => theirs.has(word) || theirs.has(stemOf(word))).length >= 0.75 * mine.length;
+}
+
+/**
+ * The line for a chat model's system prompt that lists the texts a person gave in a conversation,
+ * each with its words and first words, and says how to make a presentation of one. '' when there
+ * are none. Give it the list the tools are given with each call: it lists the last ten of them
+ * that have a name and a text.
+ */
+export function describeDocuments(documents: readonly ChatDocument[]): string {
+  const listed = readableDocuments(documents)
+    .filter((document) => document.name.trim() && document.text.trim())
+    .slice(-MOST_DOCUMENTS);
+  if (listed.length === 0) return '';
+  // The first words, up to 40 characters, so that the chat model can tell which text is which.
+  const begins = (text: string): string => {
+    let start = '';
+    for (const word of text.replace(/\s+/g, ' ').trim().split(' ')) {
+      if (start && start.length + 1 + word.length > 40) break;
+      start = start ? `${start} ${word}` : word.slice(0, 40);
+    }
+    return `${start.replace(/"/g, "'")}…`;
+  };
+  const lines = listed.map((document) => {
+    const words = document.text.split(/\s+/).filter(Boolean).length;
+    // A text the planner cannot take whole is listed all the same, so that the chat model can ask for the part it is about.
+    const whole = documentChars(document.text) > MOST_DOCUMENT_CHARS ? ', too long to make a presentation of whole' : '';
+    return `"${document.name}" (${words} words${whole}, begins "${begins(document.text)}")`;
+  });
+  return (
+    `Texts the user gave in this conversation, which the presentation tools can read by name: ${lines.join(', ')}. ` +
+    `When the user wants a presentation of one of them, name it in "documents" of ${TOOL_NAMES.plan} and say in "topic" in a sentence or two what the presentation is for: ` +
+    'the planner reads the text itself and puts all of it on the slides, word for word. Do not copy or retell a listed text in "topic". ' +
+    'Name it also when the user wants a summary of it or some parts of it, and say which in "instructions". ' +
+    'A message that only asks for a presentation is not such a text: pass what it asks in "topic" and "instructions".'
+  );
 }
 
 /**
@@ -479,7 +720,7 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
     }
     if (freeKinds) offered.add(FREE_PATTERN);
   }
-  const definitions = toolDefinitions(limitable, colorsOn, freeKinds);
+  const definitions = toolDefinitions(limitable, colorsOn, freeKinds, options.documents === true);
 
   /**
    * The layouts a `layouts` argument names: `undefined` when it names none, an empty list when it
@@ -526,41 +767,101 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
     return echo;
   };
 
-  const describePlan = (id: string, plan: DeckPlan): Record<string, unknown> => ({
-    plan_id: id,
-    title: plan.title,
-    language: plan.brief.language ?? template.manifest.language,
-    ...echoWishes(plan.brief.colors, plan.brief.patterns),
-    slides: plan.slides.map((slide, index) => {
-      // The words asked for a slide, so that the model can tell the user how long its text will be.
-      const words = readWords(slide.words);
-      // A free slide is laid out for its own parts: it has no description to quote and no picture to show.
-      if (isFreeEntry(slide) && !patterns.has(slide.pattern)) {
-        return {
-          number: index + 1,
-          layout: FREE_PATTERN,
-          layout_description: `A slide laid out for this presentation: ${describeBlocks(entryBlocks(slide))}.`,
-          purpose: slide.purpose,
-          ...(words !== undefined ? { words } : {}),
-          free_layout: true,
-        };
+  // What a plan's slides hold is worked out with the options the planner has, and asks no model.
+  const fitOptions: Pick<PlanOptions, 'patterns' | 'free' | 'icons' | 'assets' | 'layout' | 'numberPatterns'> = {};
+  if (options.layout) fitOptions.layout = options.layout;
+  if (options.icons) fitOptions.icons = options.icons;
+  if (options.assets) fitOptions.assets = options.assets;
+  if (options.patterns) fitOptions.patterns = options.patterns;
+  if (options.numberPatterns) fitOptions.numberPatterns = options.numberPatterns;
+  if (options.free !== undefined) fitOptions.free = options.free;
+
+  /**
+   * What each slide of a plan given words or a document's text will carry, worked out by code
+   * before anything is written: [] for any other plan. The plan stands without it, so a slide that
+   * cannot be worked out, or a plan that trips the working out, is said nothing of.
+   */
+  const textFits = (plan: DeckPlan): SlideTextFit[] => {
+    try {
+      return planTextFit(template, plan, fitOptions);
+    } catch {
+      return [];
+    }
+  };
+
+  /**
+   * A plan as the chat model is shown it. A plan given words or a document's text also says, by
+   * slide, the passages it carries, a size well below the template's and the words it keeps where
+   * it is cut, and in `note` what to tell the person. `countGiven` is false when the plan tool was
+   * called without `slide_count`: the chat model is then asked to plan again with the number the
+   * person named, if they named one.
+   */
+  const describePlan = (id: string, plan: DeckPlan, countGiven = true): Record<string, unknown> => {
+    const fits = textFits(plan);
+    const fitOf = new Map(fits.map((fit) => [fit.slide, fit]));
+    const passages = passagesOf(plan);
+    // What a slide carries of the person's text and how it is set, after its purpose and words.
+    const carried = (slide: OutlineEntry, number: number): Record<string, unknown> => {
+      const line: Record<string, unknown> = {};
+      const own = readPassageNumbers(slide.passages, passages.length);
+      if (own.length > 0) {
+        line.passages = passageLabel(own);
+        line.text_words = passageWords(passages, own);
       }
-      const own = plan.layouts?.find((design) => design.id === slide.pattern);
-      const line: Record<string, unknown> = {
-        number: index + 1,
-        layout: slide.pattern,
-        layout_description: own?.description ?? patterns.get(slide.pattern)?.description,
-        purpose: slide.purpose,
-      };
-      if (words !== undefined) line.words = words;
-      // A layout made for this deck has no picture in the app; the model can say it is new.
-      if (own) line.new_layout = true;
-      const thumbnail = own ? undefined : options.thumbnail?.(slide.pattern);
-      if (thumbnail) line.thumbnail = thumbnail;
+      const fit = fitOf.get(number);
+      const size = fit ? smallSize(fit) : undefined;
+      if (size !== undefined) line.text_pt = size;
+      if (fit && fit.holds < fit.words) line.holds_words = fit.holds;
       return line;
-    }),
-    next: `Show this plan to the user. Use ${TOOL_NAMES.editPlan} for changes and ${TOOL_NAMES.create} once they approve.`,
-  });
+    };
+    const output: Record<string, unknown> = {
+      plan_id: id,
+      title: plan.title,
+      language: plan.brief.language ?? template.manifest.language,
+      ...echoWishes(plan.brief.colors, plan.brief.patterns),
+      slides: plan.slides.map((slide, index) => {
+        // The words asked for a slide, so that the model can tell the user how long its text will be.
+        const words = readWords(slide.words);
+        // A free slide is laid out for its own parts: it has no description to quote and no picture to show.
+        if (isFreeEntry(slide) && !patterns.has(slide.pattern)) {
+          return {
+            number: index + 1,
+            layout: FREE_PATTERN,
+            layout_description: `A slide laid out for this presentation: ${describeBlocks(entryBlocks(slide))}.`,
+            purpose: slide.purpose,
+            ...(words !== undefined ? { words } : {}),
+            ...carried(slide, index + 1),
+            free_layout: true,
+          };
+        }
+        const own = plan.layouts?.find((design) => design.id === slide.pattern);
+        const line: Record<string, unknown> = {
+          number: index + 1,
+          layout: slide.pattern,
+          layout_description: own?.description ?? patterns.get(slide.pattern)?.description,
+          purpose: slide.purpose,
+        };
+        if (words !== undefined) line.words = words;
+        Object.assign(line, carried(slide, index + 1));
+        // A layout made for this deck has no picture in the app; the model can say it is new.
+        if (own) line.new_layout = true;
+        const thumbnail = own ? undefined : options.thumbnail?.(slide.pattern);
+        if (thumbnail) line.thumbnail = thumbnail;
+        return line;
+      }),
+    };
+    const placed = documentPlaced(passages, plan.slides);
+    if (placed) output.document = placed;
+    const note = fitNote(fits);
+    if (note) output.note = note;
+    // Without a number the planner chose one, and the words asked for a slide never make it more:
+    // where the person named a number the chat model left out, it is to plan again with it.
+    const chosen = !countGiven && plan.slides.some((slide) => readWords(slide.words) !== undefined);
+    output.next =
+      (chosen ? `No slide_count was given, so the planner chose ${plan.slides.length} ${plan.slides.length === 1 ? 'slide' : 'slides'}. If the user named a number of slides, plan again with slide_count. ` : '') +
+      `Show this plan to the user. Use ${TOOL_NAMES.editPlan} for changes and ${TOOL_NAMES.create} once they approve.`;
+    return output;
+  };
 
   /** Gathers the deck's pictures (stored ones first), renders it, and saves everything under a new id. */
   const finish = async (tool: string, deck: DeckSpec, warnings: Issue[], signal: AbortSignal | undefined) => {
@@ -608,6 +909,9 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
       ...echoWishes(deck.colors, deck.patterns),
       slides: deck.slides.map((_, index) => slideLine(deck, index)),
     };
+    // A presentation made from the person's text says how much of it its slides carry.
+    const kept = documentKept(deck);
+    if (kept) output.document = kept;
     if (told.length > 0) {
       // A warning about the deck as a whole has no slide to name: it is its message alone. One about
       // a part of a free slide names the part, since the name of its slot (b7Text) says nothing to a person.
@@ -648,8 +952,69 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
     return accent === undefined ? undefined : accent === null ? null : { accent };
   };
 
-  const handlers: Record<string, (args: Record<string, unknown>, signal: AbortSignal | undefined) => Promise<ToolResult>> = {
-    async [TOOL_NAMES.plan](args, signal) {
+  /**
+   * The texts a plan is made from, joined, for the names the chat model passed in `documents`;
+   * no `text` when it named none. A name the conversation does not have, an empty text and too much
+   * text are errors the chat model can act on. With no text named, the topic and the instructions
+   * are checked against each long listed text: a copy of one is an error that names the argument
+   * that copies, and the names of those they retell come back in `retold`, for the output to speak of.
+   */
+  const documentsOf = (args: Record<string, unknown>, list: unknown, topic: string, instructions: string): { text?: string; names: string[]; retold: string[] } => {
+    // Where the tools take no documents the argument is not declared; one that comes all the same is passed over.
+    if (options.documents !== true) return { names: [], retold: [] };
+    const listed = readableDocuments(list);
+    const names = documentNames(args.documents);
+    const quoted = (items: readonly string[]): string => inWords(items.map((name) => `"${name}"`));
+    if (names.length === 0) {
+      // A shorter listed message is most often the request itself, which a topic may well retell.
+      const checked = listed.filter((document) => documentChars(document.text) >= CHECKED_CHARS);
+      // Each argument on its own, so that the error names the one that copies.
+      for (const [argument, said] of Object.entries({ topic, instructions })) {
+        const copied = checked.find((document) => copies(said, document.text));
+        if (copied) {
+          throw new ToolInputError(
+            `"${argument}" copies the text "${copied.name}". Name it in documents instead and keep topic to what the presentation is for: the planner reads the text word for word. ` +
+              'If the user wants a presentation about it or a summary of it, name it all the same and say so in instructions.',
+          );
+        }
+      }
+      return { names: [], retold: checked.filter((document) => retells(`${topic}\n${instructions}`, document.text)).map((document) => document.name) };
+    }
+    const unknown = names.filter((name) => !findDocument(listed, name));
+    if (unknown.length > 0) {
+      // A short paste is not listed, and has a way of its own; a file that is not listed is one the app could not read.
+      const there = listed.length > 0 ? `The texts the app lists for this conversation are ${quoted(listed.map((document) => document.name))}: use those names.` : 'The app lists no text for this conversation.';
+      throw new ToolInputError(
+        `"documents" names ${unknown.length === 1 ? 'a text' : 'texts'} the app does not have: ${quoted(unknown)}. ${there} ` +
+          'A text the user pasted in a short message is not listed: pass it in instructions, whole and word for word, in quotation marks. A file that is not listed could not be read: tell the user.',
+      );
+    }
+    // Two names may find the same text: it is carried once.
+    const found = [...new Set(names.map((name) => findDocument(listed, name) as ChatDocument))];
+    const empty = found.find((document) => document.text.trim() === '');
+    if (empty) throw new ToolInputError(`The text "${empty.name}" is empty: tell the user it could not be read.`);
+    // So is a text under two names, such as a file and the message it came in: a text whose words
+    // all come in a row in another named text is left out, and an equal one named later. Words
+    // that are only in the same order, with others between them, make a text of its own.
+    const flat = found.map((document) => ` ${wordsOf(document.text).join(' ')} `);
+    const texts = found.filter((_, at) => {
+      const mine = flat[at] as string;
+      return !flat.some((other, by) => by !== at && other.includes(mine) && (other.length > mine.length || by < at));
+    });
+    const joined = texts.map((document) => document.text.replace(/^\s+|\s+$/g, '')).join('\n\n');
+    // Counted as the planner counts it, so that a text the tool takes is never one the planner refuses.
+    const chars = documentChars(joined);
+    if (chars > MOST_DOCUMENT_CHARS) {
+      throw new ToolInputError(
+        `${texts.length === 1 ? 'The text is' : 'The texts are'} ${chars} characters, and a presentation is made from at most ${MOST_DOCUMENT_CHARS} (about 1,800 words). ` +
+          'Ask the user to paste the part the presentation is about, and name that.',
+      );
+    }
+    return { text: joined, names: texts.map((document) => document.name), retold: [] };
+  };
+
+  const handlers: Record<string, (args: Record<string, unknown>, signal: AbortSignal | undefined, context: ToolCallContext) => Promise<ToolResult>> = {
+    async [TOOL_NAMES.plan](args, signal, context) {
       const brief: Brief = { prompt: text(args, 'topic') };
       if (options.fields) brief.fields = options.fields;
       if (typeof args.language === 'string' && args.language.trim()) brief.language = args.language.trim();
@@ -669,11 +1034,38 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
       if (args.text_only === true && !brief.patterns) brief.textOnly = true;
       const colors = colorsOf(args);
       if (colors) brief.colors = colors;
+      // Checked before any model is asked: a wrong name costs the chat model a turn, not a plan.
+      const given = documentsOf(args, context.documents, brief.prompt, brief.instructions ?? '');
+      if (given.text !== undefined) brief.document = given.text;
 
-      const plan = await planOutline(template, brief, planOptions(TOOL_NAMES.plan, signal));
+      let plan = await planOutline(template, brief, planOptions(TOOL_NAMES.plan, signal));
+      // A named text of which no part goes on a slide only asked for the presentation (the planner
+      // left it all out): it is no text to carry. The plan is made again with it as instructions,
+      // where the request belongs. Sending the chat model to put it there itself would send a long
+      // request back to the copy check, which sends it here.
+      const request = given.text !== undefined && !plan.slides.some((slide) => Array.isArray(slide.passages) && slide.passages.length > 0);
+      if (request) {
+        const { document: _request, ...asked } = brief;
+        plan = await planOutline(template, { ...asked, instructions: [brief.instructions, given.text].filter(Boolean).join('\n\n') }, planOptions(TOOL_NAMES.plan, signal));
+      }
       const id = newId('plan');
       await writeJson(store, storeKeys.plan(id), plan);
-      return { output: describePlan(id, plan), plan };
+      const output = describePlan(id, plan, brief.slideCount !== undefined);
+      if (request) {
+        const one = given.names.length === 1;
+        output.next =
+          `${inWords(given.names.map((name) => `"${name}"`))} only ${one ? 'asks' : 'ask'} for a presentation, so the planner took ${one ? 'it' : 'them'} as instructions, ` +
+          `and no slide carries ${one ? 'it' : 'them'} word for word. ${String(output.next)}`;
+      }
+      if (given.retold.length > 0) {
+        // Whether the person wanted that text on the slides the chat model knows, and the tools do not.
+        const which = inWords(given.retold.map((name) => `"${name}"`));
+        output.not_on_slides = given.retold;
+        output.next =
+          `The topic retells ${which}, and the slides will not carry ${given.retold.length === 1 ? 'that text' : 'those texts'} word for word. ` +
+          `If the user wanted their text on the slides, plan again and name it in documents. ${String(output.next)}`;
+      }
+      return { output, plan };
     },
 
     async [TOOL_NAMES.editPlan](args, signal) {
@@ -748,7 +1140,16 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
         if (colors !== undefined) editOptions.colors = colors;
         if (slides) editOptions.colorSlides = slides;
         if (layouts) editOptions.deckPatterns = layouts;
-        const result = await planEdit(template, deck, instruction, editOptions);
+        // A slide's text is cut only once the person has accepted it. Until then the change stops
+        // after its plan, before anything is written, and the chat model is told what would be cut.
+        editOptions.stopBeforeCut = args.accept_cut !== true;
+        let result: EditResult;
+        try {
+          result = await planEdit(template, deck, instruction, editOptions);
+        } catch (error) {
+          if (error instanceof TextCutError) return { output: { note: error.message, next: CUT_NEXT } };
+          throw error;
+        }
         edited = result;
         if (colors !== undefined) {
           // The slides were numbered as the deck was; the edit says where they are now.
@@ -790,7 +1191,7 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
       const handler = typeof name === 'string' && Object.hasOwn(handlers, name) ? handlers[name] : undefined;
       if (!handler) return { output: { error: `Unknown tool "${String(name)}"` } };
       try {
-        return await handler((typeof args === 'object' && args !== null ? args : {}) as Record<string, unknown>, context?.signal);
+        return await handler((typeof args === 'object' && args !== null ? args : {}) as Record<string, unknown>, context?.signal, context ?? {});
       } catch (error) {
         if (context?.signal?.aborted) throw error;
         // The software tripping over what it read: a stored plan or presentation that is no JSON, or
