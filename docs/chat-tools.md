@@ -241,10 +241,14 @@ Each of these is present only when it applies:
 
 ```json
 {
-  "slides": [{ "number": 1, "layout": "free", "purpose": "Our plan.", "words": 1000, "text_pt": 9, "holds_words": 815, "free_layout": true }],
-  "note": "Not all the text fits: slide 1 holds about 815 of its 1000 words (text at 9 pt). The rest will be cut. Tell the user before creating the presentation, and offer more slides or a shorter text."
+  "slides": [{ "number": 1, "layout": "free", "purpose": "Our plan.", "words": 1000, "text_pt": 9, "holds_words": 725, "free_layout": true }],
+  "note": "Not all the text fits: slide 1 holds about 725 of its 1000 words (text at 9 pt). The rest will be cut. Tell the user before creating the presentation, and offer more slides or a shorter text."
 }
 ```
+
+Where free slides are off (`free: false`, `"free": false` in the manifest, or a `patterns` list without
+`free`), a cut slide's text is not set smaller, and the `note` ends: `Free slides are off, so the text is not
+set smaller.` So does the `note` of a change that stops before writing (see `edit_presentation`).
 
 Where a slide has words and the call had no `slide_count`, `next` begins: `No slide_count was given, so the
 planner chose 6 slides. If the user named a number of slides, plan again with slide_count.`
@@ -292,7 +296,7 @@ by the software. A presentation in another language than the text has `"translat
 
 A slide that holds less than was asked for it, or less than its part of the person's text, is cut, and
 `warnings` says so, as the plan's `note` did before: `slide 1: 1000 words were asked for this slide, and it holds
-about 527 even with its text set small, at 7 pt: the rest is cut. Ask for the text over more slides, or for a
+about 446 even with its text set small, at 7 pt: the rest is cut. Ask for the text over more slides, or for a
 shorter one`. So does a slide written well short of the words asked (`... and it has about 380: ask for it again
 to have them all`), and one that kept too few of the words of the person's text. The chat model passes these
 on. See "Deck warnings" in [troubleshooting.md](troubleshooting.md).
@@ -340,7 +344,7 @@ nothing is stored. The output is then:
 
 ```json
 {
-  "note": "Nothing was changed: slide 2 would hold about 815 of its 1500 words (text at 9 pt). Ask for more slides or a shorter text, or accept that the rest is cut.",
+  "note": "Nothing was changed: slide 2 would hold about 725 of its 1500 words (text at 9 pt). Ask for more slides or a shorter text, or accept that the rest is cut.",
   "next": "Nothing was written. Tell the user what the note says. If they accept that the rest is cut, call edit_presentation again with the same instruction and accept_cut: true; otherwise change the request (more slides, a shorter text)."
 }
 ```

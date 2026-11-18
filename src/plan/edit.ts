@@ -89,7 +89,7 @@ import {
   withoutColorCodes,
 } from './plan.ts';
 import type { PlanOptions, SlideTextFit } from './plan.ts';
-import { MOST_PHOTOS, freeKnown, freeLine, freeOnOffer, freeWritePattern, kindsUsed, namesFree } from './free.ts';
+import { MOST_PHOTOS, freeKnown, freeLine, freeOnOffer, freeTurnedOff, freeWritePattern, kindsUsed, namesFree } from './free.ts';
 import { usedLayouts } from './layouts.ts';
 import { partOf } from './parts.ts';
 import {
@@ -538,6 +538,8 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
   // Whether a new slide, or one that changes its layout, may be a free slide: as for a new plan,
   // with the list the deck is limited to in the place of the brief's.
   const free = freeOnOffer(loaded, context, { direction: deck.direction ?? manifest.direction, textScale: context.textScale }, { option: options.free, app: lists.allow, limit: lists.limit }).offer;
+  // A setting turns free slides off: no slide's text is set smaller, which a slide that is cut says.
+  const freeOff = !free && freeTurnedOff(manifest, { option: options.free, app: lists.allow, limit: lists.limit });
   // A free slide the deck has stays one whatever is on offer, so the plan may name the kinds of
   // part the deck uses beside the kinds on offer.
   const freeIn = free !== undefined || freeSlides.length > 0;
@@ -954,7 +956,7 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
       const translated = translating && !passagesChanged.has(entry) && carry.asked === undefined;
       const need = translated && !doc.same ? Math.min(carry.need, room) : carry.need;
       if (room < need) {
-        short.push(size !== undefined ? textCutDense(number, carry.label, need, room, size) : textCut(number, carry.label, need, room));
+        short.push(size !== undefined ? textCutDense(number, carry.label, need, room, size) : textCut(number, carry.label, need, room, freeOff));
         if (!translated) cutAt(entry, number, carry.words, need, room, size);
       }
       // A slide whose passages changed is held to their words. One the request has written otherwise is not.
@@ -968,7 +970,7 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
     const kept = keptLength.has(entry);
     const words = kept ? Math.min(entry.words, Math.max(1, wordsOfChars(room, language))) : entry.words;
     if (!kept && room < charsOfWords(words, language)) {
-      short.push(size !== undefined ? shortOfWordsDense(number, words, room, size, language) : shortOfWords(number, words, room, language));
+      short.push(size !== undefined ? shortOfWordsDense(number, words, room, size, language) : shortOfWords(number, words, room, language, freeOff));
       cutAt(entry, number, words, charsOfWords(words, language), room, size);
     }
     const whole = toldAsAsked(pattern, words, context, { names, language });
@@ -1287,7 +1289,8 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
   // are written against, which count the heading or caption a slide keeps: no model was asked yet.
   if (options.stopBeforeCut && cuts.length > 0) {
     const said = cuts.map((fit) => `slide ${fit.slide} would hold about ${fit.holds} of its ${fit.words} words${fit.size !== undefined ? ` (text at ${fit.size} pt)` : ''}`).join('; ');
-    throw new TextCutError(`Nothing was changed: ${said}. Ask for more slides or a shorter text, or accept that the rest is cut.`, cuts);
+    const off = freeOff && cuts.some((fit) => fit.size === undefined) ? ' Free slides are off, so the text is not set smaller.' : '';
+    throw new TextCutError(`Nothing was changed: ${said}. Ask for more slides or a shorter text, or accept that the rest is cut.${off}`, cuts);
   }
 
   // The slides the caller's colours are for, when some were named. The caller numbered the deck

@@ -460,6 +460,21 @@ function freeNotes(job: FreeJob, draft: FreeDraft, issues: Issue[], context: Cat
     const chars = toParagraphs(value as string | string[]).reduce((sum, paragraph) => sum + paragraph.length, 0);
     if (chars > 1.25 * most) notes.push({ severity: 'warning', slide: job.number, slot, message: `text is ${chars} characters; the slot fits about ${most}` });
   }
+  // A text set dense has the paragraphs its writer was told: the check of the deck takes as many as
+  // it has, and says what they hold.
+  if (job.free.arrange?.dense === true) {
+    for (const planned of job.pattern.slots) {
+      const at = partOf(planned.slot.name);
+      const now = at ? draft.kept.indexOf(at.block) + 1 : 0;
+      if (!at || now === 0 || planned.slot.kind !== 'text' || planned.mode !== 'paragraphs') continue;
+      const slot = freeSlotName(now, at.part);
+      const told = textBudget(planned.slot, budgetScale(context)).maxParagraphs;
+      const value = draft.slide.slots[slot];
+      if (told === undefined || (typeof value !== 'string' && !Array.isArray(value))) continue;
+      const count = toParagraphs(value as string | string[]).filter((paragraph) => paragraph !== '').length;
+      if (count > told) notes.push({ severity: 'warning', slide: job.number, slot, message: `text has ${count} paragraphs; the slot fits ${told}` });
+    }
+  }
   for (const name of draft.unwritten) {
     const at = partOf(name);
     const now = at ? draft.kept.indexOf(at.block) + 1 : 0;

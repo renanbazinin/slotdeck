@@ -721,11 +721,11 @@ test('the plan says the size of a long text and what is cut', async () => {
   assert.deepEqual(
     (planned.output.slides as Array<Record<string, unknown>>).map((slide) => [slide.words, slide.text_pt, slide.holds_words ?? null]),
     [
-      [500, 10.5, null],
-      [500, 10.5, null],
+      [500, 10, null],
+      [500, 10, null],
     ],
   );
-  assert.equal(planned.output.note, "Slides 1 and 2 carry all their text in smaller type than the template's: 10.5 pt, where the template's is 18 pt. Tell the user, and offer more slides if they want it larger.");
+  assert.equal(planned.output.note, "Slides 1 and 2 carry all their text in smaller type than the template's: 10 pt, where the template's is 18 pt. Tell the user, and offer more slides if they want it larger.");
   assert.deepEqual(Object.keys(planned.output), ['plan_id', 'title', 'language', 'slides', 'note', 'next']);
 
   // 1000 words on one slide: cut, said before anything is written.
@@ -737,12 +737,12 @@ test('the plan says the size of a long text and what is cut', async () => {
     purpose: 'Keep the bike share',
     words: 1000,
     text_pt: 9,
-    holds_words: 815,
+    holds_words: 725,
     free_layout: true,
   });
   assert.equal(
     long.output.note,
-    'Not all the text fits: slide 1 holds about 815 of its 1000 words (text at 9 pt). The rest will be cut. Tell the user before creating the presentation, and offer more slides or a shorter text.',
+    'Not all the text fits: slide 1 holds about 725 of its 1000 words (text at 9 pt). The rest will be cut. Tell the user before creating the presentation, and offer more slides or a shorter text.',
   );
 
   // 200 words are set at four fifths of the template's size or more: as in 0.6.1, nothing is said.
@@ -780,6 +780,19 @@ test('the plan asks for slide_count when words came without one', async () => {
   assert.equal(changed.output.next, NEXT);
 });
 
+test('edit_presentation_plan keeps the mark of parts a change asked for, and shows the model none of it', async () => {
+  const text = { shows: [{ kind: 'text', count: 1 }], shows_main: 'auto', side_by_side: 0 };
+  const chart = { shows: [{ kind: 'text', count: 1 }, { kind: 'chart', count: 1 }], shows_main: 'auto', side_by_side: 0 };
+  const plan = { title: 'Bikes', slides: [{ pattern: 'free', purpose: 'Growth', ...text }, { pattern: 'free', purpose: 'Asks', ...text }] };
+  const change = { summary: 'Added a chart.', language: 'en', title: 'Bikes', slides: [{ pattern: 'free', purpose: 'Growth', ...chart, words: 300 }, { pattern: 'free', purpose: 'Asks', ...text }] };
+  const { tools, store } = bikes(plan, change);
+  await tools.call(TOOL_NAMES.plan, { topic: 'The bike share', language: 'en', slide_count: 2 });
+  const changed = await tools.call(TOOL_NAMES.editPlan, { plan_id: 'plan_1', instruction: 'Add a chart beside the text of slide 1, and make it 300 words' });
+  assert.ok(!JSON.stringify(changed.output).includes('partsAsked'), JSON.stringify(changed.output));
+  const stored = JSON.parse(new TextDecoder().decode(await store.get(storeKeys.plan(String(changed.output.plan_id))))) as { slides: Array<{ blocks?: string[]; partsAsked?: true }> };
+  assert.deepEqual([stored.slides[0]?.blocks, stored.slides[0]?.partsAsked, stored.slides[1]?.partsAsked], [['text', 'chart'], true, undefined]);
+});
+
 test('edit_presentation says a cut before writing', async () => {
   const deck: DeckSpec = { version: 1, language: 'en', fields: demoFields, title: 'Bikes', slides: [{ pattern: 'text-only', slots: { title: 'Keep it', body: ['Riders rely on it.'] } }] };
   const change = {
@@ -795,7 +808,7 @@ test('edit_presentation says a cut before writing', async () => {
   await store.set(storeKeys.deck('deck_0'), new TextEncoder().encode(JSON.stringify(deck)));
   const stopped = await tools.call(TOOL_NAMES.edit, { presentation_id: 'deck_0', instruction: 'Make slide 1 1500 words' });
   assert.deepEqual(stopped.output, {
-    note: 'Nothing was changed: slide 1 would hold about 815 of its 1500 words (text at 9 pt). Ask for more slides or a shorter text, or accept that the rest is cut.',
+    note: 'Nothing was changed: slide 1 would hold about 725 of its 1500 words (text at 9 pt). Ask for more slides or a shorter text, or accept that the rest is cut.',
     next:
       'Nothing was written. Tell the user what the note says. If they accept that the rest is cut, call edit_presentation again with the same instruction and accept_cut: true; ' +
       'otherwise change the request (more slides, a shorter text).',
@@ -810,7 +823,7 @@ test('edit_presentation says a cut before writing', async () => {
   assert.equal(requests.length, 3);
   assert.deepEqual(
     (accepted.output.warnings as string[]).filter((warning) => /words were asked/.test(warning)),
-    ['slide 1: 1500 words were asked for this slide, and it holds about 815 even with its text set small, at 9 pt: the rest is cut. Ask for the text over more slides, or for a shorter one'],
+    ['slide 1: 1500 words were asked for this slide, and it holds about 725 even with its text set small, at 9 pt: the rest is cut. Ask for the text over more slides, or for a shorter one'],
   );
 });
 

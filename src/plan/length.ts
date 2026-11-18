@@ -12,10 +12,11 @@ import { toParagraphs } from '../deck/spec.ts';
 import type { DeckSpec, FreeArrange, FreeBlockKind } from '../deck/spec.ts';
 import type { Issue } from '../deck/validate.ts';
 import { freeSlotName } from '../free/blocks.ts';
-import { textBudget } from '../template/manifest.ts';
+import { scalesWithText, textBudget } from '../template/manifest.ts';
 import type { TextSlotDef } from '../template/manifest.ts';
 import { budgetScale } from './catalog.ts';
 import type { CatalogContext, PlannedSlot, UsablePattern } from './catalog.ts';
+import type { TextShape } from './document.ts';
 
 /**
  * Characters a word takes with the space after it, in running text: about 6 in English. Budgets
@@ -157,6 +158,28 @@ const LAYOUT_SHARE = 0.9;
  */
 const PARAGRAPH_SHARE = 0.75;
 
+/**
+ * A slot of paragraphs of a layout that takes this many or more takes one fewer of a document's
+ * text of three or more paragraphs (see {@link documentParagraphs}). Every paragraph ends on a line
+ * of its own: the 417 characters a text layout of the right-to-left template holds, in five
+ * paragraphs each just over a line, took nine lines and ran 19 pt past its box in PowerPoint. In
+ * four they take at most eight, which the box holds.
+ */
+const FEWER_FROM = 4;
+
+/**
+ * How many paragraphs of a document's text of `paragraphs` paragraphs a slot of paragraphs of a
+ * layout takes, by its limit at the deck's text size (`textBudget`): one fewer than its limit where
+ * that is `FEWER_FROM` or more and the text has three or more. One rule for what the writer is
+ * told ({@link withPassages}), what code sets as it is (`filledText`), and where a text is held
+ * (`homeForChars`). `undefined` where the slot has no limit.
+ */
+export function documentParagraphs(slot: TextSlotDef, scale: number, paragraphs: number): number | undefined {
+  const most = textBudget(slot, scale).maxParagraphs;
+  if (most === undefined) return undefined;
+  return paragraphs >= 3 && most >= FEWER_FROM ? most - 1 : most;
+}
+
 /** Which texts of a pattern take an asked length, and in which language it is counted. */
 export interface LengthOptions {
   /** The texts of a free slide that were set out for the length (see {@link freeLengths}). Left out, the pattern is a layout's, and its running texts take it. */
@@ -170,26 +193,29 @@ export function heldBy(pattern: UsablePattern, context: CatalogContext, options:
   return Math.floor((options.names ? 1 : LAYOUT_SHARE) * textRoom(pattern, context, options.names));
 }
 
-/** How many paragraphs the running slots of a pattern take in all: a slot of one line takes one, and a slot with no limit any number. */
-function slotParagraphs(pattern: UsablePattern, context: CatalogContext, names?: ReadonlySet<string>): number {
+/**
+ * How many paragraphs of a document's text of `paragraphs` paragraphs the running slots of a
+ * pattern take in all (see {@link documentParagraphs}): a slot of one line takes one, and a slot
+ * with no limit any number.
+ */
+function slotParagraphs(pattern: UsablePattern, context: CatalogContext, paragraphs: number): number {
   const scale = budgetScale(context);
   return pattern.slots
-    .filter((planned) => isRunning(planned, names))
-    .reduce((sum, planned) => sum + (planned.mode === 'text' ? 1 : (textBudget(planned.slot as TextSlotDef, scale).maxParagraphs ?? Number.POSITIVE_INFINITY)), 0);
+    .filter((planned) => isRunning(planned))
+    .reduce((sum, planned) => sum + (planned.mode === 'text' ? 1 : (documentParagraphs(planned.slot as TextSlotDef, scale, paragraphs) ?? Number.POSITIVE_INFINITY)), 0);
 }
 
 /**
  * How many characters of a text of so many paragraphs a pattern holds: of a free slide, what its
  * texts named were set out for; of a layout, the share an asked length may fill, three quarters
- * for a text of three or more paragraphs, and less again where the text has more paragraphs than
- * its slots take, which it then joins.
+ * for a text of three or more paragraphs. A text with more paragraphs than its slots take joins
+ * some of them, and loses no characters by that: a slot's limits are its characters and its
+ * paragraphs, and none is a limit on one paragraph. So this is the room the writer is told (see
+ * {@link withPassages}), and the room a slide is said to hold.
  */
 export function documentRoom(pattern: UsablePattern, context: CatalogContext, shape?: { paragraphs: number }, names?: ReadonlySet<string>): number {
   if (names) return heldBy(pattern, context, { names });
-  let room = shape && shape.paragraphs >= 3 ? Math.floor(PARAGRAPH_SHARE * textRoom(pattern, context)) : heldBy(pattern, context);
-  const most = shape ? slotParagraphs(pattern, context) : Number.POSITIVE_INFINITY;
-  if (shape && shape.paragraphs > most) room = Math.floor((room * most) / shape.paragraphs);
-  return room;
+  return shape && shape.paragraphs >= 3 ? Math.floor(PARAGRAPH_SHARE * textRoom(pattern, context)) : heldBy(pattern, context);
 }
 
 /** One running slot's part of an asked length: its share in characters, and the range it is told. */
@@ -280,7 +306,9 @@ export interface PassageOptions extends LengthOptions {
  * description: from nine tenths of the share to a little over it, never over what the slot holds.
  * Where the slide holds less than the text, it is told to shorten it to what it holds, in its own
  * words; where fewer words were asked for, it is told that many. A slot of paragraphs is told to
- * give one string for each paragraph of the text. Its limits are not changed.
+ * give one string for each paragraph of the text. Its limits are not changed, but for one: a slot
+ * of paragraphs of a layout that takes four or more is told one fewer for a text of three or more
+ * paragraphs ({@link documentParagraphs}), and its writer joins them.
  */
 export function withPassages(pattern: UsablePattern, need: number, context: CatalogContext, options: PassageOptions): UsablePattern {
   const { names, language, label, shape, words } = options;
@@ -310,11 +338,20 @@ export function withPassages(pattern: UsablePattern, need: number, context: Cata
     const hint = planned.mode === 'paragraphs' ? 'One string for each paragraph of the text; join paragraphs where there are more than the slot takes' : '';
     told.set(planned.slot.name, [said, hint, withoutLength(planned.slot.description)].filter(Boolean).join('. '));
   });
+  /** The paragraphs a slot of a layout takes of the text ({@link documentParagraphs}), as its limit is counted (`textBudget`), where that is fewer than its limit. */
+  const fewer = (planned: PlannedSlot): { maxParagraphs: number } | undefined => {
+    if (names || planned.mode !== 'paragraphs') return undefined;
+    const slot = planned.slot as TextSlotDef;
+    const most = textBudget(slot, scale).maxParagraphs;
+    const taken = documentParagraphs(slot, scale, shape?.paragraphs ?? 1);
+    if (most === undefined || taken === undefined || taken >= most) return undefined;
+    return { maxParagraphs: Math.ceil(taken * (scalesWithText(slot) ? scale : 1)) };
+  };
   return {
     ...pattern,
     slots: pattern.slots.map((planned) => {
       const description = told.get(planned.slot.name);
-      return description === undefined ? planned : ({ ...planned, slot: { ...planned.slot, description } } as PlannedSlot);
+      return description === undefined ? planned : ({ ...planned, slot: { ...planned.slot, description, ...fewer(planned) } } as PlannedSlot);
     }),
   };
 }
@@ -394,11 +431,18 @@ export function runningSize(pattern: UsablePattern, names?: ReadonlySet<string>)
  */
 export const setSmall = (size: number, templateSize: number): boolean => size < Math.round(0.8 * templateSize * 2) / 2 - 0.01;
 
-/** Said of a slide that holds less text than was asked for it: what was asked, and what it holds. */
-export const shortOfWords = (slide: number, words: number, room: number, language?: string): Issue => ({
+/**
+ * Said at the end of what a slide that is cut is told, where free slides are not on offer (the
+ * option, the template's manifest, or a list of patterns that does not name them): no slide's
+ * text is then set smaller. What comes before it is said as it always was.
+ */
+export const FREE_OFF = '; free slides are off, so its text is not set smaller';
+
+/** Said of a slide that holds less text than was asked for it: what was asked, and what it holds. `freeOff` adds {@link FREE_OFF}. */
+export const shortOfWords = (slide: number, words: number, room: number, language?: string, freeOff = false): Issue => ({
   severity: 'warning',
   slide,
-  message: `${words} words were asked for this slide, and it holds about ${wordsOfChars(room, language)}: ask for the text over more slides, or for a shorter one`,
+  message: `${words} words were asked for this slide, and it holds about ${wordsOfChars(room, language)}: ask for the text over more slides, or for a shorter one${freeOff ? FREE_OFF : ''}`,
 });
 
 /** The same of a slide whose text is set small to hold what was asked (`FreeArrange.dense`), and still holds less. */
@@ -440,13 +484,31 @@ export interface LengthPlanning {
    * number of paragraphs of some of them, where free slides are on offer; `undefined` where they
    * are not, or cannot be made.
    */
-  free?: ((blocks: FreeBlockKind[], arrange: FreeArrange | undefined, lengths: Record<string, number>, paragraphs?: Record<string, number>) => UsablePattern | undefined) | undefined;
+  free?: FreeMaker | undefined;
+  /**
+   * The same for a free slide a plan has, which is written whatever is on offer for a new slide:
+   * what it holds where free slides are off (see {@link TextFirst}). Left out, as `free`.
+   */
+  written?: FreeMaker | undefined;
   /** The parts a free slide is made of when a slide of a layout becomes one. */
   freeParts: (id: string) => FreeBlockKind[];
 }
 
-/** The paragraphs of a text, where they are known: a document's text has those of its passages. */
-type Shape = { paragraphs: number } | undefined;
+/**
+ * The pattern of a free slide of these parts with these lengths, and where it is known the number
+ * of paragraphs of some of them, and of a slide set dense the lengths of the paragraphs of a text
+ * code sets as it is (`asIs`).
+ */
+export type FreeMaker = (
+  blocks: FreeBlockKind[],
+  arrange: FreeArrange | undefined,
+  lengths: Record<string, number>,
+  paragraphs?: Record<string, number>,
+  asIs?: Record<string, readonly number[]>,
+) => UsablePattern | undefined;
+
+/** The paragraphs of a text, where they are known: a document's text has those of its passages (see `shapeOf`). */
+type Shape = TextShape | undefined;
 
 /**
  * How many characters of running text a home holds when it is set out for so many: of a layout,
@@ -461,7 +523,11 @@ function roomOf(home: TextHome, chars: number, planning: LengthPlanning, shape?:
   }
   const lengths = freeLengths(home.blocks, chars);
   const names = Object.keys(lengths);
-  const pattern = shape && names.length === 1 ? planning.free?.(home.blocks, home.arrange, lengths, { [names[0] as string]: shape.paragraphs }) : planning.free?.(home.blocks, home.arrange, lengths);
+  const [name] = names;
+  // A document's text that code sets as it is (`TextShape.asIs`) is judged as it will be set: only
+  // where these are its characters, not where words asked for the slide make it shorter.
+  const asIs = shape?.asIs && shape.asIs.chars === chars && name !== undefined ? { [name]: shape.asIs.each } : undefined;
+  const pattern = shape && name !== undefined && names.length === 1 ? planning.free?.(home.blocks, home.arrange, lengths, { [name]: shape.paragraphs }, asIs) : planning.free?.(home.blocks, home.arrange, lengths);
   return pattern ? heldBy(pattern, planning.context, { names: new Set(names) }) : undefined;
 }
 
@@ -473,8 +539,8 @@ const isOneText = (home: TextHome): boolean => isFreeHome(home) && home.blocks.l
  * Whether a slide of these parts may become a text alone set dense: one running text, and photos,
  * which then give way. With `join`, a slide of several texts and photos may too: its texts become
  * one running text. That is for a plan, where nothing is written yet; a change to a deck keeps a
- * second text it has. A list, a chart, a table or any other part stays: the slide keeps them, and
- * holds what it can of the text.
+ * second text it has. A list, a chart, a table or any other part stays here: the slide keeps them,
+ * and holds what it can of the text, unless its text comes first (`first` in {@link homeForChars}).
  */
 export const densable = (blocks: readonly FreeBlockKind[], join: boolean): boolean => {
   const texts = blocks.filter((kind) => kind === 'text').length;
@@ -503,35 +569,113 @@ export interface HomeFound {
 }
 
 /**
+ * The text of a slide comes first (see {@link homeForChars}): where the home found keeps less than
+ * `below` of the text (1: wherever it is cut), the text alone, set dense, is tried, and taken where
+ * it keeps more. With `plain`, where free slides are not on offer, the layout of plain text that
+ * keeps most of it is tried the same way: a document's text on a layout of cards or figures that
+ * holds a few characters of it, or on a free slide of a text and other parts that a plan made with
+ * free slides on (a free slide of its text alone stays). There a layout of a table keeps the rows
+ * of a table of the passages that it shows, as well as its running text. `need` and `shape` are
+ * those of the text alone, where a table of a document's passages is running text.
+ */
+export interface TextFirst {
+  need: number;
+  shape?: TextShape | undefined;
+  below: number;
+  plain?: boolean;
+}
+
+/** What a home keeps of a text: the share of it that its room holds. */
+const keptOf = (room: number, need: number): number => (need > 0 ? Math.min(room, need) / need : 1);
+
+/**
  * Where a text of so many characters goes, in this order: the home it has, at the template's own
  * sizes; the smallest layout of plain text that holds it, for a slide of plain text; a free slide
  * set out for that length; and, where `dense` allows it and the slide shows one running text and
  * nothing else but photos, a free slide of that text alone set dense. With `join`, a slide of
  * several texts and photos may become that text alone too, last: a plan's slide of seven short
- * texts for a long text is one text of it. Where none holds it, the one that holds most, and
- * `holds` is false. With `dense`, a free home of one text is returned set dense, also where it
- * holds the text at the template's size: its text is then set as without the flag, and smaller
- * only where the paragraphs written need it. A home that comes out the same as the one given is
+ * texts for a long text is one text of it. A text of known paragraphs (`shape`) that a layout's
+ * slots take fewer of ({@link documentParagraphs}) goes on to a layout of plain text that takes
+ * them, or to a free slide, where code sets them as they are; where none holds it, a layout that
+ * holds its characters does, and its writer joins paragraphs. Where none holds it, the one that
+ * holds most. With `first`, where that keeps more of the
+ * text, the text alone set dense, whatever else the slide shows (cards, a chart, a table, a list):
+ * those give way, as photos do; or, where free slides are not on offer, a layout of plain text
+ * (`TextFirst.plain`). With `dense`, a free home of one text is returned set dense, also where it
+ * holds the text at the template's size: its text is then set at that size, counted as PowerPoint
+ * sets it, and smaller only where the paragraphs written need it. A home that comes out the same as the one given is
  * the one given, so that a caller can tell by identity that nothing moved.
  */
-export function homeForChars(given: TextHome, need: number, planning: LengthPlanning, options: { shape?: { paragraphs: number } | undefined; dense?: boolean; join?: boolean } = {}): HomeFound {
+export function homeForChars(given: TextHome, need: number, planning: LengthPlanning, options: { shape?: TextShape | undefined; dense?: boolean; join?: boolean; first?: TextFirst | undefined } = {}): HomeFound {
   const dense = options.dense === true;
   const found = place(undense(given), need, planning, dense, options.shape, options.join === true);
-  if (!dense || !isOneText(found.home) || isDenseHome(found.home)) return sameHome(found.home, given) ? { ...found, home: given } : found;
-  const home: TextHome = { blocks: ['text'], arrange: { ...((found.home as { arrange?: FreeArrange }).arrange ?? {}), dense: true } };
-  return { ...found, home: sameHome(home, given) ? given : home };
+  let result: HomeFound;
+  if (!dense || !isOneText(found.home) || isDenseHome(found.home)) result = sameHome(found.home, given) ? { ...found, home: given } : found;
+  else {
+    const home: TextHome = { blocks: ['text'], arrange: { ...((found.home as { arrange?: FreeArrange }).arrange ?? {}), dense: true } };
+    result = { ...found, home: sameHome(home, given) ? given : home };
+  }
+  const { first } = options;
+  if (!first || result.holds || keptOf(result.room, need) >= first.below) return result;
+  let other: HomeFound | undefined;
+  // What the home found keeps of the text: of its running text, and, without free slides, the rows
+  // of a table of the passages that it shows in its table too, which the other home has as text.
+  let kept = keptOf(result.room, need);
+  if (planning.free) {
+    if (!dense || (isOneText(result.home) && isDenseHome(result.home))) return result;
+    // The text alone, set dense: what else the slide shows gives way to it.
+    const own = isOneText(given) ? (given as { arrange?: FreeArrange }).arrange : undefined;
+    const alone: TextHome = { blocks: ['text'], arrange: { ...(own ?? {}), dense: true } };
+    const room = roomOf(alone, first.need, planning, first.shape);
+    if (room !== undefined) other = { home: alone, room, holds: room >= first.need };
+  } else if (first.plain && !isOneText(result.home)) {
+    // Without free slides, the layout of plain text that holds the text, the smallest, else the one
+    // that holds most of it: better than a layout that holds a few characters of it, or than a free
+    // slide a plan made with free slides on, of a text and cards, that holds next to none. One where
+    // code sets a document's text as it is comes first (`setsAsIs`).
+    const rooms = planning.plain
+      .map((id) => ({ id, room: roomOf({ pattern: id }, first.need, planning, first.shape) ?? 0 }))
+      .filter((one) => one.room > 0)
+      .sort((a, b) => a.room - b.room);
+    const pick = rooms.find((one) => one.room >= first.need && setsAsIs({ pattern: one.id }, planning, first.shape)) ?? rooms.find((one) => one.room >= first.need) ?? rooms.at(-1);
+    if (pick) other = { home: { pattern: pick.id }, room: pick.room, holds: pick.room >= first.need };
+    // A free slide the plan has is written all the same: it keeps what it holds as it is written.
+    const room = isFreeHome(result.home) ? (roomOf(result.home, need, { ...planning, free: planning.written }, options.shape) ?? result.room) : result.room;
+    kept = keptOf(room, need);
+    if (first.need > need) kept = (Math.min(room, need) + first.need - need) / first.need;
+  }
+  if (!other || keptOf(other.room, first.need) <= kept) return result;
+  return { ...other, home: sameHome(other.home, given) ? given : other.home };
 }
 
-/** Where a text of so many words asked for a slide of a plan goes (see {@link homeForChars}), a free text alone set dense where it needs it. */
-export const homeFor = (current: TextHome, words: number, planning: LengthPlanning): HomeFound => homeForChars(current, charsOfWords(words, planning.language), planning, { dense: true, join: true });
+/**
+ * Where a text of so many words asked for a slide of a plan goes (see {@link homeForChars}), a free
+ * text alone set dense where it needs it. A slide that keeps cards, a chart, a table or a list
+ * beside the text and so holds less than half of it is the text alone, where that holds more: a
+ * chart slide that holds most of its words keeps its chart. With `first` false its parts stay,
+ * whatever they leave the text: parts a change to a plan asks for, or asked for before.
+ */
+export const homeFor = (current: TextHome, words: number, planning: LengthPlanning, first = true): HomeFound => {
+  const need = charsOfWords(words, planning.language);
+  return homeForChars(current, need, planning, { dense: true, join: true, ...(first ? { first: { need, below: 0.5 } } : {}) });
+};
 
 function place(current: TextHome, need: number, planning: LengthPlanning, dense: boolean, shape: Shape, join: boolean): HomeFound {
   const tried: Array<{ home: TextHome; room: number }> = [];
+  /**
+   * Whether a home with this room holds the text as it is: a layout whose slots take fewer
+   * paragraphs than the text has ({@link documentParagraphs}) does not. The text goes on to a
+   * layout of plain text that takes them, or to a free slide, where code sets them as they are.
+   * Where none does, such a layout still holds it (see the end of `place`): its writer joins
+   * paragraphs and loses no characters by that, so its room stays what it holds (see
+   * {@link documentRoom}).
+   */
+  const holdsIn = (home: TextHome, room: number): boolean => room >= need && (need === 0 || takesParagraphs(home, planning, shape));
   const attempt = (home: TextHome): boolean => {
     const room = roomOf(home, need, planning, shape);
     if (room === undefined) return false;
     tried.push({ home, room });
-    return room >= need;
+    return holdsIn(home, room);
   };
   const last = (): number => (tried.at(-1) as { room: number }).room;
   if (attempt(current)) return { home: current, room: last(), holds: true };
@@ -542,7 +686,8 @@ function place(current: TextHome, need: number, planning: LengthPlanning, dense:
       .filter((other) => other.room > 0)
       .sort((a, b) => a.room - b.room);
     for (const other of others) tried.push({ home: { pattern: other.id }, room: other.room });
-    const fits = others.find((other) => other.room >= need);
+    // One where code sets a document's text as it is comes first.
+    const fits = others.find((other) => holdsIn({ pattern: other.id }, other.room) && (need === 0 || setsAsIs({ pattern: other.id }, planning, shape))) ?? others.find((other) => holdsIn({ pattern: other.id }, other.room));
     if (fits) return { home: { pattern: fits.id }, room: fits.room, holds: true };
   }
   if (planning.free) {
@@ -559,8 +704,41 @@ function place(current: TextHome, need: number, planning: LengthPlanning, dense:
       if (attempt(home)) return { home, room: last(), holds: true };
     }
   }
+  // A layout that holds the characters of a text, though not its paragraphs as they are, holds it
+  // where nothing else does: its writer joins some of them. The one that takes most of them, the
+  // home it has before another, else the least.
+  const taken = (home: TextHome): number => {
+    const pattern = shape && !isFreeHome(home) ? planning.layout(home.pattern, home.items) : undefined;
+    return pattern && shape ? Math.min(shape.paragraphs, slotParagraphs(pattern, planning.context, shape.paragraphs)) : Number.POSITIVE_INFINITY;
+  };
+  const loose = tried
+    .filter((entry) => entry.room >= need)
+    .map((entry) => ({ entry, taken: taken(entry.home), own: entry.home === current ? 0 : 1 }))
+    .sort((a, b) => b.taken - a.taken || a.own - b.own || a.entry.room - b.entry.room);
+  const kept = loose[0]?.entry;
+  if (kept) return { ...kept, holds: true };
   const best = tried.reduce<{ home: TextHome; room: number } | undefined>((most, entry) => (!most || entry.room > most.room ? entry : most), undefined);
   return best ? { ...best, holds: false } : { home: current, room: 0, holds: false };
+}
+
+/** Whether the running slots of a home take a text's paragraphs as they are ({@link documentParagraphs}): a free slide's, and any where they are not known, do. */
+function takesParagraphs(home: TextHome, planning: LengthPlanning, shape: Shape): boolean {
+  if (!shape || isFreeHome(home)) return true;
+  const pattern = planning.layout(home.pattern, home.items);
+  return !pattern || shape.paragraphs <= slotParagraphs(pattern, planning.context, shape.paragraphs);
+}
+
+/**
+ * Whether code can set a document's text as it is in a home: a free slide, or a layout of one
+ * running slot that takes its paragraphs (see `filledText`). Of two layouts of plain text that hold
+ * a text, one of two columns that the writer fills each, and one of a single text that takes its
+ * paragraphs, the second is chosen: there the person's words are set as they are.
+ */
+function setsAsIs(home: TextHome, planning: LengthPlanning, shape: Shape): boolean {
+  if (!shape || isFreeHome(home)) return true;
+  const pattern = planning.layout(home.pattern, home.items);
+  if (!pattern) return true;
+  return pattern.slots.filter((planned) => isRunning(planned)).length === 1 && takesParagraphs(home, planning, shape);
 }
 
 /** The purpose of one of several slides that share a text: "The plan for 2026 (2/3)". */
