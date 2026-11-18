@@ -7,7 +7,7 @@ import { toParagraphs } from '../deck/spec.ts';
 import type { DeckSpec, SlotValue } from '../deck/spec.ts';
 import type { Issue } from '../deck/validate.ts';
 import type { JsonSchema } from '../llm/provider.ts';
-import { charsOfWords, readWords } from './length.ts';
+import { FREE_OFF, charsOfWords, readWords } from './length.ts';
 
 /** The most characters of a document a deck is made from: about 1,800 words, which one writing call carries. */
 export const MOST_DOCUMENT_CHARS = 12000;
@@ -613,6 +613,25 @@ export function fillParagraphs(all: readonly DocumentPassage[], numbers: readonl
 /** How many paragraphs a slide's text from these passages has, as code would set it (see {@link fillParagraphs}). */
 export const paragraphsOf = (all: readonly DocumentPassage[], numbers: readonly number[]): number => Math.max(1, fillParagraphs(all, numbers).length);
 
+/**
+ * The headings a slide's text from these passages shows as paragraphs of their own, as
+ * {@link fillParagraphs} sets them: each section that starts inside the slide. They take room on
+ * the slide like any line of its text.
+ */
+function headingsIn(all: readonly DocumentPassage[], numbers: readonly number[]): string[] {
+  const headings: string[] = [];
+  let section: string | undefined;
+  let previous: number | undefined;
+  for (const number of numbers) {
+    const passage = all[number - 1];
+    if (!passage) continue;
+    if (previous !== undefined && passage.section !== undefined && passage.section !== section) headings.push(passage.section);
+    section = passage.section;
+    previous = number;
+  }
+  return headings;
+}
+
 /** The words of some passages. */
 export const passageWords = (all: readonly DocumentPassage[], numbers: readonly number[]): number => numbers.reduce((sum, number) => sum + (all[number - 1] ? passageTokens(all[number - 1] as DocumentPassage).length : 0), 0);
 
@@ -625,17 +644,37 @@ const runningOf = (doc: DocumentPlan, numbers: readonly number[], tables: boolea
 
 /**
  * How many characters of running text some passages take on a slide. In the deck's script, the
- * characters they have; in another, the characters their words take once they are translated. A
- * table takes none where the slide has a table (`tables`), which it goes into.
+ * characters of the paragraphs code sets on a slide of free parts (`fillParagraphs`): their own,
+ * and those of the headings that start inside the slide, each a paragraph of its own. In another,
+ * the characters their words and those of the headings take once they are translated. A table
+ * takes none where the slide has a table (`tables`), which it goes into.
  */
 export function needOf(doc: DocumentPlan, numbers: readonly number[], language: string | undefined, tables = true): number {
   const running = runningOf(doc, numbers, tables);
-  if (doc.same) return running.reduce((sum, number) => sum + (doc.passages[number - 1]?.chars ?? 0), 0);
-  return charsOfWords(passageWords(doc.passages, running), language);
+  if (doc.same) return fillParagraphs(doc.passages, running, { bullets: true }).reduce((sum, paragraph) => sum + paragraph.length, 0);
+  const headings = headingsIn(doc.passages, running);
+  return charsOfWords(passageWords(doc.passages, running) + headings.reduce((sum, heading) => sum + tokensOf(heading).length, 0), language);
 }
 
-/** The paragraphs of running text some passages give a slide: of all but its tables, where it has a table (`tables`). */
-export const shapeOf = (doc: DocumentPlan, numbers: readonly number[], tables = true): { paragraphs: number } => ({ paragraphs: paragraphsOf(doc.passages, runningOf(doc, numbers, tables)) });
+/**
+ * The paragraphs of running text some passages give a slide (`paragraphs`): of all but its tables,
+ * where it has a table (`tables`), its headings among them. In the deck's script also how long
+ * each of them is where code sets them as they are (`asIs`, see {@link fillParagraphs}), with the
+ * characters the slide needs for them (`needOf`), which say that it is that text.
+ */
+export function shapeOf(doc: DocumentPlan, numbers: readonly number[], tables = true): TextShape {
+  const running = runningOf(doc, numbers, tables);
+  const shape: TextShape = { paragraphs: paragraphsOf(doc.passages, running) };
+  if (doc.same && running.length > 0) shape.asIs = { chars: needOf(doc, numbers, undefined, tables), each: fillParagraphs(doc.passages, running, { bullets: true }).map((paragraph) => paragraph.length) };
+  return shape;
+}
+
+/** The paragraphs of a slide's text from a document: how many (see {@link shapeOf}), and, where code may set them as they are, how long each is. */
+export interface TextShape {
+  paragraphs: number;
+  /** The lengths of the paragraphs code sets on a free slide, of a text of `chars` characters (`needOf`). Only a text of those characters is that text. */
+  asIs?: { chars: number; each: number[] };
+}
 
 /** What a slide of a plan carries of its document, worked out from its passages and its words. */
 export interface SlideDocument {
@@ -646,7 +685,7 @@ export interface SlideDocument {
   /** The characters of text it is to hold. */
   need: number;
   /** The paragraphs that text has. */
-  shape: { paragraphs: number };
+  shape: TextShape;
   /** The words it is to carry: those of its passages, or those asked for it. */
   words: number;
   /** The words asked for it, where it was asked to be shorter than its passages. */
@@ -906,8 +945,11 @@ export function minMax(atoms: readonly PassageAtom[], groups: number): number {
 
 /** What settling the passages of an answer needs to know of the deck. */
 export interface SettleOptions {
-  /** Whether a slide can carry passages where it stands first or last: a free slide, or a layout with room for running text. */
-  carries: (entry: { pattern: string; blocks?: unknown }) => boolean;
+  /**
+   * Whether a slide can carry passages where it stands first or last: a free slide, a layout with
+   * room for running text, or one with a table that is given only tables of the document.
+   */
+  carries: (entry: { pattern: string; blocks?: unknown; passages?: readonly number[] }) => boolean;
   /** The number of slides is fixed: no slide is added. */
   fixed: boolean;
   /** How many slides the document takes of its own: added for it when the answer has none to carry it. */
@@ -916,6 +958,13 @@ export interface SettleOptions {
   room: number;
   /** The pattern of a slide added to carry passages: the smallest layout of plain text, or a free slide of text. */
   textHome: () => { pattern: string; blocks?: ['text'] };
+  /**
+   * In a deck of three slides or fewer whose number is fixed, which carries the document on every
+   * slide: whether an opening or a closing slide that shows no running text (`end`) keeps the
+   * passages the answer gave it, and becomes a slide of text (`textHome`), in place of giving them
+   * to the slide next to it (`to`, `undefined` where there is none). Left out, it never does.
+   */
+  keepEnd?: (end: { pattern: string; blocks?: unknown; passages: number[] }, to: { pattern: string; blocks?: unknown; passages: number[] } | undefined) => boolean;
   /** The size of some passages on a slide, for sharing them out. */
   sizeOf: (numbers: readonly number[]) => number;
   /** In a change to a plan: the passages the plan had on its slides. Only those are put back where an answer drops them. */
@@ -927,7 +976,8 @@ export interface SettleOptions {
  * several slides stays on the first, and a passage both on a slide and left out stays on the slide.
  * A passage the answer forgot joins the slide of the passage before it, else of the one after. An
  * opening or a closing slide that cannot show running text gives its passages to the slide next to
- * it. An answer that places no passage at all has them shared over its slides of content, each
+ * it, or keeps them as a slide of text where `keepEnd` says so. An answer that places no passage at
+ * all has them shared over its slides of content, each
  * slide then about what its passages say, unless it leaves them all out: a brief that only asks
  * for a presentation. The order of the slides is the answer's.
  */
@@ -964,7 +1014,9 @@ export function settlePassages<T extends { pattern: string; purpose: string; blo
       entry.passages = [...entry.passages, number].sort((a, b) => a - b);
       placed.add(number);
     }
-    // An opening or a closing slide that shows no running text gives its passages to the slide next to it.
+    // An opening or a closing slide that shows no running text gives its passages to the slide next
+    // to it. In a deck of three slides or fewer whose number is fixed it may keep them, as a slide
+    // of text (`keepEnd`): where they are text that the slide next to it would cut.
     if (list.length > 1) {
       for (const [at, step] of [
         [0, 1],
@@ -975,6 +1027,11 @@ export function settlePassages<T extends { pattern: string; purpose: string; blo
         let to: (typeof list)[number] | undefined;
         for (let other = at + step; other >= 0 && other < list.length && !to; other += step) if ((list[other] as (typeof list)[number]).passages.length > 0) to = list[other];
         for (let other = at + step; other >= 0 && other < list.length && !to; other += step) if (options.carries(list[other] as (typeof list)[number])) to = list[other];
+        if (options.keepEnd?.(end, to)) {
+          const { blocks: _blocks, arrange: _arrange, items: _items, ...rest } = end as typeof end & { arrange?: unknown; items?: unknown };
+          list[at] = { ...rest, ...options.textHome() } as unknown as typeof end;
+          continue;
+        }
         if (!to) continue;
         to.passages = [...to.passages, ...end.passages].sort((a, b) => a - b);
         end.passages = [];
@@ -1127,11 +1184,21 @@ export function documentKept(deck: Pick<DeckSpec, 'document' | 'slides' | 'langu
   return { words, ...(translated ? { translated: true as const } : { kept_words: kept }), ...(missing.length > 0 ? { left_out: passageLabel(missing) } : {}) };
 }
 
-/** Said of a slide that holds less of its text from the document than it carries. */
-export const textCut = (slide: number, label: string, need: number, room: number): Issue => ({
+/** Said of a slide that holds less of its text from the document than it carries. `freeOff` adds {@link FREE_OFF}. */
+export const textCut = (slide: number, label: string, need: number, room: number, freeOff = false): Issue => ({
   severity: 'warning',
   slide,
-  message: `the text from the document for this slide (${label}) is ${need} characters, and the slide holds about ${room}: it is cut to fit. Ask for more slides to keep it whole`,
+  message: `the text from the document for this slide (${label}) is ${need} characters, and the slide holds about ${room}: it is cut to fit. Ask for more slides to keep it whole${freeOff ? FREE_OFF : ''}`,
+});
+
+/**
+ * Said of a slide that holds all of its text from the document, but only with its paragraphs
+ * joined: its writer is told fewer paragraphs than the text has, as the lines of a long list are.
+ */
+export const linesJoined = (slide: number, label: string, paragraphs: number, told: number): Issue => ({
+  severity: 'warning',
+  slide,
+  message: `the text from the document for this slide (${label}) has ${paragraphs} paragraphs, and the slide holds it only as ${told}: its paragraphs are joined. Ask for more slides to keep them apart`,
 });
 
 /** The same of a slide whose text is set small to hold it (`FreeArrange.dense`), and still holds less. */

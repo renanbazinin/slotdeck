@@ -175,36 +175,51 @@ wish and makes room for it, and from 0.6.2 the text stays on the slide it was as
    - else the same free slide set dense: its text alone, set smaller down to the least size that reads (9 pt on
      a slide 13.33 inches wide, 7 pt on one 10 inches wide), in two or three columns in the larger room under
      the title. A photo gives way. So do the texts of a plan's slide of several texts, where nothing is written
-     yet and they would be cut: they are one text (`planOutline`, `editPlan`). A list, a chart, a table or cards
-     do not, nor a second text of a deck's slide (`planEdit`).
+     yet and they would be cut: they are one text (`planOutline`, `editPlan`). In a plan, so do a list, a
+     chart, a table or cards that leave the slide less than half of the text asked, where the text alone holds
+     more (from 0.6.3). In a change to a plan (`editPlan`) only the parts the plan had give way: a part a
+     change asks for stays, in that change and the ones after it, where it is a part of a free slide or a
+     layout's chart or table. A second text of a deck's slide does not give way (`planEdit`).
 
    A free slide of one text that carries an asked length is always marked dense (`arrange.dense`), so that the
-   paragraphs the writer chooses never overflow it; where its text fits at the template's size it is laid out
-   as before. See "A long text a person asked for" in [free-slides.md](free-slides.md).
-3. A slide asked for words is never spread over more slides. A text longer than a slide holds at the least size
-   is cut to what it holds, and the plan says so before anything is written (`planTextFit`, below). A slide
-   that keeps a chart, a table, a list, cards or a deck's second text holds what it can beside them.
+   paragraphs the writer chooses never overflow it; where its text fits at four fifths of the template's size
+   it is set as large as it fits, as without the flag. From 0.6.3 one rule says whether it fits: its
+   paragraphs counted by length one by one, its columns filled as PowerPoint fills them, each keeping a line
+   free. See "A long text a person asked for" in [free-slides.md](free-slides.md).
+3. A slide asked for words is never spread over more slides. A text longer than a slide holds at the least
+   size is cut to what it holds, and the plan says so before anything is written (`planTextFit`, below). A
+   slide that keeps a chart, a table, a list or cards beside which it holds half of its text or more, or a
+   deck's second text, holds what it can beside them. So does a slide that keeps such parts in a change to a
+   plan (`editPlan`) where a change asked for them, or in a change to a deck (`planEdit`), whatever they hold:
+   a free slide's parts, and a layout's chart or table. A layout of cards or of a list gives way to the text,
+   as before.
 4. The writer is told the length before the rest of the slot's description, from which what it said of length
    is taken out, in words and as a range of characters that starts at the length, or at 95% of what the slot
-   holds where that is less:
-   `Write 200 words, as was asked: 1200 to 1370 characters in all`. A model writes short of a length it is told
-   "about", by a fifth. A long text with nothing else to say of itself is asked for in paragraphs, at most 12 on
-   a dense slide, whose range ends where the text fits in any number of them. The slot's limits stay as they
-   are. A text written under 85% of the least it was told is sent back once; still short, the deck gets a
-   warning:
-   `500 words were asked for this slide, and it has about 380: ask for it again to have them all`. A slide that
-   holds less is told what it holds (`Write 527 words, 3080 to 3430 characters: of the 1000 words asked for this
-   slide, the most it holds`), and the deck gets a warning:
-   `200 words were asked for this slide, and it holds about 92: ask for the text over more slides, or for a shorter one`,
-   or on a slide set dense,
-   `1000 words were asked for this slide, and it holds about 527 even with its text set small, at 7 pt: the rest is cut. Ask for the text over more slides, or for a shorter one`.
+   holds where that is less: `Write 200 words, as was asked: 1200 to 1370 characters in all`. A model writes
+   short of a length it is told "about", by a fifth. A long text with nothing else to say of itself is asked
+   for in paragraphs, at most 12 on a dense slide, whose range ends where the text fits in any number of them
+   of any length. The slot's limits stay as they are. A text written under 85% of the least it was told is
+   sent back once; still short, the deck gets a warning: `500 words were asked for this slide, and it has
+   about 380: ask for it again to have them all`. A slide that holds less is told what it holds (`Write 446
+   words, 2610 to 2900 characters: of the 1000 words asked for this slide, the most it holds`), and the deck
+   gets a warning: `200 words were asked for this slide, and it holds about 92: ask for the text over more
+   slides, or for a shorter one`, or on a slide set dense, `1000 words were asked for this slide, and it holds
+   about 446 even with its text set small, at 7 pt: the rest is cut. Ask for the text over more slides, or for
+   a shorter one`.
 
 With free slides off a slide holds what its layout holds: no text is set smaller, no slide is added, and the
-rest of a long text is cut, which the plan says before writing.
+rest of a long text is cut, which the plan says before writing. From 0.6.3 the deck's warning says why, at its
+end: `200 words were asked for this slide, and it holds about 49: ask for the text over more slides, or for a
+shorter one; free slides are off, so its text is not set smaller`. So do the plan tool's `note` and the
+`TextCutError` of a change that stops before writing: `Free slides are off, so the text is not set smaller.`
+Free slides are off where `free: false` is passed, the manifest says `"free": false`, or a list of patterns
+(the app's or the person's) does not name `free`.
 
-What to expect: 500 Hebrew words (about 3,250 characters) go on one slide 10 inches wide at 7 to 7.5 pt, which
-holds at most about 520 at 7 pt. 500 English words (about 3,000 characters) go on one slide 13.33 inches wide
-at 10.5 to 12 pt, which holds at most about 800 at 9 pt.
+What to expect: a slide 10 inches wide of a right-to-left template holds at most about 2,900 characters at 7
+pt, some 440 Hebrew words: 500 of them (about 3,250 characters) are cut to that. 500 English words (about
+3,000 characters) go on one slide 13.33 inches wide at 10 pt, which holds at most about 4,350 characters, some
+720 words, at 9 pt. A text of many paragraphs holds less (see "A long text a person asked for" in
+[free-slides.md](free-slides.md)).
 
 ```ts
 const plan = await planOutline(template, { prompt: 'Our expansion north', instructions: 'One slide of 200 words of running text.', slideCount: 1 }, { llm });
@@ -214,7 +229,7 @@ const plan = await planOutline(template, { prompt: 'Our expansion north', instru
 `words` is part of a plan an app keeps, from 1 to 3000. A change to the plan keeps it unless the request changes
 it, and `writeDeck` writes a plan that has it as above. `editPlan` shows each such slide with its words, the size
 its text is set at where that is small, and the most it holds (`2. free (a text; 500 words; text at 7 pt; at
-most about 520 words): ...`), so that "make it longer" stays within what the slide holds. It adds no slide for a
+most about 440 words): ...`), so that "make it longer" stays within what the slide holds. It adds no slide for a
 text unless the request asks for more slides, and "keep it to 2 slides" gives the two slides the words of
 those they take in. A change to a deck reads `words` the same way: see "Editing a deck" below.
 
@@ -282,9 +297,30 @@ too (free slides of texts and photos, and plain text layouts), so that no slide 
 cut; a chart or any other slide keeps what it was planned for. A slide asked to be shorter than its passages
 keeps them, and the passages are shared again only between such slides. A deck of three slides or fewer has no
 opening or closing slide unless the brief asks for one: an answer of that many slides with a slide that carries
-no passage is asked again once, and one that keeps an opening slide then stands. A change to a plan that names
-a number of slides ("keep it to 2 slides") shares the passages again over all of them, a slide it keeps as it
-was too, and asks again in the same way.
+no passage is asked again once, and one that keeps an opening slide then stands. An opening or a closing slide
+that shows no running text gives the passages the answer gave it to the slide next to it. In such a deck it
+keeps them, as a slide of text, where they are more than a title line and the slide next to it would not hold
+them beside its own (from 0.6.3): a cover given the document's title line stays a cover, and the other slides
+carry the rest. A layout of a table given only the document's tables keeps them where it is, at an end of a
+deck or in its middle, and passages shared again go round it (from 0.6.3). A change to a plan that names a
+number of slides ("keep it to 2 slides") shares the passages again over all of them, a slide it keeps as it was
+too, and asks again in the same way.
+
+**The person's text comes first** (from 0.6.3). A slide that is still cut beside cards, figures, steps, a list,
+a chart, a quote, a note, a table or a photo is its text alone, set dense, where free slides are on offer and
+that keeps more of the text. The other parts give way. A table of the slide's passages is then part of its
+running text. This is so in a plan, also one a layout the outline chose becomes (a chart beside a text, a
+table), and in a change to a plan (`editPlan`) for the parts the plan had: a part a change asks for stays, in
+that change and the ones after it, and the plan says what of the text it leaves out. A slide of the change is
+the plan's slide of the same parts, in any order, of the same purpose, else in the same place, else in order;
+one beyond the slides the plan had of those parts is new. A change to a deck (`planEdit`) keeps the parts a
+slide has. A slide that holds its passages beside its other parts keeps them, and where sharing the passages
+again makes the room, the parts stay. With free slides off, a slide of a plan on a layout that holds a few
+characters of its text (cards, figures, a quote) moves to the layout of plain text that holds most of it, and
+so, in a change to the plan, does a free slide of a text and cards that a plan made with free slides on, where
+the layout keeps more of the text. Of the layouts of plain text that hold a text, one of a single text that
+takes its paragraphs as they are comes first, so that code sets them there word for word. A layout of a table
+counts the rows it shows in its table as kept, and moves only where the plain text keeps more.
 
 **Writing.** A slide that holds its passages gets them word for word, set by code, where the document is in
 the deck's language, nothing asks for it shorter, it has no table that goes into a table, and its pattern has
@@ -292,15 +328,28 @@ one running text. The writer then writes only its title and its short slots. In 
 by code has the list's bullet in place of its own; a number stays. Any other slide carrying passages is given
 its text and told to keep the text's words and order, shortened only where a limit makes it: a translation, a
 summary, a slide that is cut, a table on a slide with a table (which goes into the table, cut to the limits of
-its cells), a layout of several running texts. On a slide with no table, a table of the document is part of the
-running text, a paragraph for each row with its cells joined by " | ", and the slide's room is counted for it.
-A slide in the deck's language that was not asked to be shorter, has no table that goes into a table and has
-room for nearly all of its text is checked for the words it keeps: under 85% it is sent back once, and the deck
-is told when it is still so:
-`the slide keeps 72% of the words of its text from the document (p3-p5), though it has room for nearly all of it`.
-A slide that holds less than its passages is cut to fit, and the deck is told:
-`the text from the document for this slide (p3-p5) is 4100 characters, and the slide holds about 3700 even with its text set small, at 7 pt: it is cut to fit. Ask for more slides to keep it whole`.
-The numbers a chart shows may come from the document as well as from the brief.
+its cells), a layout of several running texts. On a slide with no table, a table of the document is part of
+the running text, a paragraph for each row with its cells joined by " | ", and the slide's room is counted for
+it. A slide in the deck's language that was not asked to be shorter, has no table that goes into a table and
+has room for nearly all of its text is checked for the words it keeps: under 85% it is sent back once, and the
+deck is told when it is still so: `the slide keeps 72% of the words of its text from the document (p3-p5),
+though it has room for nearly all of it`. A slide that holds less than its passages is cut to fit, and the
+deck is told: `the text from the document for this slide (p3-p5) is 4100 characters, and the slide holds about
+3700 even with its text set small, at 7 pt: it is cut to fit. Ask for more slides to keep it whole`. What a
+slide is said to hold is the room the writer is told, and what `planTextFit` counts. A slide set dense holds a
+document's text as code would set it, its headings among its paragraphs, and code sets it there word for word
+only where the slide holds it so (from 0.6.3); otherwise its writer writes it, told what the slide holds, in
+at most twelve paragraphs, or, where the slide holds all of it in more, in the most that do, and joins the
+rest. A text of more paragraphs than a layout's slots take has some of them joined, which loses no room. Such
+a text goes on to a layout of plain text whose one running text takes its paragraphs, else, with free slides
+on, to a free slide, where code sets its paragraphs as they are; where neither holds it, a layout that holds
+its characters keeps it, and its writer joins some paragraphs. A slot of paragraphs of a layout that takes
+four or more takes one fewer of a text of three or more paragraphs (from 0.6.3): each paragraph ends on a line
+of its own, and on a right-to-left template five such paragraphs, each just over a line, ran 19 pt past the
+box of a text layout that holds 417 characters. Its
+writer is told one fewer and joins them, and code sets such a text there as it is only where it has no more.
+With free slides off the warning ends `; free slides are off, so its text is not set smaller`. The numbers a
+chart shows may come from the document as well as from the brief.
 
 **A summary or some parts.** "A short summary" or "short slides" in the brief makes the outline set `words` on
 the slides that carry passages: the slide is then written shorter, from its own passages. `words` of four
@@ -574,9 +623,12 @@ no second call.
 - A change of language rewrites every slide, sets the reading direction and translates deck-level fields.
 - "Make the text larger" sets `textScale` and rewrites only the slides whose text no longer fits.
 - "Use three cards instead of four" changes `items` on that slide.
-- "Make slide 2 about 200 words" gives that slide the room for the text, as a plan does (see "Asking for an
-  amount of text" above): its layout, another layout of plain text, or a free slide written from what the slide
-  held, which keeps the slide's chart, table or photo as it is, or a free slide of the text alone set dense.
+- "Make slide 2 about 200 words" gives that slide the room for the text (see "Asking for an amount of text"
+  above): its layout, another layout of plain text, or a free slide written from what the slide held, which
+  keeps the slide's chart, table or photo as it is, or a free slide of the text alone set dense. Unlike a plan,
+  a free slide keeps its cards, list, chart or table, and a layout its chart or table, whatever they leave the
+  text, and the deck says what it holds. A layout of cards or of a list that does not hold the text gives way
+  to it, as before.
   A photo that gives way to such a text is left out, and the deck is told:
   `the photo of this slide is left out to make room for the 500 words asked for it`. The text stays on that
   slide: a change adds no slide by itself, only where the instruction asks for more slides.
@@ -623,7 +675,7 @@ try {
 }
 ```
 
-The message reads `Nothing was changed: slide 2 would hold about 527 of its 1000 words (text at 7 pt). Ask for
+The message reads `Nothing was changed: slide 2 would hold about 446 of its 1000 words (text at 7 pt). Ask for
 more slides or a shorter text, or accept that the rest is cut.`; `error.fits` has a `SlideTextFit` for each such
 slide, numbered as after the change. Call again without `stopBeforeCut` to make the change and cut the text.
 

@@ -214,7 +214,14 @@ function editPlan(template: Template, plan: DeckPlan, instruction: string, optio
 ```
 
 Changes a plan by instruction. One model call. A free slide of the plan keeps its parts unless the instruction
-changes what that slide shows, and stays set out as it was wherever the answer does not say otherwise.
+changes what that slide shows, and stays set out as it was wherever the answer does not say otherwise. From
+0.6.3 a slide whose text from a document would be cut beside the parts the plan had, or whose parts leave it
+under half of the words asked, is its text alone, set dense, where free slides are on offer and that keeps more
+of it. A part a change asks for stays, in that change and in the changes after it: the plan marks the slide
+(`OutlineEntry.partsAsked`, internal), in a plan of any kind. That is so for the parts of a free slide and for a
+layout's chart or table. A layout of cards, figures, a list or a quote gives way to an amount of text asked
+for it, as in 0.6.2. The answer's slides are matched with the plan's by their parts in any order, of the
+same purpose first, then in the same place, then in order.
 
 ### `writeDeck`
 
@@ -419,6 +426,7 @@ interface OutlineEntry {
   arrange?: FreeArrange;    // a free slide: how its parts are set out, where the plan says so
   words?: number;           // the words of running text asked for this slide ("200 words"), 1 to 3000; never spread over more slides
   passages?: number[];      // a deck made from a document: the passages this slide carries
+  partsAsked?: true;        // internal, set by editPlan: a free slide's parts, or a layout's chart or table, asked for in a change; they stay
 }
 interface DocumentPassage {
   number: number;           // from 1, in the document's order
@@ -437,7 +445,7 @@ interface SlideTextFit {
   size?: number;            // the size its running text is set at, in points, on a free slide
   templateSize?: number;    // the size running text has on a free slide of the template when nothing makes it smaller
   dense?: true;             // set dense (FreeArrange.dense)
-  most?: number;            // set dense: the most words it holds at the least size that reads
+  most?: number;            // set dense: the most words of a text of up to 12 paragraphs it holds at the least size that reads; `holds` counts its own words in its own paragraphs, and can be more or less
   passages?: string;        // a slide of a document: its passages, as "p3-p5"
 }
 interface DeckPlan {
@@ -559,8 +567,12 @@ A slide is a free slide when it lists `blocks`; its `pattern` is then `FREE_PATT
 of `SlideSpec.arrange`. `dense` is set by the planner on a free slide of one text that carries an amount of text
 a person asked for, or their own text: where that text is too long for four fifths of the template's size, it
 is set smaller, down to the least size that reads (9 pt on a slide 13.33 inches wide), in two or three columns
-in the most room the frame has. A text that fits is set out as without it. See "A long text a person asked
-for" in [free-slides.md](free-slides.md).
+in the most room the frame has. A text that fits is set as large as it fits, as without the flag, down to four
+fifths of the template's size. From 0.6.3 one rule says whether such a text fits and what it holds, when it is
+planned, written and checked: its paragraphs counted by length one by one, its columns filled line by line as
+PowerPoint fills them, each column keeping a line free, so it can be set a little smaller than the same text
+without the flag; a text in columns gets a box as high as its columns and a line more. See "A long text a
+person asked for" in [free-slides.md](free-slides.md).
 
 ### `freeBaseRefusal`
 

@@ -8,6 +8,7 @@ import type { PatternDef, TemplateManifest } from '../template/manifest.ts';
 import { freeSlotName, isFreeBlockKind } from './blocks.ts';
 import { freeKitOrReason } from './kit.ts';
 import { freeBodySize, readableSize } from './plan.ts';
+import type { FreeContext } from './plan.ts';
 import { freeFor } from './resolve.ts';
 
 /** What a deck has to draw on, as far as free slides care. */
@@ -106,6 +107,8 @@ export interface PlannedFree {
   lengths?: Readonly<Record<string, number>> | undefined;
   /** For some of those texts: how many paragraphs they will have, by slot name. Left out, a text is taken to have paragraphs of about 300 characters. */
   paragraphs?: Readonly<Record<string, number>> | undefined;
+  /** For some of those texts on a slide set dense: the lengths of the paragraphs code sets as they are, by slot name (see `FreeContext.planning`). */
+  asIs?: Readonly<Record<string, readonly number[]>> | undefined;
 }
 
 /**
@@ -125,10 +128,11 @@ export function freePattern(template: Template, deck: Pick<DeckSpec, 'direction'
   const slide: Pick<SlideSpec, 'blocks' | 'arrange' | 'slots' | 'base'> = { blocks: planned.blocks, slots: {} };
   if (planned.arrange) slide.arrange = planned.arrange;
   if (planned.base !== undefined) slide.base = planned.base;
-  const planning: { icons: boolean; withParts?: readonly string[]; lengths?: Readonly<Record<string, number>>; paragraphs?: Readonly<Record<string, number>> } = { icons };
+  const planning: NonNullable<FreeContext['planning']> = { icons };
   if (withParts && withParts.length > 0) planning.withParts = withParts;
   if (planned.lengths && Object.keys(planned.lengths).length > 0) planning.lengths = planned.lengths;
   if (planned.lengths && planned.paragraphs && Object.keys(planned.paragraphs).length > 0) planning.paragraphs = planned.paragraphs;
+  if (planned.lengths && planned.asIs && Object.keys(planned.asIs).length > 0) planning.asIs = planned.asIs;
   const resolved = freeFor(template, deck, slide, planning);
   return typeof resolved === 'string' ? resolved : { pattern: resolved.plan.pattern, base: resolved.kit.base };
 }

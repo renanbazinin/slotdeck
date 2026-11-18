@@ -461,11 +461,12 @@ have whole.
 - **The planner sets it.** Every free slide of one text that the planner gives an asked length (`words`) or
   passages of a document is marked dense, in the plan and in the deck. No model sets it, and no prompt shows
   it. A change to a plan or a deck keeps it. Code that writes a deck may set it too.
-- **A text that fits is set out as without it.** The flag changes only a text alone of more than 600
-  characters that does not fit at four fifths of the template's size, the most a free text is set down to
-  without it. Every other slide with the flag is laid out as if it had none. It is there so that the
-  paragraphs a writer chooses never make the text run over its box: where they need more room than the plan
-  counted, the text is set smaller instead.
+- **A text that fits is set as large as it fits.** As without the flag, down to four fifths of the
+  template's size, the most a free text is set down to without it. The flag sets smaller only a text alone that
+  does not fit there: before 0.6.3 one of more than 600 characters, from 0.6.3 also a short one of many
+  paragraphs, such as a list of fifteen short points. It is there so that the paragraphs a writer chooses
+  never make the text run over its box: where they need more room than the plan counted, the text is set
+  smaller instead. Every other slide with the flag is laid out as if it had none.
 - **Down to the least size that reads.** Such a text is set as large as it fits, half a point at a time, down
   to 9 pt on a slide 13.33 inches wide, and less on a narrower one by its width, never under 5 pt: 7 pt on a
   slide 10 inches wide. That is the size under which the checks say a slide's text is small.
@@ -476,16 +477,43 @@ have whole.
   text is counted at a generous 0.55. In PowerPoint's own rendering of 3,035 lines of such text at 6 to 17.5 pt,
   in Hebrew and in English, a character took 0.41 of its size on a middling line, 0.44 on one line in twenty,
   and never more than 0.47. Lines still break at words.
+- **One rule says whether it fits** (from 0.6.3). Whether such a text fits, and how much it holds, is said by
+  the same count when the slide is planned, when its writer is told a length, when code sets a document's text
+  as it is, and when the deck is checked. It counts by length: each paragraph takes whole lines, as many as
+  its length takes with room lost where lines break at words, a short one too (twenty paragraphs in capitals,
+  each a little shorter than a line, took two lines each: counted one line each, they ran 150 pt past their
+  box); the lines go into the columns one after another as PowerPoint fills them, and each column holds its
+  lines and the space after each of its paragraphs in its height less one whole line. PowerPoint takes the
+  line that ends a paragraph into a column only where the space after it fits too: in its own rendering of 96
+  decks of such text, all 215 column breaks fell so. The line each column keeps free is there because
+  PowerPoint does not always set a column as it is counted: a text of two columns that fitted came out now and
+  then with its first column a line longer, and words of wide letters take more of a line than their length
+  says. No measure of the words, of the kind of their letters or of a language counts: the face a template
+  sets them in is not known.
 - **Planned for what the writer may write.** While the slide is planned, its text is counted as the most the
-  writer is told, 1.15 times the length asked, in any number of paragraphs up to twelve, each ending on a line
-  of its own. Its budget is what the slide holds at the size chosen in every such number of paragraphs, and its
-  slot says at most 12 paragraphs. Paragraphs end on whole lines, so seven, ten or eleven can take more lines
-  than twelve: a writer that keeps inside its budget, in paragraphs of about one length, is not sent back,
-  however many it writes. A text from a document that code sets as it is (see "Making a deck from a document"
-  in [generating.md](generating.md)) is planned for the paragraphs it has.
+  writer is told: 1.15 times the length asked, in up to twelve paragraphs, or a document's text in as many
+  paragraphs as it has, its headings among them. Those paragraphs may be of any length, and each may end a
+  character into a line, so each is counted to lose up to a line, with the space after it. The budget is what
+  the slide holds at the size chosen however the paragraphs fall, and the slot takes that many paragraphs. A
+  writer inside both is not sent back. A text of an asked length that the slide holds at four fifths of the
+  template's size is set as without the flag instead, smaller where what is written needs it.
+- **A cut text is told twelve paragraphs at most.** Each paragraph a writer is told costs room, so where the
+  slide does not hold a document's text, its writer is told twelve paragraphs at most and joins the rest:
+  told the 21 paragraphs of a document, its headings among them, a slide holds about a fifth less. Where the
+  slide holds all of the text's characters in more than twelve, its writer is told the most that hold them,
+  and nothing is cut. Either way it is told no more than leave half the room of its columns to its lines.
+- **A document's text that code sets is judged as it is.** Where code would set a document's text word for
+  word (see "Making a deck from a document" in [generating.md](generating.md)), the slide is planned for its
+  own paragraphs, with the headings code sets between them. Code sets it only where the slide holds it so;
+  otherwise its writer writes it, told what the slide holds.
 - **Beyond the least size it is cut.** A text the slide does not hold even at that size is planned at it, its
   budget is what the slide holds there, and the plan says what is cut before anything is written
   (`planTextFit`).
+- **Once written, the text itself is judged.** A text that does not fit is always told so: what the box holds
+  in as many paragraphs as it has, however they fall, or, where it has more than leave half the room of its
+  columns to its lines, that it has too many. It is never told to join them into twelve. Its box is as high as
+  its columns are where they come out alike, and the line they keep free. PowerPoint may fill them so that the
+  last column comes out the shorter, at times almost empty.
 - **Code that changes the blocks keeps it.** `freeContent` gives `dense: true` for such a slide and `freeSlide`
   writes it back (`FreeSlideContent.dense`), so `freeSlide(change(freeContent(slide)))` keeps the flag.
 
@@ -493,19 +521,36 @@ What it gives, from the plan and from PowerPoint:
 
 | Template | 500 words | Set at | The most one slide holds |
 | --- | --- | --- | --- |
-| The demo template, 13.33 inches wide, English | about 3,000 characters | 10.5 to 12 pt, in 2 or 3 columns | about 4,900 characters, some 800 words, at 9 pt |
-| A right-to-left template 10 inches wide, Hebrew | about 3,250 characters | 7 to 7.5 pt, in 3 columns | about 3,400 characters, some 520 words, at 7 pt |
+| The demo template, 13.33 inches wide, English | about 3,000 characters | 10 to 10.5 pt, in 3 columns | about 4,350 characters, some 720 words, at 9 pt |
+| A right-to-left template 10 inches wide, Hebrew | about 3,250 characters | 7 to 7.5 pt, in 3 columns, cut to about 2,900 | about 2,900 characters, some 440 words, at 7 pt |
 
-A heading over the text takes some of that room: under one, the right-to-left template holds about 3,100
-characters at 7 pt. The engine was proved in PowerPoint on 161 dense slides of both templates, of 1,000 to
-5,500 characters in 3 to 12 paragraphs, and its planning on 132 more, with and without a heading, at text scale
-1 and 1.25, the last 36 of them the top of the told range in 1 to 12 paragraphs on both templates: the text
-ends inside its box on every one, at worst right at its bottom.
+A heading over the text takes some of that room: under one, the right-to-left template holds about 2,480
+characters at 7 pt. A text written in more paragraphs holds less, and a cut text is told twelve at most. The
+rule was measured in PowerPoint (0.6.3) on 666 planned slides of both templates, in their own faces:
+documents, lists and lengths asked, set by code, or written at the top of what the writer was told in some 30
+shapes. Every line ended inside its box, and no writer inside what it was told was sent back. Of 693 slides set
+straight from a deck, at lengths over and under what they hold, every one that ran past its box was told so.
+In 3 to 100 paragraphs alike the rule accepts no longer text than 0.6.2 did. It knows no face: at the longest
+it accepts, capitals and long unbroken words such as web addresses ran up to 12 pt past the box unsaid in the
+templates' own faces, and up to 223 pt in a wide face. In a wide face a text written at the top of its told
+range can run past too: 500 German words on the demo template ran 24 pt past. A list of short items, each a
+little shorter than a line, is counted two lines an item, so a slide can cut it, or hold it only with its
+items joined, where it would fit whole; 0.6.2 set such lists whole, and most of them ran past their box. A
+slide that holds a document's text only with its paragraphs joined says so: `the text from the document for
+this slide (p1-p27) has 53 paragraphs, and the slide holds it only as 25: its paragraphs are joined`.
+
+A list of many short points is such a text too (from 0.6.3): where one column of it does not hold its
+paragraphs at four fifths of the template's size, it is set in two columns in the larger room. In 0.6.2 a list
+of fifteen points of 30 characters set dense was told six points in one column, and cut by about a sixth.
 
 A list, a chart, a table or cards beside the text keep the slide from being set dense: such a slide is set out
 as without the flag, and holds what it holds. So does a second text of a deck's slide (`planEdit`). A plan's
 slide of several texts, where nothing is written yet, becomes one text set dense where its texts would be cut.
-With free slides off no slide is set dense.
+From 0.6.3 the person's text comes first in a plan (`planOutline`, `editPlan`): a slide that carries the text
+of a document and would be cut beside its other parts is its text alone, set dense, where that keeps more of
+it, and so is a slide whose other parts leave it under half of an amount of text asked for it. In a change to a
+plan that is so only for the parts the plan had: a part a change asks for stays, in that change and the ones
+after it. With free slides off no slide is set dense.
 
 ## What a template gives a free slide
 
@@ -669,7 +714,9 @@ A model names the parts in `shows`, as runs of like parts with the `count` of ea
 An answer that gives one entry for each part and numbers them (`count` 1, 2, 3, 4 for four charts) is read as
 four charts, not ten. A slide is planned with at most 400 parts, and `writeDeck` refuses a plan that gives a
 slide more, with a `PlanError` that names the slide, before any model is asked. `editPlan` shows the slide with
-its parts and keeps them unless the request changes what the slide shows.
+its parts and keeps them unless the request changes what the slide shows. From 0.6.3 a slide whose text from a
+document would be cut beside the parts the plan had, or whose parts leave it under half of the words asked, is
+its text alone, set dense; a part a change asks for stays, in that change and the ones after it.
 
 **Written.** `writeDeck` works the slide's slots out for exactly these parts, each with the room it has, and
 records the frame the slide was planned on in `base`. Up to nine parts are written with the rest of the deck.

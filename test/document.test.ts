@@ -18,6 +18,7 @@ import {
   documentKept,
   fillParagraphs,
   isFixedCount,
+  needOf,
   packPassages,
   passageLabel,
   passageText,
@@ -135,7 +136,9 @@ const hebrewDocument = (chars = 3250): string => {
 };
 
 const brief: Brief = { prompt: 'A deck from the bike share review', language: 'en', fields, imageDensity: 'none', document: REPORT };
-const hebrewBrief: Brief = { prompt: 'מצגת מהדוח', language: 'he', imageDensity: 'none', document: hebrewDocument() };
+// About 3,000 characters: what two slides of the narrow fixture hold at 7 to 8 pt, each column
+// keeping a line free.
+const hebrewBrief: Brief = { prompt: 'מצגת מהדוח', language: 'he', imageDensity: 'none', document: hebrewDocument(3000) };
 
 // --- the passages ---
 
@@ -556,13 +559,21 @@ test("a slide's length comes from its passages, not from words", async () => {
   assert.equal(charsOfWords(45, 'en'), 270);
 });
 
-test('three or more paragraphs fill a layout to three quarters', () => {
+test('three or more paragraphs fill a layout to three quarters, and more than its slot takes join with no room lost', () => {
   const context: CatalogContext = { layout: 'adaptive', fields, icons: [], assets: [], imageDensity: 'none', figures: false, textScale: 1 };
   const textOnly = buildCatalog(demoManifest, context).patterns.find((pattern) => pattern.def.id === 'text-only') as UsablePattern;
   assert.equal(documentRoom(textOnly, context, { paragraphs: 1 }), Math.floor(0.9 * 331));
   assert.equal(documentRoom(textOnly, context, { paragraphs: 3 }), Math.floor(0.75 * 331));
-  // More paragraphs than the slot takes are joined: the room shrinks with them.
-  assert.equal(documentRoom(textOnly, context, { paragraphs: 6 }), Math.floor((Math.floor(0.75 * 331) * 3) / 6));
+  // The slot takes 3 paragraphs: 6 are joined into 3, and lose no characters by it. What the slide
+  // is said to hold is the room the writer is told.
+  assert.equal(documentRoom(textOnly, context, { paragraphs: 6 }), Math.floor(0.75 * 331));
+  const told = withPassages(textOnly, 600, context, { label: 'p1-p6', shape: { paragraphs: 6 } }).slots.find((planned) => planned.slot.name === 'body')?.slot.description;
+  assert.match(String(told), /^The slide's text from the document \(p1-p6\) shortened to 220 to 240 characters, the most this slide holds/);
+  // A slot that takes four paragraphs or more is told one fewer for such a text: every paragraph
+  // ends on a line of its own, and its last ran past the box. Two paragraphs, and a slot of three, keep their limit.
+  const list = buildCatalog(demoManifest, { ...context, imageDensity: 'medium' }).patterns.find((pattern) => pattern.def.id === 'list-with-photo') as UsablePattern;
+  const most = (pattern: UsablePattern, paragraphs: number, name: string) => (withPassages(pattern, 300, context, { label: 'p1', shape: { paragraphs } }).slots.find((planned) => planned.slot.name === name)?.slot as { maxParagraphs?: number }).maxParagraphs;
+  assert.deepEqual([most(list, 3, 'bulletList'), most(list, 2, 'bulletList'), most(textOnly, 6, 'body')], [3, 4, 3]);
 });
 
 test('a long slide spreads at a readable size, each part with its own passages', async () => {
@@ -641,7 +652,9 @@ test('a fixed count keeps its slides and sets their text smaller', async () => {
   const [fit] = planTextFit(rtl, cut, rtlOptions);
   assert.ok(fit && fit.holds < fit.words, JSON.stringify(fit));
   assert.equal(fit?.size, readableSize(9144000));
-  const need = cutDoc.passages.reduce((sum, passage) => sum + passage.chars, 0);
+  // Its characters, and those of the headings that start inside it, which code sets as paragraphs.
+  const need = needOf(cutDoc, every, 'he');
+  assert.ok(need > cutDoc.chars);
   const writer = scripted((request: JsonRequest) => ({ s1: { title: 'הכול', b1Text: ['טקסט'], ...(titles(request) as { s1: object }).s1 } }));
   const result = await writeDeck(rtl, cut, { llm: writer.llm, ...rtlOptions });
   const warning = result.warnings.find((issue) => issue.message.startsWith('the text from the document'));
@@ -820,6 +833,497 @@ test('with no count and nothing placed, no more slides are added than the docume
   );
 });
 
+// --- the person's text first (0.6.3) ---
+
+/** Free slides of a text and some other part, as an outline answers them. */
+const textAnd = (kind: string, count = 1) => ({ shows: [{ kind: 'text', count: 1 }, { kind, count }], shows_main: 'none' });
+/** Whether the passages of the slides of a plan are all of them, each slide a run in order. */
+const inRuns = (slides: DeckPlan['slides'], count: number): boolean => {
+  const lists = slides.map((slide) => slide.passages ?? []);
+  return JSON.stringify(lists.flat()) === JSON.stringify(Array.from({ length: count }, (_, at) => at + 1)) && lists.every((list) => list.length > 0 && list.every((number, at) => at === 0 || number === (list[at - 1] as number) + 1));
+};
+
+test('a slide whose text would be cut beside cards, a chart or a table is its text alone, set dense, and holds it', async () => {
+  // As the production case: two slides of a long text, each a text with a card, which held about 1 character of it.
+  for (const kind of ['card', 'chart', 'table', 'list', 'quote', 'note', 'figure', 'step']) {
+    const model = scripted(outlineOf([entry('free', 'Background and riders', [1, 2, 3, 4], textAnd(kind)), entry('free', 'Costs and plans', [5, 6, 7, 8, 9], textAnd(kind))]));
+    const plan = await planOutline(demo, { ...brief, slideCount: 2 }, { llm: model.llm, ...options });
+    assert.deepEqual(
+      plan.slides.map((slide) => [slide.pattern, slide.blocks, slide.arrange]),
+      [
+        ['free', ['text'], { dense: true }],
+        ['free', ['text'], { dense: true }],
+      ],
+      kind,
+    );
+    assert.ok(inRuns(plan.slides, 9), JSON.stringify(plan.slides));
+    for (const fit of planTextFit(demo, plan, options)) assert.equal(fit.holds, fit.words, `${kind}: ${JSON.stringify(fit)}`);
+  }
+  // A layout the outline chose that would become a free slide of a text and its chart or its table: the same.
+  for (const layout of ['chart-native', 'table']) {
+    const model = scripted(outlineOf([entry(layout, 'The review', [1, 2, 3, 4, 5, 6, 7, 8, 9])]));
+    const plan = await planOutline(demo, { ...brief, slideCount: 1 }, { llm: model.llm, ...options });
+    assert.deepEqual(plan.slides, [{ pattern: 'free', purpose: 'The review', passages: [1, 2, 3, 4, 5, 6, 7, 8, 9], blocks: ['text'], arrange: { dense: true } }], layout);
+    const written = await writeDeck(demo, plan, { llm: scripted(titles).llm, ...options });
+    assert.deepEqual(written.deck.slides[0]?.slots.b1Text, fillParagraphs(readDocument(REPORT, 'en').passages, [1, 2, 3, 4, 5, 6, 7, 8, 9]), layout);
+    assert.ok(!written.warnings.some((issue) => /cut to fit/.test(issue.message)), JSON.stringify(written.warnings));
+  }
+});
+
+/** A document of a lead line and `count` items with no full stop, each `chars` characters or a word more. */
+const listDocument = (count: number, chars: number): string => {
+  const words = 'riders took more trips every year and the busiest month was always June while students and commuters make up most members and visitors buy day passes at each station with room for twelve bikes and a screen that shows the nearest dock'.split(' ');
+  let at = 0;
+  const item = (): string => {
+    let line = '';
+    while (line.length < chars) line += `${line ? ' ' : ''}${words[at++ % words.length]}`;
+    return line.charAt(0).toUpperCase() + line.slice(1);
+  };
+  return ['Tasks for the quarter', '', ...Array.from({ length: count }, () => [item(), '']).flat()].join('\n');
+};
+
+test('a list whose items have no full stop counts the headings code sets, and code sets it only where it fits', async () => {
+  // Lines with no full stop are read as headings of the document, and code sets each as a paragraph
+  // of the slide's text. Left out of what a slide holds, 53 such lines were planned as held,
+  // set word for word, and ran past their box in PowerPoint.
+  const listOf = (count: number): string => listDocument(count, 58);
+  const planned = async (text: string) => {
+    const doc = readDocument(text, 'en');
+    const every = doc.passages.map((passage) => passage.number);
+    const model = scripted(outlineOf([entry('free', 'All of it', every, freeText)]));
+    return { doc, every, plan: await planOutline(demo, { ...brief, document: text, slideCount: 1 }, { llm: model.llm, ...options }) };
+  };
+  // 52 items: most of them headings. What the slide needs counts them, as many paragraphs as code sets.
+  const long = await planned(listOf(52));
+  const filled = fillParagraphs(long.doc.passages, long.every);
+  assert.ok(long.doc.passages.filter((passage) => passage.section !== undefined).length > 20);
+  assert.equal(needOf(long.doc, long.every, 'en'), filled.reduce((sum, paragraph) => sum + paragraph.length, 0));
+  assert.equal(filled.length, 53);
+  // The slide does not hold them as they are, each item counted two lines: code does not set them,
+  // and the writer writes the text, told the most paragraphs that hold all of it, more than twelve.
+  const writer = scripted((request: JsonRequest) => {
+    const count = schemaOf(request).properties.s1?.properties.b1Text?.maxItems ?? 1;
+    const per = Math.ceil(filled.length / count);
+    return { s1: { title: 'All of it', b1Text: Array.from({ length: Math.ceil(filled.length / per) }, (_, at) => filled.slice(at * per, at * per + per).join(' ')) } };
+  });
+  const [whole] = planTextFit(demo, long.plan, options);
+  assert.ok(whole && whole.dense === true && whole.holds === whole.words, JSON.stringify(whole));
+  const joined = await writeDeck(demo, long.plan, { llm: writer.llm, ...options });
+  const told = schemaOf(writer.requests[0]).properties.s1?.properties.b1Text;
+  assert.ok(told && (told.maxItems ?? 0) > 12 && (told.maxItems ?? 0) < 53, `the writer writes the text: ${told?.maxItems}`);
+  // Nothing is cut, and the deck says its lines are joined.
+  assert.deepEqual(
+    joined.warnings.map((issue) => issue.message),
+    [`the text from the document for this slide (p1-p${long.every.length}) has 53 paragraphs, and the slide holds it only as ${told?.maxItems}: its paragraphs are joined. Ask for more slides to keep them apart`],
+  );
+  // 90 items: more characters than the slide holds. The plan says it is cut, the writer is told
+  // twelve paragraphs and what the slide holds, and the deck says the text is cut.
+  const longer = await planned(listOf(90));
+  const [fit] = planTextFit(demo, longer.plan, options);
+  assert.ok(fit && fit.dense === true && fit.holds < fit.words, JSON.stringify(fit));
+  const again = scripted((request: JsonRequest) => {
+    const text = schemaOf(request).properties.s1?.properties.b1Text;
+    const top = Number(/ to (\d+) characters/.exec(text?.description ?? '')?.[1]);
+    const count = text?.maxItems ?? 1;
+    return { s1: { title: 'All of it', b1Text: Array.from({ length: count }, (_, at) => paragraph(at, Math.floor(top / count)).slice(0, Math.floor(top / count))) } };
+  });
+  const written = await writeDeck(demo, longer.plan, { llm: again.llm, ...options });
+  assert.equal(schemaOf(again.requests[0]).properties.s1?.properties.b1Text?.maxItems, 12);
+  assert.ok(written.warnings.some((issue) => /cut to fit/.test(issue.message)), JSON.stringify(written.warnings));
+  assert.ok(!written.warnings.some((issue) => /the slot fits/.test(issue.message)), JSON.stringify(written.warnings));
+  // 16 items the slide holds as they are: code sets them, headings and all, and the deck says nothing.
+  const short = await planned(listOf(16));
+  const [held] = planTextFit(demo, short.plan, options);
+  assert.ok(held && held.holds === held.words, JSON.stringify(held));
+  const set = await writeDeck(demo, short.plan, { llm: scripted(titles).llm, ...options });
+  assert.deepEqual(set.deck.slides[0]?.slots.b1Text, fillParagraphs(short.doc.passages, short.every));
+  assert.deepEqual(set.warnings, []);
+});
+
+test('a list its slide holds only with some lines joined keeps all its words', async () => {
+  // Seventy short lines are more paragraphs than the slide holds as they are, but not more
+  // characters. The writer is told the most paragraphs that hold them all, more than twelve, and
+  // nothing is cut. Told twelve, as a text that is cut is, it would join six lines into each. The
+  // deck says the lines are joined.
+  const text = listDocument(70, 30);
+  const doc = readDocument(text, 'en');
+  const every = doc.passages.map((passage) => passage.number);
+  const plan = await planOutline(demo, { ...brief, document: text, slideCount: 1 }, { llm: scripted(outlineOf([entry('free', 'All of it', every, freeText)])).llm, ...options });
+  const [fit] = planTextFit(demo, plan, options);
+  assert.ok(fit && fit.dense === true && fit.holds === fit.words, JSON.stringify(fit));
+  const writer = scripted((request: JsonRequest) => {
+    const told = schemaOf(request).properties.s1?.properties.b1Text;
+    const count = told?.maxItems ?? 1;
+    const lines = fillParagraphs(doc.passages, every);
+    const per = Math.ceil(lines.length / count);
+    return { s1: { title: 'All of it', b1Text: Array.from({ length: Math.ceil(lines.length / per) }, (_, at) => lines.slice(at * per, at * per + per).join(' ')) } };
+  });
+  const written = await writeDeck(demo, plan, { llm: writer.llm, ...options });
+  const told = schemaOf(writer.requests[0]).properties.s1?.properties.b1Text;
+  assert.ok((told?.maxItems ?? 0) > 12 && (told?.maxItems ?? 0) < 71, String(told?.maxItems));
+  assert.equal(writer.requests.length, 1);
+  assert.deepEqual(
+    written.warnings.map((issue) => issue.message),
+    [`the text from the document for this slide (p1-p${every.length}) has 71 paragraphs, and the slide holds it only as ${told?.maxItems}: its paragraphs are joined. Ask for more slides to keep them apart`],
+  );
+});
+
+test('a chart a change adds beside a text from the document stays at the next change', async () => {
+  // A plan of two slides of text; a change adds a chart beside the text of slide 1, and the next
+  // moves a passage. The chart was asked for: it stays, and the plan says what the text keeps.
+  const two = scripted(outlineOf([entry('free', 'Background and riders', [1, 2, 3, 4], freeText), entry('free', 'Costs and plans', [5, 6, 7, 8, 9], freeText)]));
+  const plan = await planOutline(demo, { ...brief, slideCount: 2 }, { llm: two.llm, ...options });
+  const chart = { shows: [{ kind: 'text', count: 1 }, { kind: 'chart', count: 1 }], shows_main: 'auto', side_by_side: 0 };
+  const change = (first: number[], second: number[]) => ({
+    summary: 'Done.',
+    language: 'en',
+    title: 'Bikes',
+    left_out: [],
+    asked_slides: 0,
+    document_language: 'en',
+    slides: [
+      { pattern: 'free', purpose: 'Background and riders', ...chart, passages: first },
+      { pattern: 'free', purpose: 'Costs and plans', ...freeText, side_by_side: 0, passages: second },
+    ],
+  });
+  const { plan: next } = await editPlan(demo, plan, 'Add a chart beside the text on slide 1', { llm: scripted(change([1, 2, 3, 4], [5, 6, 7, 8, 9])).llm, ...options });
+  assert.deepEqual(next.slides[0]?.blocks, ['text', 'chart']);
+  assert.equal(next.slides[0]?.partsAsked, true);
+  const { plan: moved } = await editPlan(demo, next, 'Move p5 to slide 1', { llm: scripted(change([1, 2, 3, 4, 5], [6, 7, 8, 9])).llm, ...options });
+  assert.deepEqual([moved.slides[0]?.blocks, moved.slides[0]?.passages], [['text', 'chart'], [1, 2, 3, 4, 5]]);
+  assert.equal(moved.slides[0]?.partsAsked, true);
+  const [fit] = planTextFit(demo, moved, options);
+  assert.ok(fit && fit.holds < fit.words, JSON.stringify(fit));
+});
+
+test('a slide that holds its text beside its other parts keeps them', async () => {
+  // A chart beside one passage holds it: the chart stays.
+  const model = scripted(outlineOf([entry('free', 'Background', [1], textAnd('chart')), entry('free', 'Riders and costs', [2, 3, 4, 5], freeText), entry('free', 'Plans', [6, 7, 8, 9], freeText)]));
+  const plan = await planOutline(demo, { ...brief, slideCount: 3 }, { llm: model.llm, ...options });
+  assert.deepEqual(plan.slides[0]?.blocks, ['text', 'chart']);
+  assert.deepEqual(
+    plan.slides.map((slide) => slide.passages),
+    [[1], [2, 3, 4, 5], [6, 7, 8, 9]],
+  );
+  for (const fit of planTextFit(demo, plan, options)) assert.equal(fit.holds, fit.words, JSON.stringify(fit));
+});
+
+test('editPlan: a slide given more passages than it holds beside its chart is its text alone', async () => {
+  const plan: DeckPlan = {
+    version: 1,
+    title: 'Bikes',
+    brief: { ...brief, slideCount: 2 },
+    slides: [
+      { pattern: 'free', purpose: 'Background', passages: [1], blocks: ['text', 'chart'] },
+      { pattern: 'free', purpose: 'The rest', passages: [2, 3, 4, 5, 6, 7, 8, 9], blocks: ['text'], arrange: { dense: true } },
+    ],
+    documentLanguage: 'en',
+  };
+  const model = scripted(changeOf([entry('free', 'Background', [1, 2, 3, 4, 5], textAnd('chart')), entry('free', 'The rest', [6, 7, 8, 9], freeText)]));
+  const { plan: next } = await editPlan(demo, plan, 'Move the riders part to the first slide', { llm: model.llm, ...options });
+  assert.deepEqual(
+    next.slides.map((slide) => [slide.blocks, slide.arrange?.dense, slide.passages]),
+    [
+      [['text'], true, [1, 2, 3, 4, 5]],
+      [['text'], true, [6, 7, 8, 9]],
+    ],
+  );
+  for (const fit of planTextFit(demo, next, options)) assert.equal(fit.holds, fit.words, JSON.stringify(fit));
+});
+
+test('a deck of three slides or fewer keeps the passages an answer gives its opening and closing slides, on slides of text, where the slide next to them would cut them', async () => {
+  // A report too long for one slide: a cover and a closing slide that show no running text each keep their passages, as a slide of text.
+  const long = [REPORT, '', 'More', ...[0, 1, 2, 3, 4, 5, 6, 7].map((at) => paragraph(at, 400))].join('\n');
+  const count = documentPassages(long).length;
+  const upTo = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, at) => from + at);
+  const model = scripted(outlineOf([entry('cover', 'Bikes', upTo(1, 9)), entry('closing', 'Thanks', upTo(10, count))]));
+  const plan = await planOutline(demo, { ...brief, document: long, slideCount: 2 }, { llm: model.llm, ...options });
+  assert.equal(model.requests.length, 1);
+  assert.deepEqual(
+    plan.slides.map((slide) => [slide.pattern, slide.blocks, slide.passages]),
+    [
+      ['free', ['text'], upTo(1, 9)],
+      ['free', ['text'], upTo(10, count)],
+    ],
+  );
+  for (const fit of planTextFit(demo, plan, options)) assert.equal(fit.holds, fit.words, JSON.stringify(fit));
+  // Where the slide next to it holds them beside its own, the cover gives them on, as before, and stays a cover.
+  const fits = scripted(outlineOf([entry('cover', 'Bikes', [1, 2, 3, 4]), entry('free', 'The rest', [5, 6, 7, 8, 9], freeText)]));
+  const kept = await planOutline(demo, { ...brief, slideCount: 2 }, { llm: fits.llm, ...options });
+  assert.deepEqual(
+    kept.slides.map((slide) => [slide.pattern, slide.passages ?? []]),
+    [
+      ['cover', []],
+      ['free', upTo(1, 9)],
+    ],
+  );
+  // So does a cover given only the document's title line, however long the rest: a title is what it shows.
+  const titled = `The bike share in 2026\n\n${long}`;
+  const titleModel = scripted(outlineOf([entry('cover', 'Bikes', [1]), entry('free', 'Part one', upTo(2, 10), freeText), entry('free', 'Part two', upTo(11, count + 1), freeText)]));
+  const cover = await planOutline(demo, { ...brief, document: titled, slideCount: 3 }, { llm: titleModel.llm, ...options });
+  assert.deepEqual(
+    cover.slides.map((slide) => [slide.pattern, slide.passages?.[0]]),
+    [
+      ['cover', undefined],
+      ['free', 1],
+      ['free', 11],
+    ],
+  );
+  // A deck whose number of slides the brief names (asked_slides) does the same, and with free slides off the slide is a layout of plain text.
+  const named = scripted(outlineOf([entry('cover', 'Bikes', [1, 2]), entry('closing', 'Thanks', [3])], { asked_slides: 2, left_out: [4, 5, 6, 7, 8, 9] }));
+  const off = await planOutline(demo, brief, { llm: named.llm, ...options, free: false });
+  assert.deepEqual(
+    off.slides.map((slide) => [slide.pattern, slide.passages]),
+    [
+      ['text-only', [1, 2]],
+      ['text-only', [3]],
+    ],
+  );
+  // Four slides: the passages of an opening or a closing slide still go to the slide next to it.
+  const four = scripted(outlineOf([entry('cover', 'Bikes', [1, 2]), entry('free', 'Middle', [3, 4, 5, 6], freeText), entry('free', 'Late', [7], freeText), entry('closing', 'Thanks', [8, 9])]));
+  const moved = await planOutline(demo, { ...brief, slideCount: 4 }, { llm: four.llm, ...options });
+  assert.deepEqual(
+    moved.slides.map((slide) => [slide.pattern, slide.passages ?? []]),
+    [
+      ['cover', []],
+      ['free', [1, 2, 3, 4, 5, 6]],
+      ['free', [7, 8, 9]],
+      ['closing', []],
+    ],
+  );
+  // A change to a plan that names two slides does the same.
+  const longBrief = { ...brief, document: long, slideCount: 3 };
+  const thirds = [upTo(1, 6), upTo(7, 12), upTo(13, count)];
+  const stored: DeckPlan = { version: 1, title: 'Bikes', brief: longBrief, slides: (await planOutline(demo, longBrief, { llm: scripted(outlineOf(thirds.map((part, at) => entry('free', `Part ${at + 1}`, part, freeText)))).llm, ...options })).slides, documentLanguage: 'en' };
+  const change = scripted(changeOf([entry('cover', 'Bikes', upTo(1, 9)), entry('free', 'The rest', upTo(10, count), freeText)], { asked_slides: 2 }));
+  const { plan: two } = await editPlan(demo, stored, 'Keep it to 2 slides', { llm: change.llm, ...options });
+  assert.deepEqual(
+    two.slides.map((slide) => [slide.pattern, slide.blocks]),
+    [
+      ['free', ['text']],
+      ['free', ['text']],
+    ],
+  );
+  assert.ok(inRuns(two.slides, count), JSON.stringify(two.slides));
+});
+
+test('with free slides off a slide of a document moves to the layout of plain text that holds most, says what it holds as the writer is told it, and why it is not set smaller', async () => {
+  const off = { ...options, free: false };
+  // One slide of quotes for two passages: the quote holds none of them, the text layout most.
+  const model = scripted(outlineOf([entry('quote', 'Background', [1, 2])], { left_out: [3, 4, 5, 6, 7, 8, 9] }));
+  const plan = await planOutline(demo, { ...brief, slideCount: 1 }, { llm: model.llm, ...off });
+  assert.deepEqual(plan.slides, [{ pattern: 'text-only', purpose: 'Background', passages: [1, 2] }]);
+  const doc = readDocument(REPORT, 'en');
+  const need = (doc.passages[0] as DocumentPassage).chars + (doc.passages[1] as DocumentPassage).chars;
+  const words = passageWords(doc.passages, [1, 2]);
+  // Two paragraphs: nine tenths of the 331 characters of the text layout.
+  const room = Math.floor(0.9 * 331);
+  assert.deepEqual(planTextFit(demo, plan, off), [{ slide: 1, words, holds: Math.floor((words * room) / need), passages: 'p1-p2' }]);
+  const writer = scripted((request: JsonRequest) => ({ s1: { title: 'Background', body: ['Riders rely on it.'], ...(titles(request) as { s1: object }).s1 } }));
+  const written = await writeDeck(demo, plan, { llm: writer.llm, ...off });
+  const body = (schemaOf(writer.requests[0]).properties.s1 as Schema).properties.body?.description ?? '';
+  assert.ok(body.startsWith("The slide's text from the document (p1-p2) shortened to 260 to 290 characters, the most this slide holds"), body);
+  assert.deepEqual(
+    written.warnings.filter((issue) => /cut to fit/.test(issue.message)),
+    [
+      {
+        severity: 'warning',
+        slide: 1,
+        message: `the text from the document for this slide (p1-p2) is ${need} characters, and the slide holds about ${room}: it is cut to fit. Ask for more slides to keep it whole; free slides are off, so its text is not set smaller`,
+      },
+    ],
+  );
+  // A list of patterns without free is the same; with free slides on, nothing is added to the message.
+  const listed = await writeDeck(demo, { ...plan, brief: { ...plan.brief, patterns: ['text-only', 'quote'] } }, { llm: scripted(titles).llm, ...options });
+  assert.ok(listed.warnings.some((issue) => issue.message.endsWith('; free slides are off, so its text is not set smaller')), JSON.stringify(listed.warnings));
+  const on = await writeDeck(demo, plan, { llm: scripted(titles).llm, ...options });
+  assert.ok(on.warnings.some((issue) => issue.message.endsWith(': it is cut to fit. Ask for more slides to keep it whole')), JSON.stringify(on.warnings));
+});
+
+test('with free slides off a table of the document on a layout of a table that holds none of its text moves to plain text, its rows counted', async () => {
+  const off = { ...options, free: false };
+  const table = [`Costs`, paragraph(0, 190), '| Item | 2023 | 2024 |', '|---|---|---|', '| Bikes | 120 | 140 |', '| Staff | 300 | 320 |', '| Repairs | 80 | 95 |'].join('\n');
+  const model = scripted(outlineOf([entry('table', 'Costs', [1, 2])]));
+  const plan = await planOutline(demo, { ...brief, document: table, slideCount: 1 }, { llm: model.llm, ...off });
+  assert.deepEqual(plan.slides.map((slide) => [slide.pattern, slide.passages]), [['text-only', [1, 2]]]);
+  // The layout of plain text is judged by the text with the rows of the table in it, as they will be set there.
+  const doc = readDocument(table, 'en');
+  const [fit] = planTextFit(demo, plan, off);
+  assert.equal(fit?.words, passageWords(doc.passages, [1, 2]));
+  assert.ok((fit?.holds ?? 0) > 0, JSON.stringify(fit));
+  // A layout of a table that holds the text beside its table keeps its table: here a table alone.
+  const alone = ['Costs', '| Item | 2023 | 2024 |', '| Bikes | 120 | 140 |', '| Staff | 300 | 320 |'].join('\n');
+  const kept = await planOutline(demo, { ...brief, document: alone, slideCount: 1 }, { llm: scripted(outlineOf([entry('table', 'Costs', [1])])).llm, ...off });
+  assert.equal(kept.slides[0]?.pattern, 'table');
+});
+
+test('with free slides off a change to a deck keeps the layout of a slide whose passages change, and its parts', async () => {
+  const off = { ...options, free: false };
+  const plan: DeckPlan = { version: 1, title: 'Bikes', brief: { ...brief, slideCount: 2 }, documentLanguage: 'en', slides: [{ pattern: 'stat-cards', purpose: 'Background', passages: [1] }, { pattern: 'text-only', purpose: 'Rest', passages: [2, 3, 4, 5, 6] }] };
+  const deck = (await writeDeck(demo, plan, { llm: scripted(titles).llm, ...off })).deck;
+  assert.equal(deck.slides[0]?.pattern, 'stat-cards');
+  const model = scripted(editOf([{ from: 1, pattern: 'stat-cards', change: 'Add the riders', passages: [1, 2, 3] }, { from: 2, pattern: 'text-only', passages: [4, 5, 6] }]), titles, titles, titles);
+  const edited = await planEdit(demo, deck, 'Move the riders part to slide 1', { llm: model.llm, ...off });
+  assert.deepEqual(
+    edited.deck.slides.map((slide) => [slide.pattern, slide.passages]),
+    [
+      ['stat-cards', [1, 2, 3]],
+      ['text-only', [4, 5, 6]],
+    ],
+  );
+  assert.ok('stat1Number' in (edited.deck.slides[0]?.slots ?? {}));
+  assert.ok(edited.warnings.some((issue) => issue.slide === 1 && issue.message.endsWith('; free slides are off, so its text is not set smaller')), JSON.stringify(edited.warnings));
+});
+
+test('a text of more paragraphs than a layout takes is set by code on a free slide, as before', async () => {
+  // Six short sentences, one passage of six paragraphs: a text layout takes three, a free slide all six as they are.
+  const lines = `Notes\n${['Trips by bike grew a fifth this year.', 'Most new riders are under forty.', 'Lanes on Main Street are full at eight.', 'Parking for bikes runs out by nine.', 'Two schools asked for safe routes.', 'The council will vote in March.'].join('\n')}`;
+  const model = scripted(outlineOf([entry('text-only', 'Notes', [1])]));
+  const plan = await planOutline(demo, { ...brief, document: lines, slideCount: 1 }, { llm: model.llm, ...options });
+  assert.deepEqual(plan.slides.map((slide) => [slide.pattern, slide.blocks]), [['free', ['text']]]);
+  const writer = scripted(titles);
+  const written = await writeDeck(demo, plan, { llm: writer.llm, ...options });
+  assert.equal(writer.requests.length, 1);
+  assert.equal((written.deck.slides[0]?.slots.b1Text as string[]).length, 6);
+});
+
+test('editPlan keeps a part the request asks for beside a text it then cuts, and the plan says so', async () => {
+  const stored: DeckPlan = {
+    version: 1,
+    title: 'Bikes',
+    brief: { ...brief, slideCount: 2 },
+    slides: [
+      { pattern: 'free', purpose: 'Background', passages: [1, 2, 3, 4, 5], blocks: ['text'], arrange: { dense: true } },
+      { pattern: 'free', purpose: 'The rest', passages: [6, 7, 8, 9], blocks: ['text'], arrange: { dense: true } },
+    ],
+    documentLanguage: 'en',
+  };
+  const model = scripted(changeOf([entry('free', 'Background', [1, 2, 3, 4, 5], textAnd('chart')), entry('free', 'The rest', [6, 7, 8, 9], freeText)]));
+  const { plan: next } = await editPlan(demo, stored, 'Add a chart of the trips to slide 1', { llm: model.llm, ...options });
+  assert.deepEqual(next.slides[0]?.blocks, ['text', 'chart']);
+  const [first] = planTextFit(demo, next, options);
+  assert.ok(first !== undefined && first.holds < first.words, JSON.stringify(first));
+});
+
+test('with free slides off a change to a plan moves a free slide of a text and a card to plain text where that holds more of it', async () => {
+  // A plan made with free slides on, of two slides of a text and a card each, which hold little of their text.
+  const long = [REPORT, '', 'More', ...[0, 1, 2, 3].map((at) => paragraph(at, 400))].join('\n');
+  const count = documentPassages(long).length;
+  const upTo = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, at) => from + at);
+  const half = Math.ceil(count / 2);
+  const stored: DeckPlan = {
+    version: 1,
+    title: 'Bikes',
+    brief: { ...brief, document: long, slideCount: 2 },
+    slides: [
+      { pattern: 'free', purpose: 'First', passages: upTo(1, half), blocks: ['text', 'card'] },
+      { pattern: 'free', purpose: 'Then', passages: upTo(half + 1, count), blocks: ['text', 'card'] },
+    ],
+    documentLanguage: 'en',
+  };
+  const off = { ...options, free: false };
+  const cut = planTextFit(demo, stored, off);
+  const model = scripted(changeOf([entry('free', 'First', upTo(1, half), textAnd('card')), entry('free', 'Then', upTo(half + 1, count), textAnd('card'))], { asked_slides: 2 }));
+  const { plan: next } = await editPlan(demo, stored, 'Keep it to 2 slides', { llm: model.llm, ...off });
+  // The first moves to the layout of plain text, which holds more of it; the second holds more as it is.
+  assert.deepEqual(
+    next.slides.map((slide) => [slide.pattern, slide.blocks]),
+    [
+      ['text-only', undefined],
+      ['free', ['text', 'card']],
+    ],
+  );
+  const fits = planTextFit(demo, next, off);
+  assert.ok((fits[0]?.holds ?? 0) > (cut[0]?.holds ?? 0), JSON.stringify([fits[0], cut[0]]));
+  assert.deepEqual(fits[1], cut[1]);
+  // A free slide of its text alone stays one.
+  const alone: DeckPlan = { ...stored, slides: stored.slides.map((slide) => ({ ...slide, blocks: ['text'], arrange: { dense: true } })) };
+  const same = scripted(changeOf([entry('free', 'First', upTo(1, half), freeText), entry('free', 'Then', upTo(half + 1, count), freeText)], { asked_slides: 2 }));
+  const { plan: kept } = await editPlan(demo, alone, 'Keep it to 2 slides', { llm: same.llm, ...off });
+  assert.deepEqual(
+    kept.slides.map((slide) => [slide.pattern, slide.blocks]),
+    [
+      ['free', ['text']],
+      ['free', ['text']],
+    ],
+  );
+});
+
+test("a layout's slot of four paragraphs or more takes one fewer of a text of three or more: code sets it on a free slide, or the writer joins them", async () => {
+  // One passage of four lines of about 66 characters. The demo's list beside a photo takes four
+  // paragraphs, and so three of such a text.
+  const lines = [
+    'Notes',
+    'Trips by bike grew by a fifth this year, the most in the region.',
+    'Most of the new riders are under forty and live near the centre.',
+    'The lanes on Main Street are full at eight every working morning.',
+    'Parking for bikes at the station runs out by nine on most days.',
+  ].join('\n');
+  assert.equal(documentPassages(lines).length, 1);
+  const assets = [{ id: 'bike', kind: 'photo' as const, description: 'A bike at a dock', data: new Uint8Array() }];
+  const listed = { ...brief, imageDensity: 'medium' as const, document: lines, slideCount: 1 };
+  // Its writer keeps the words, and joins the last two lines.
+  const joined = [...lines.split('\n').slice(1, 3), lines.split('\n').slice(3).join(' ')];
+  /** A writer that gives every slide it is asked for what it must have, the photo too. */
+  const withPhoto = (request: JsonRequest): unknown =>
+    Object.fromEntries(
+      Object.entries(schemaOf(request).properties).map(([key, slide]) => [
+        key,
+        Object.fromEntries((slide.required ?? []).map((name) => [name, slide.properties[name]?.type === 'object' ? { asset: 'bike' } : slide.properties[name]?.type === 'array' ? joined : 'Notes'])),
+      ]),
+    );
+  // With free slides on, a free slide takes the text, and code sets its four paragraphs as they are.
+  const on = await planOutline(demo, listed, { llm: scripted(outlineOf([entry('list-with-photo', 'Notes', [1])])).llm, ...options, assets });
+  assert.equal(on.slides[0]?.pattern, 'free');
+  const set = await writeDeck(demo, on, { llm: scripted(withPhoto, withPhoto).llm, ...options, assets });
+  assert.deepEqual(set.deck.slides[0]?.slots.b1Text, lines.split('\n').slice(1));
+  // With free slides off the layout stays, and its writer is told three and joins them: code sets none.
+  const off = { ...options, free: false, assets };
+  const kept = await planOutline(demo, listed, { llm: scripted(outlineOf([entry('list-with-photo', 'Notes', [1])])).llm, ...off });
+  assert.equal(kept.slides[0]?.pattern, 'list-with-photo');
+  const writer = scripted(withPhoto, withPhoto);
+  const written = await writeDeck(demo, kept, { llm: writer.llm, ...off });
+  assert.equal(schemaOf(writer.requests[0]).properties.s1?.properties.bulletList?.maxItems, 3);
+  assert.deepEqual(written.deck.slides[0]?.slots.bulletList, joined);
+  // A text of three such lines is within the rule: code sets it there as it is.
+  const three = lines.split('\n').slice(0, 4).join('\n');
+  const short = await planOutline(demo, { ...listed, document: three }, { llm: scripted(outlineOf([entry('list-with-photo', 'Notes', [1])])).llm, ...options, assets });
+  assert.equal(short.slides[0]?.pattern, 'list-with-photo');
+  const filled = await writeDeck(demo, short, { llm: scripted(withPhoto, withPhoto).llm, ...options, assets });
+  assert.deepEqual(filled.deck.slides[0]?.slots.bulletList, three.split('\n').slice(1));
+});
+
+test("an opening or a closing slide of a table given only the document's tables keeps them, as one in the middle of a deck does", async () => {
+  const table = ['| Item | 2023 | 2024 |', '|---|---|---|', '| Bikes | 120 | 140 |', '| Staff | 300 | 320 |'].join('\n');
+  const doc = `${REPORT}\n\n${table}`;
+  const passages = documentPassages(doc);
+  const at = (passages.find((passage) => passage.kind === 'table') as DocumentPassage).number;
+  const text = passages.filter((passage) => passage.number !== at).map((passage) => passage.number);
+  const shared = { ...brief, document: doc };
+  for (const [label, slides, free] of [
+    ['two slides, the table last', [entry('free', 'The review', text, freeText), entry('table', 'Costs', [at])], true],
+    ['two slides, the table first', [entry('table', 'Costs', [at]), entry('free', 'The review', text, freeText)], true],
+    ['three slides, the table last', [entry('free', 'Part one', text.slice(0, 4), freeText), entry('free', 'Part two', text.slice(4), freeText), entry('table', 'Costs', [at])], true],
+    ['two slides, the table last, free slides off', [entry('text-only', 'The review', text), entry('table', 'Costs', [at])], false],
+  ] as const) {
+    const model = scripted(outlineOf([...slides]));
+    const plan = await planOutline(demo, { ...shared, slideCount: slides.length }, { llm: model.llm, ...options, ...(free ? {} : { free: false }) });
+    assert.equal(model.requests.length, 1, label);
+    const table = plan.slides.find((slide) => slide.pattern === 'table');
+    assert.deepEqual(table?.passages, [at], label);
+    assert.deepEqual(plan.slides.filter((slide) => slide !== table).flatMap((slide) => slide.passages ?? []), text, label);
+  }
+  // The table slide is written from the document's table: its writer is given the rows.
+  const plan = await planOutline(demo, { ...shared, slideCount: 2 }, { llm: scripted(outlineOf([entry('free', 'The review', text, freeText), entry('table', 'Costs', [at])])).llm, ...options });
+  const writer = scripted(() => {
+    throw new Error('stop');
+  });
+  await writeDeck(demo, plan, { llm: writer.llm, ...options }).catch(() => undefined);
+  const prompt = writer.requests[0]?.prompt ?? '';
+  const block = prompt.slice(prompt.indexOf('Text of s2 from the document'));
+  assert.ok(prompt.includes('Text of s2 from the document') && block.includes('Bikes') && block.includes('120'), prompt.slice(-600));
+});
+
 test('a table on a slide with no table is running text: it needs room there, and a spread slide gives its table to the part with the table', async () => {
   const rows = Array.from({ length: 10 }, (_, at) => `| Station ${at + 1} | ${100 + at * 7} trips | ${20 + at} bikes |`);
   const text = ['Stations', 'The figures below are for the first half of the year, counted at every dock in the city.', '| Station | Trips | Bikes |', '|---|---|---|', ...rows, '', 'Plans', SENTENCES[11]].join('\n');
@@ -854,7 +1358,8 @@ test('a table on a slide with no table is running text: it needs room there, and
   for (const slide of layout.slides) assert.equal(hasTable(slide), (slide.passages ?? []).includes(table), JSON.stringify(slide));
 
   // A fixed count shares the passages again: the table of a slide goes with the table of its passages.
-  const over = [...[0, 2, 4, 6, 8].map((at) => paragraph(at, 450)), '', '| Item | 2023 | 2024 |', '|---|---|---|', '| Bikes | 120 | 140 |', '| Staff | 300 | 320 |', '', paragraph(1, 200), paragraph(3, 200)].join('\n');
+  const table4 = ['| Item | 2023 | 2024 |', '|---|---|---|', '| Bikes | 120 | 140 |', '| Staff | 300 | 320 |'];
+  const over = [...[0, 2, 4].map((at) => paragraph(at, 150)), '', ...table4, '', paragraph(1, 80)].join('\n');
   const shared = documentPassages(over);
   const at = (shared.find((passage) => passage.kind === 'table') as DocumentPassage).number;
   const first = shared.filter((passage) => passage.number <= at).map((passage) => passage.number);
@@ -862,11 +1367,33 @@ test('a table on a slide with no table is running text: it needs room there, and
   const balanced = await planOutline(demo, { ...brief, document: over, slideCount: 2 }, { llm: scripted(outline).llm, ...options });
   assert.notDeepEqual(balanced.slides[0]?.passages, first);
   for (const slide of balanced.slides) assert.equal(hasTable(slide), (slide.passages ?? []).includes(at), JSON.stringify(slide));
+  for (const fit of planTextFit(demo, balanced, options)) assert.equal(fit.holds, fit.words, JSON.stringify(fit));
   // A table the outline gave a slide whose passages have none stays: it is no table of the document.
   const own = outlineOf([entry('free', 'First', first.slice(0, -1), both), entry('free', 'Then', shared.filter((passage) => passage.number >= at).map((passage) => passage.number), both)]);
   const kept = await planOutline(demo, { ...brief, document: over, slideCount: 2 }, { llm: scripted(own).llm, ...options });
   assert.notDeepEqual(kept.slides[0]?.passages, first.slice(0, -1));
   assert.ok(kept.slides.every(hasTable), JSON.stringify(kept.slides));
+
+  // Where the slide with the table is cut even once they are shared again, the person's text comes
+  // first: the slide is its text alone, set dense, the table's rows paragraphs of it, and holds it all.
+  const longer = [...[0, 2, 4, 6, 8].map((at) => paragraph(at, 450)), '', ...table4, '', paragraph(1, 200), paragraph(3, 200)].join('\n');
+  const all = documentPassages(longer);
+  const row = (all.find((passage) => passage.kind === 'table') as DocumentPassage).number;
+  const cut = outlineOf([entry('free', 'First', all.filter((passage) => passage.number <= row).map((passage) => passage.number), both), entry('free', 'Then', all.filter((passage) => passage.number > row).map((passage) => passage.number), freeText)]);
+  const alone = await planOutline(demo, { ...brief, document: longer, slideCount: 2 }, { llm: scripted(cut).llm, ...options });
+  assert.ok(!alone.slides.some(hasTable), JSON.stringify(alone.slides));
+  assert.deepEqual(
+    alone.slides.map((slide) => [slide.blocks, slide.arrange?.dense]),
+    [
+      [['text'], true],
+      [['text'], true],
+    ],
+  );
+  for (const fit of planTextFit(demo, alone, options)) assert.equal(fit.holds, fit.words, JSON.stringify(fit));
+  const tabled = alone.slides.findIndex((slide) => (slide.passages ?? []).includes(row));
+  const set = await writeDeck(demo, alone, { llm: scripted(titles).llm, ...options });
+  assert.deepEqual(set.deck.slides[tabled]?.slots.b1Text, fillParagraphs(readDocument(longer, 'en').passages, alone.slides[tabled]?.passages ?? []));
+  assert.ok((set.deck.slides[tabled]?.slots.b1Text as string[]).includes('Bikes | 120 | 140'));
 });
 
 test('packPassages shares runs evenly and starts them at sections', () => {
@@ -943,12 +1470,13 @@ test('a slide that holds its passages is filled by code', async () => {
 });
 
 test('not filled by code: a translation, a shorter text, a table, two running texts, too many paragraphs', async () => {
-  const filledBy = async (more: Partial<Brief>, slide: ReturnType<typeof entry>, answer: (request: JsonRequest) => unknown = titles) => {
+  const filledBy = async (more: Partial<Brief>, slide: ReturnType<typeof entry>, answer: (request: JsonRequest) => unknown = titles, free = true) => {
     const passages = documentPassages(more.document ?? REPORT).map((passage) => passage.number);
     const model = scripted(outlineOf([slide], { left_out: passages.filter((number) => !slide.passages.includes(number)) }));
-    const plan = await planOutline(demo, { ...brief, slideCount: 1, ...more }, { llm: model.llm, ...options });
+    const off = free ? {} : { free: false };
+    const plan = await planOutline(demo, { ...brief, slideCount: 1, ...more }, { llm: model.llm, ...options, ...off });
     const writer = scripted(answer, answer, answer);
-    await writeDeck(demo, plan, { llm: writer.llm, ...options });
+    await writeDeck(demo, plan, { llm: writer.llm, ...options, ...off });
     return schemaOf(writer.requests[0]).properties.s1?.properties ?? {};
   };
   // In another script the writer translates it.
@@ -965,14 +1493,18 @@ test('not filled by code: a translation, a shorter text, a table, two running te
   const pair = `Background\n${paragraph(0, 150)}\n${paragraph(3, 150)}`;
   const two = await filledBy({ document: pair }, entry('two-columns', 'Background', [1, 2]), () => ({ s1: { title: 'Background', col1Heading: 'One', col1Text: ['x'], col2Heading: 'Two', col2Text: ['y'] } }));
   assert.match(String(two.col1Text?.description), /^This slot's share of the slide's text from the document \(p1-p2\), in order and in its own words: \d+ to \d+ characters/);
-  // More paragraphs than the layout's text takes are joined by the writer.
-  const lines = `Notes\n${['One.', 'Two.', 'Three.', 'Four.', 'Five.'].join('\n')}`;
-  const many = await filledBy({ document: lines }, entry('text-only', 'Notes', [1]));
+  // More paragraphs than any layout of plain text takes, with free slides off, are joined by the
+  // writer. With free slides on, a free slide takes them, and code sets them as they are.
+  const lines = `Notes\n${['One.', 'Two.', 'Three.', 'Four.', 'Five.', 'Six.', 'Seven.'].join('\n')}`;
+  const many = await filledBy({ document: lines }, entry('text-only', 'Notes', [1]), titles, false);
   assert.match(String(many.body?.description), /^The slide's text from the document \(p1\), in its own words/);
+  assert.equal(many.body?.maxItems, 3);
+  const freed = await filledBy({ document: lines }, entry('text-only', 'Notes', [1]));
+  assert.equal('body' in freed || 'b1Text' in freed, false, JSON.stringify(Object.keys(freed)));
 });
 
 test("a list set by code into a layout's list has no bullet of its own there; a free text keeps it", async () => {
-  const text = ['What riders said:', '- Bikes are easy to find near the station', '- The app works well', '1. Some docks are often full'].join('\n');
+  const text = ['What riders said:', '- Bikes are easy to find near the station', '1. Some docks are often full'].join('\n');
   const assets = [{ id: 'bike', kind: 'photo' as const, description: 'A bike at a dock', data: new Uint8Array() }];
   // The writer gives the photo and the title: the list is set by code.
   const photo = (request: JsonRequest): unknown =>
@@ -983,9 +1515,26 @@ test("a list set by code into a layout's list has no bullet of its own there; a 
   const written = await writeDeck(demo, plan, { llm: writer.llm, ...options, assets });
   assert.equal('bulletList' in (schemaOf(writer.requests[0]).properties.s1?.properties ?? {}), false);
   // The layout draws its own bullets; a number is the text's, and stays.
-  assert.deepEqual(written.deck.slides[0]?.slots.bulletList, ['What riders said:', 'Bikes are easy to find near the station', 'The app works well', '1. Some docks are often full']);
+  assert.deepEqual(written.deck.slides[0]?.slots.bulletList, ['What riders said:', 'Bikes are easy to find near the station', '1. Some docks are often full']);
   // A free text draws none: there an item keeps its bullet.
   assert.deepEqual(fillParagraphs(documentPassages(text), [1, 2]), text.split('\n'));
+  // A lead line and three items are four paragraphs, one more than the layout's list of four takes
+  // of such a text. With free slides on, a free slide takes them, and code sets them word for word,
+  // each item with its bullet. With free slides off, the layout stays and its writer is told three.
+  const four = ['What riders said:', '- Bikes are easy to find near the station', '- The app works well', '1. Some docks are often full'].join('\n');
+  const listed = { ...brief, imageDensity: 'medium' as const, document: four, slideCount: 1 };
+  const freed = await planOutline(demo, listed, { llm: scripted(outlineOf([{ pattern: 'list-with-photo', purpose: 'Riders', passages: [1, 2], items: 4 }])).llm, ...options, assets });
+  assert.equal(freed.slides[0]?.pattern, 'free');
+  const freeWriter = scripted(photo);
+  const freeSet = await writeDeck(demo, freed, { llm: freeWriter.llm, ...options, assets });
+  assert.equal('b1Text' in (schemaOf(freeWriter.requests[0]).properties.s1?.properties ?? {}), false);
+  assert.deepEqual(freeSet.deck.slides[0]?.slots.b1Text, four.split('\n'));
+  const off = { ...options, free: false, assets };
+  const kept = await planOutline(demo, listed, { llm: scripted(outlineOf([{ pattern: 'list-with-photo', purpose: 'Riders', passages: [1, 2], items: 4 }])).llm, ...off });
+  assert.equal(kept.slides[0]?.pattern, 'list-with-photo');
+  const keptWriter = scripted(photo, photo);
+  await writeDeck(demo, kept, { llm: keptWriter.llm, ...off }).catch(() => undefined);
+  assert.equal(schemaOf(keptWriter.requests[0]).properties.s1?.properties.bulletList?.maxItems, 3);
   // A word processor's tab after a marker is one space, the bullet dropped or not.
   const pasted = documentPassages(['1.\tOpen the app', '2.\tFind a dock', 'o\tScan the code'].join('\r\n'));
   assert.deepEqual(fillParagraphs(pasted, [1], { bullets: false }), ['1. Open the app', '2. Find a dock', 'Scan the code']);
@@ -1212,7 +1761,7 @@ test('editPlan shows the passages and fits only the slides whose passages moved'
   const doc = readDocument(REPORT, 'en');
   const chars = (numbers: number[]) => numbers.reduce((sum, number) => sum + (doc.passages[number - 1]?.chars ?? 0), 0);
   assert.ok(prompt.includes(`\n2. text-only (p1-p2, ${chars([1, 2])} characters; cut to fit): Background\n`), prompt.slice(prompt.indexOf('The plan as it is now'), prompt.indexOf('Requested change')));
-  assert.match(prompt, new RegExp(`\\n3\\. free \\(a text; [^)]*p3-p4, ${chars([3, 4])} characters; at most about 800 words\\): Riders\\n`));
+  assert.match(prompt, new RegExp(`\\n3\\. free \\(a text; [^)]*p3-p4, ${chars([3, 4])} characters; at most about 720 words\\): Riders\\n`));
   for (const rule of DOCUMENT_CHANGE_RULES) assert.ok(prompt.includes(`\n- ${rule}`), rule);
   assert.ok(prompt.indexOf('- A slide given words holds them all') < prompt.indexOf("- The plan carries the document's own text."));
   // The answer names each slide's passages, those the request leaves out, the slides it asks for and the language of the document.
@@ -1383,7 +1932,7 @@ test('planEdit shows the document once, and the writer the text of each slide it
   assert.equal(plan.split(doc.passages[0]?.text as string).length - 1, 1);
   assert.equal(plan.split(p7).length - 1, 1);
   assert.ok(plan.includes(`\n4. [text-only, p7] title: "Plans"; body: ${JSON.stringify(`${p7.slice(0, 157).trimEnd()}...`)}\n`), plan.slice(plan.indexOf('The deck as it is now')));
-  assert.match(plan, /\n2\. \[free: a text; [^\]]*p1-p3; \d+ words; at most about 800 words\] /);
+  assert.match(plan, /\n2\. \[free: a text; [^\]]*p1-p3; \d+ words; at most about 720 words\] /);
   assert.match(plan, /\np8 \(\d+, on no slide\): /);
   assert.ok(plan.includes(`\n- ${DOCUMENT_EDIT_RULE}\n`));
   assert.equal(model.requests[0]?.system, systemPrompt('en', 'deck', true));
@@ -1464,7 +2013,7 @@ test('planEdit says before writing that a slide would be cut', async () => {
   const writer = (request: JsonRequest) => ({ s1: { title: 'הכול', b1Text: ['טקסט'], ...(titles(request) as { s1?: object }).s1 }, s2: { title: 'עוד' } });
   const written = await planEdit(rtl, deck, 'Put all of it on slide 1', { llm: scripted(plan, writer, writer, writer).llm, ...rtlOptions });
   const cut = written.warnings.find((issue) => issue.message.startsWith('the text from the document'));
-  assert.match(cut?.message ?? '', new RegExp(`^the text from the document for this slide \\(p1-p${every.length}\\) is ${doc.chars} characters, and the slide holds about \\d+ even with its text set small, at 7 pt: it is cut to fit\\. Ask for more slides to keep it whole$`));
+  assert.match(cut?.message ?? '', new RegExp(`^the text from the document for this slide \\(p1-p${every.length}\\) is ${needOf(doc, every, 'he')} characters, and the slide holds about \\d+ even with its text set small, at 7 pt: it is cut to fit\\. Ask for more slides to keep it whole$`));
   assert.equal(cut?.slide, 1);
   // Slide 2 gave up its passages: it carries none, and keeps no length of the text that went.
   assert.equal(written.deck.slides[1]?.passages, undefined);
@@ -1519,7 +2068,7 @@ const stoppedAt = (edit: Promise<unknown>): Promise<TextCutError['fits'] | undef
   );
 
 test('planEdit stops before writing for the room a slide is written in, a heading it keeps counted', async () => {
-  const long = hebrewDocument(1800);
+  const long = hebrewDocument(1500);
   const doc = readDocument(long, 'he');
   const every = doc.passages.map((passage) => passage.number);
   const half = Math.ceil(every.length / 2);

@@ -5,16 +5,19 @@ This is a prompt for a coding agent working in an app whose chat makes presentat
 pasted a text or attached a file got slides that sum it up: the chat model left the number out of
 `slide_count` and retold the text in `topic`. From 0.6.2 a slide keeps the amount of text asked for, set
 smaller where it must, on the number of slides asked for, and the chat model can name the person's text so
-that all of it reaches the slides word for word.
+that all of it reaches the slides word for word. 0.6.2 could still cut a slide of such a text to almost
+nothing, where the text stood beside a card or a chart; from 0.6.3 the text comes first. From 0.6.3 a slide
+also holds a little less: about 440 Hebrew words on a slide 10 inches wide, and about 720 English words on one
+13.33 inches wide.
 
 Paste everything below the line to the agent. It asks for the upgrade, one option, a list the app builds on
 every turn, and a few lines of the chat's system prompt. No new tool and no screen. Server logic only, for
-slotdeck 0.6.2 or later.
+slotdeck 0.6.3 or later.
 
 ---
 
 You are working in an application whose chat makes presentations with slotdeck. People ask for numbers ("2
-slides", "500 words on each"), and they paste a text or attach a file and want it on the slides. slotdeck 0.6.2
+slides", "500 words on each"), and they paste a text or attach a file and want it on the slides. slotdeck 0.6.3
 keeps both when the chat model passes them on: with `slide_count` the presentation has exactly that many
 slides, an amount of text passed in `instructions` stays on its slide, set smaller where it must, and the
 texts named in `documents` go on the slides word for word. Your task is to make the chat model pass these on,
@@ -23,7 +26,7 @@ code of your own, and change nothing else in how the chat plans or edits.
 
 ## The short path
 
-1. Upgrade to slotdeck 0.6.2 or later, and keep free slides on.
+1. Upgrade to slotdeck 0.6.3 or later, and keep free slides on.
 2. Build the tools with `documents: true`.
 3. On every turn, build the list of the conversation's texts, pass it with every tool call, and add what
    `describeDocuments(list)` returns to the chat's system prompt.
@@ -40,8 +43,8 @@ The references are "Asking for an amount of text" and "Making a deck from a docu
 
 Change nothing yet. Report in a few lines, then say what you will change, file by file:
 
-1. The installed version (`node_modules/slotdeck/package.json`). The references come with 0.6.2: read them
-   once it is installed.
+1. The installed version (`node_modules/slotdeck/package.json`). The references come with 0.6.2 and later:
+   read them once 0.6.3 is installed.
 2. The `presentationTools({ ... })` call, whether it passes `free: false` or a `patterns` list without `free`,
    and where the tools' `call` is made, with what of the conversation is in scope there.
 3. How each kind of text a person gives reaches the server: a file whose text comes with the message (and the
@@ -57,11 +60,15 @@ Change nothing yet. Report in a few lines, then say what you will change, file b
 
 ## What to change
 
-**1. Upgrade, and keep free slides on.** Install 0.6.2 or later the way the app installs its packages. Stored
-plans and presentations need nothing. A long text is set smaller only on a slide the software lays out itself:
-if the app passes `free: false`, or a `patterns` list without `free`, say so in your report and ask before
-changing it. If the app's own code calls the model, not `gemini()`, which does so already, make it ask once more
-with light reasoning when an answer is cut off: see "Runaway answers" in `node_modules/slotdeck/docs/providers.md`.
+**1. Upgrade, and keep free slides on.** Install 0.6.3 or later the way the app installs its packages. Stored
+presentations need nothing, but one made by 0.6.2 whose text was set small may now warn `text is N characters;
+the slot fits about M` where its text is longer than 0.6.3 holds, and a change that writes that slide again
+cuts it to what 0.6.3 holds. A stored plan made by 0.6.2 is written as it was planned: one whose slides show
+`holds_words` far below their `words` or `text_words` has to be planned again. A long text is set smaller only
+on a slide the software lays out itself: if the app passes `free: false`, or a `patterns` list without `free`,
+say so in your report and ask before changing it. If the app's own code calls the model, not `gemini()`, which
+does so already, make it ask once more with light reasoning when an answer is cut off: see "Runaway answers"
+in `node_modules/slotdeck/docs/providers.md`.
 
 **2 and 3. The option and the list.**
 
@@ -132,7 +139,9 @@ Then with the production model, in the language of the app's templates:
 
 1. "A presentation of 2 slides, 500 words each", on a subject of your choosing. The call has `slide_count: 2`
    and the 500 words in `instructions`; the plan has 2 slides with `"words": 500` and a note the chat model
-   passes on; each slide of the presentation has 450 to 560 words, inside its box in PowerPoint.
+   passes on. On a template 13.33 inches wide each slide of the presentation has 450 to 560 words. On one 10
+   inches wide, in Hebrew, the note says each slide holds about 440 (`holds_words`), and each slide has about
+   400 to 480 words. Every slide is inside its box in PowerPoint.
 2. Paste a text of about 1,000 words in two headed parts and ask for 2 slides, one for each part, with all the
    text. The call names `"pasted text 1"`, with `slide_count: 2` and a topic of a sentence or two.
    `kept_words` is at least 95% of the words, and in PowerPoint each part is on its slide, in order, inside its

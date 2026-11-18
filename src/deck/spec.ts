@@ -78,8 +78,11 @@ export interface FreeArrange {
    * their own text. A free slide of one text, with or without a heading. Where that text is too
    * long for four fifths of the template's text size it is set smaller, down to the least size that
    * still reads (9 pt on a slide 13.33 inches wide, less on a narrower one), in two or three
-   * columns, in the most room the frame has. A text that fits is set out as without it. Set by the
-   * planner; left out, the slide is set out as before.
+   * columns, in the most room the frame has. A text that fits is set as large as it fits, as without
+   * the flag. One rule says whether such a text fits and what it holds, when it is planned, written
+   * and checked: its paragraphs counted by length, each in whole lines, its columns filled line by
+   * line as PowerPoint fills them, each keeping a line free. Set by the planner; left out, the slide
+   * is set out as before.
    */
   dense?: boolean;
 }

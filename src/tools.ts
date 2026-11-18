@@ -16,7 +16,7 @@ import { TextCutError, planEdit, recolorDeck } from './plan/edit.ts';
 import type { EditOptions, EditResult } from './plan/edit.ts';
 import { entryBlocks, freeOnOffer, isFreeEntry, partLabel, severalOnOneSlide } from './plan/free.ts';
 import { readWords, setSmall } from './plan/length.ts';
-import { editPlan, patternIds, planOutline, planTextFit, withSettings, writeDeck } from './plan/plan.ts';
+import { editPlan, freeSlidesOff, patternIds, planOutline, planTextFit, withSettings, writeDeck } from './plan/plan.ts';
 import type { Brief, DeckPlan, OutlineEntry, PlanOptions, PlanSettings, SlideTextFit } from './plan/plan.ts';
 import { previewExtension } from './preview/provider.ts';
 import type { PreviewProvider, SlidePreview } from './preview/provider.ts';
@@ -473,9 +473,10 @@ const smallSize = (fit: SlideTextFit): number | undefined => (fit.size !== undef
 /**
  * What the chat model is to tell the person of a plan before the presentation is made: the slides
  * whose text is cut first, then those that carry all of it in type well below the template's. ''
- * when there is nothing to tell.
+ * when there is nothing to tell. `freeOff` says a setting turns free slides off, so that no text is
+ * set smaller: a cut says so at its end.
  */
-function fitNote(fits: readonly SlideTextFit[]): string {
+function fitNote(fits: readonly SlideTextFit[], freeOff = false): string {
   const said: string[] = [];
   const at = (fit: SlideTextFit): string => {
     const size = smallSize(fit);
@@ -486,7 +487,8 @@ function fitNote(fits: readonly SlideTextFit[]): string {
     said.push(
       `Not all the text fits: slide ${cut.slide} holds about ${cut.holds} of its ${cut.words} words${at(cut)}` +
         more.map((fit) => `, slide ${fit.slide} about ${fit.holds} of its ${fit.words}${at(fit)}`).join('') +
-        '. The rest will be cut. Tell the user before creating the presentation, and offer more slides or a shorter text.',
+        '. The rest will be cut. Tell the user before creating the presentation, and offer more slides or a shorter text.' +
+        (freeOff && [cut, ...more].some((fit) => fit.dense !== true) ? ' Free slides are off, so the text is not set smaller.' : ''),
     );
   }
   const whole = fits.filter((fit) => fit.holds >= fit.words && smallSize(fit) !== undefined);
@@ -776,6 +778,15 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
   if (options.numberPatterns) fitOptions.numberPatterns = options.numberPatterns;
   if (options.free !== undefined) fitOptions.free = options.free;
 
+  /** Whether a setting turns free slides off for a plan. The plan stands without it: a plan that trips it is said to have them. */
+  const freeOffFor = (plan: DeckPlan): boolean => {
+    try {
+      return freeSlidesOff(template, plan, fitOptions);
+    } catch {
+      return false;
+    }
+  };
+
   /**
    * What each slide of a plan given words or a document's text will carry, worked out by code
    * before anything is written: [] for any other plan. The plan stands without it, so a slide that
@@ -852,7 +863,9 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
     };
     const placed = documentPlaced(passages, plan.slides);
     if (placed) output.document = placed;
-    const note = fitNote(fits);
+    // A cut is said with what keeps its text from being set smaller, where a setting does.
+    const cut = fits.some((fit) => fit.holds < fit.words);
+    const note = fitNote(fits, cut && freeOffFor(plan));
     if (note) output.note = note;
     // Without a number the planner chose one, and the words asked for a slide never make it more:
     // where the person named a number the chat model left out, it is to plan again with it.

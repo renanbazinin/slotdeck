@@ -3,6 +3,65 @@
 What changed in each version, newest first, with what to do when upgrading. The version you have installed is
 in `node_modules/slotdeck/package.json`.
 
+## 0.6.3
+
+A slide that carries a person's text holds what one rule says it holds. Planned, set by code, or written as
+told, such text ended inside its box in PowerPoint in the template's own face. Without a document or an amount
+of text, a brief is planned, written and rendered as before.
+
+### Fixed
+
+- **A slide held about 1 character of its text.** On a right-to-left template, a document of 1,359 words on 2
+  slides, each text beside a card, a figure or a step, was cut to `the slide holds about 1`. Each slide is now
+  its text alone, set dense, planned at 7 pt, and holds 474 and 469 of its 685 and 674 words.
+- **A text set dense was planned one way and checked another.** 0.6.2 left a document's headings out: 52 lines
+  with no full stop were planned as held, set word for word, and ran 18 pt past their box. One rule now counts
+  such text, headings and all: paragraphs in whole lines by length, filled into columns as PowerPoint fills
+  them, each column keeping a line free. Code sets a document's text as it is only where it fits. In 3 to 100
+  paragraphs alike, the rule accepts no longer text than 0.6.2 did.
+- **A writer inside what it was told was sent back:** one in six, in random plans of 0.6.2. Text set dense and
+  small is now told what any text of its paragraphs holds; in 3,500 random plans no writer of dense text was
+  sent back. A text that does not fit is always told so.
+- In a fixed deck of three slides or fewer, an opening or a closing slide keeps passages its neighbour cannot
+  hold. A table layout given only the document's tables keeps them at an end of any deck, as in its middle.
+  With free slides off, no slide "holds about 0".
+
+### Changed
+
+- **The text comes first.** In a plan, a chart, a table, a list or cards that would cut a document's text, or
+  leave under half of the words asked, give way where the text alone keeps more of it. A part a change asks
+  for stays, then and in later changes (`editPlan` marks the slide, `OutlineEntry.partsAsked`, internal): the
+  parts of a free slide, and a layout's chart or table. A layout of cards, figures, a list or a quote gives
+  way to an amount of text asked for it, as in 0.6.2.
+- **A slide set dense holds less:** about 4,350 characters, some 720 English words, at 9 pt on a slide 13.33
+  inches wide (0.6.2: 4,850); about 2,900, some 440 Hebrew words, at 7 pt on one 10 inches wide (0.6.2:
+  3,400). A cut text is told twelve paragraphs at most.
+- A short dense list that one column does not hold goes into two. A layout's slot of four or more paragraphs
+  takes one fewer of a document's text of three or more. A cut with free slides off says so, and a slide that
+  holds a document's text only with its paragraphs joined says `its paragraphs are joined`.
+
+### Upgrading from 0.6.2
+
+Nothing to change in code. A 0.6.2 deck renders its dense slides (`arrange.dense`) by the new rule: the same
+text can be set half a point smaller or up to 2 pt larger, in a box of another height. One whose dense text
+the rule does not hold now warns `text is N characters; the slot fits about M`, such as 500 Hebrew words in
+twelve paragraphs on a slide 10 inches wide; in fewer paragraphs the same words can still fit. Such a slide is
+cut when it is written again. Plan again a 0.6.2 plan whose `holds_words` is far below its `words` or `text_words`. Apps that
+followed [own-text.md](prompts/own-text.md) should upgrade; its first test now expects about 440 Hebrew words.
+[text-first.md](prompts/text-first.md) is the prompt for a coding agent: the upgrade, and a check that
+`holds_words`, the `note` and the warnings reach the person before a presentation is made.
+
+### Known limits
+
+- The rule knows no face. Capitals and long unbroken words, such as web addresses, can run past the box
+  unsaid: up to 12 pt in the templates' own faces, 223 pt in a wide face. In a wide face, text at the top of
+  its told range can too: 500 German words ran 24 pt past.
+- The last column can come out short, at times almost empty.
+- A list of short items, each a little shorter than a line, is counted two lines an item: a slide can cut it,
+  or join its items, where it would fit whole. 0.6.2 set such lists whole, and most ran past their box.
+- A table layout at an end of a fixed deck, given text and the table, becomes text holding the table, cut.
+- `editPlan` can take a slide inserted before a reworded one of the same parts for the plan's slide.
+
 ## 0.6.2
 
 A slide keeps the text a person asks for, on the slides they asked for, and a deck can carry a document a
