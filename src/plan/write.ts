@@ -8,6 +8,7 @@ import { FREE_PARTS, describeBlocks, freeContent, freeSlide, freeSlotName, freeS
 import type { FreeBlockContent } from '../free/blocks.ts';
 import { blockRuns } from '../free/offer.ts';
 import type { JsonSchema } from '../llm/provider.ts';
+import { EN, said } from '../messages/en.ts';
 import type { Template } from '../render/render.ts';
 import { textBudget } from '../template/manifest.ts';
 import type { TemplateManifest } from '../template/manifest.ts';
@@ -321,9 +322,9 @@ const filled = (value: SlotValue | undefined): boolean =>
 
 const REQUIRED = 'this slot is required';
 /** Said of a slot that a change was to write again and that came back with nothing. It is sent back like any problem. */
-const UNWRITTEN = 'nothing was written for it, and it is to be written again';
+const UNWRITTEN = EN['part-unwritten']({});
 /** Said of a slide for which more photos were described than are made for one slide. */
-const PHOTOS_OVER = `at most ${MOST_PHOTOS} photos can be made for one slide; use a supplied photo for the others`;
+const PHOTOS_OVER = EN['photos-over']({ most: MOST_PHOTOS });
 
 /**
  * The smallest budget that text is held to. A planned slide is set out for texts of the usual
@@ -458,7 +459,7 @@ function freeNotes(job: FreeJob, draft: FreeDraft, issues: Issue[], context: Cat
     const value = draft.slide.slots[slot];
     if (most === undefined || most < LEAST_BUDGET || reported.has(slot) || (typeof value !== 'string' && !Array.isArray(value))) continue;
     const chars = toParagraphs(value as string | string[]).reduce((sum, paragraph) => sum + paragraph.length, 0);
-    if (chars > 1.25 * most) notes.push({ severity: 'warning', slide: job.number, slot, message: `text is ${chars} characters; the slot fits about ${most}` });
+    if (chars > 1.25 * most) notes.push({ severity: 'warning', slide: job.number, slot, ...said('slot-over-chars', { chars, most }) });
   }
   // A text set dense has the paragraphs its writer was told: the check of the deck takes as many as
   // it has, and says what they hold.
@@ -472,24 +473,24 @@ function freeNotes(job: FreeJob, draft: FreeDraft, issues: Issue[], context: Cat
       const value = draft.slide.slots[slot];
       if (told === undefined || (typeof value !== 'string' && !Array.isArray(value))) continue;
       const count = toParagraphs(value as string | string[]).filter((paragraph) => paragraph !== '').length;
-      if (count > told) notes.push({ severity: 'warning', slide: job.number, slot, message: `text has ${count} paragraphs; the slot fits ${told}` });
+      if (count > told) notes.push({ severity: 'warning', slide: job.number, slot, ...said('slot-over-paragraphs', { paragraphs: count, most: told }) });
     }
   }
   for (const name of draft.unwritten) {
     const at = partOf(name);
     const now = at ? draft.kept.indexOf(at.block) + 1 : 0;
-    if (at && now > 0) notes.push({ severity: 'warning', slide: job.number, slot: freeSlotName(now, at.part), message: UNWRITTEN });
+    if (at && now > 0) notes.push({ severity: 'warning', slide: job.number, slot: freeSlotName(now, at.part), ...said('part-unwritten', {}) });
   }
-  if (describedPhotos(job, draft).length > MOST_PHOTOS) notes.push({ severity: 'warning', slide: job.number, message: PHOTOS_OVER });
-  const told = (count: number, what: string) => {
-    if (count > 0) notes.push({ severity: 'warning', message: `slide ${job.number}: ${count} ${count === 1 ? 'part' : 'parts'} ${what} and ${count === 1 ? 'was' : 'were'} left out` });
+  if (describedPhotos(job, draft).length > MOST_PHOTOS) notes.push({ severity: 'warning', slide: job.number, ...said('photos-over', { most: MOST_PHOTOS }) });
+  const told = (count: number, code: 'parts-left-out-empty' | 'parts-left-out-unusable') => {
+    if (count > 0) notes.push({ severity: 'warning', ...said(code, { slide: job.number, count }) });
   };
-  told(draft.left.empty, 'had no content');
-  told(draft.left.unusable, 'could not be shown');
+  told(draft.left.empty, 'parts-left-out-empty');
+  told(draft.left.unusable, 'parts-left-out-unusable');
   const over = draft.left.surplus;
-  if (over > 0) notes.push({ severity: 'warning', message: `slide ${job.number}: ${over} ${over === 1 ? 'photo was' : 'photos were'} left out, since at most ${MOST_PHOTOS} are made for one slide` });
+  if (over > 0) notes.push({ severity: 'warning', ...said('photos-left-out', { slide: job.number, count: over, most: MOST_PHOTOS }) });
   const same = draft.left.unchanged;
-  if (same > 0) notes.push({ severity: 'warning', message: `slide ${job.number}: what was written for ${same} ${same === 1 ? 'part' : 'parts'} could not be shown, and ${same === 1 ? 'it stays' : 'they stay'} as ${same === 1 ? 'it was' : 'they were'}` });
+  if (same > 0) notes.push({ severity: 'warning', ...said('parts-unchanged', { slide: job.number, count: same }) });
   return notes;
 }
 
@@ -523,8 +524,7 @@ function tellUnwritten(issues: Issue[]): Issue[] {
     return false;
   });
   for (const [slide, set] of parts) {
-    const one = set.size === 1;
-    rest.push({ severity: 'warning', message: `slide ${slide}: nothing was written for ${set.size} ${one ? 'part' : 'parts'}, and ${one ? 'it stays as it was' : 'they stay as they were'}` });
+    rest.push({ severity: 'warning', ...said('parts-unwritten', { slide, count: set.size }) });
   }
   return rest;
 }

@@ -9,6 +9,7 @@ import { freeTextRoom } from '../free/offer.ts';
 import { freeBodySize } from '../free/plan.ts';
 import { freeFor } from '../free/resolve.ts';
 import type { JsonSchema } from '../llm/provider.ts';
+import { said } from '../messages/en.ts';
 import type { Template } from '../render/render.ts';
 import { withLayouts } from '../template/compose.ts';
 import { TEXT_SIZES, effectiveSlots, itemCount, itemRange } from '../template/manifest.ts';
@@ -160,10 +161,24 @@ export interface EditOptions extends PlanOptions {
 export class TextCutError extends PlanError {
   /** The slides that would hold less than they carry, numbered as in the deck after the change. */
   readonly fits: SlideTextFit[];
-  constructor(message: string, fits: SlideTextFit[]) {
+  /** Whether free slides are off, so that no slide's text is set smaller: the message then says so. */
+  readonly freeOff: boolean;
+  constructor(message: string, fits: SlideTextFit[], freeOff = false) {
     super(message);
     this.name = 'TextCutError';
     this.fits = fits;
+    this.freeOff = freeOff;
+  }
+
+  /**
+   * The cut as a person reads it: a note for each slide (`change-would-cut`), for `formatIssue`. A
+   * slide says its size where its text is set small, and that free slides are off where it is not.
+   */
+  get issues(): Issue[] {
+    return this.fits.map((fit) => ({
+      severity: 'warning',
+      ...said('change-would-cut', { slide: fit.slide, words: fit.words, holdsWords: fit.holds, size: fit.size, freeOff: this.freeOff && fit.size === undefined }),
+    }));
   }
 }
 
@@ -274,7 +289,7 @@ const REWORD_NOTE = 'true only when the request asks for the text of this slide 
  * when its title came back as it was: the request was not met on that slide. It is a note on the
  * deck, with no slide number in the issue: writing the slide again would give the same.
  */
-const nothingChanged = (slide: number): Issue => ({ severity: 'warning', message: `slide ${slide}: nothing on it was changed: the plan of the change named no part to write again` });
+const nothingChanged = (slide: number): Issue => ({ severity: 'warning', ...said('nothing-changed', { slide }) });
 
 /** A title as one line, for telling whether a change left it as it was. */
 const titleLine = (value: SlotValue | undefined): string => (typeof value === 'string' ? cleanText(value) : Array.isArray(value) ? cleanText(value.join(' ')) : '');
@@ -1288,9 +1303,9 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
   // ask for more slides or a shorter text, or accept the cut. It is found in the patterns the slides
   // are written against, which count the heading or caption a slide keeps: no model was asked yet.
   if (options.stopBeforeCut && cuts.length > 0) {
-    const said = cuts.map((fit) => `slide ${fit.slide} would hold about ${fit.holds} of its ${fit.words} words${fit.size !== undefined ? ` (text at ${fit.size} pt)` : ''}`).join('; ');
+    const slides = cuts.map((fit) => `slide ${fit.slide} would hold about ${fit.holds} of its ${fit.words} words${fit.size !== undefined ? ` (text at ${fit.size} pt)` : ''}`).join('; ');
     const off = freeOff && cuts.some((fit) => fit.size === undefined) ? ' Free slides are off, so the text is not set smaller.' : '';
-    throw new TextCutError(`Nothing was changed: ${said}. Ask for more slides or a shorter text, or accept that the rest is cut.${off}`, cuts);
+    throw new TextCutError(`Nothing was changed: ${slides}. Ask for more slides or a shorter text, or accept that the rest is cut.${off}`, cuts, freeOff);
   }
 
   // The slides the caller's colours are for, when some were named. The caller numbered the deck
@@ -1299,7 +1314,7 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
   const named = options.colors !== undefined && options.colorSlides?.length ? [...new Set(options.colorSlides)] : undefined;
   const recolored = named ? plan.entries.flatMap((entry, index) => (entry.from > 0 && named.includes(entry.from) ? [index + 1] : [])) : undefined;
   const removed = (named ?? []).filter((number) => Number.isInteger(number) && number >= 1 && number <= deck.slides.length && !plan.entries.some((entry) => entry.from === number));
-  const notes: Issue[] = [...idle.map(nothingChanged), ...removed.map((number): Issue => ({ severity: 'warning', message: `the change removed slide ${number}, which was to be recoloured` })), ...leftOut, ...short];
+  const notes: Issue[] = [...idle.map(nothingChanged), ...removed.map((number): Issue => ({ severity: 'warning', ...said('recolor-slide-removed', { slide: number }) })), ...leftOut, ...short];
 
   const assemble = (written: Map<number, SlideSpec>): DeckSpec => {
     const slides = plan.entries.map((entry, index) => {

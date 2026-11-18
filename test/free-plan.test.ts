@@ -18,6 +18,7 @@ import { partRanges, rangeSchema, readRange } from '../src/plan/parts.ts';
 import type { FreeJob } from '../src/plan/parts.ts';
 import { heldParts, roomAsHeld } from '../src/plan/reshape.ts';
 import { buildFixturePptx, cardsManifest } from './fixture.ts';
+import { withoutCodes } from './issues.ts';
 
 const pptx = buildFixturePptx();
 // Three patterns: `content` (with a photo), `closing` (its text is a deck field) and `cards`. A free slide stands on the frame of `content`.
@@ -613,7 +614,7 @@ test('text far over the budget the writer was shown is sent back, also where the
   // What still stands after the last round is a warning on that slot, like any text over its budget.
   const stubborn = scripted({ s1: cardsContent, s2: { ...threeCards, b1Text: long }, s3: {} });
   const kept = await writeDeck(template, cardsPlan(), { llm: stubborn.llm, maxRepairs: 0 });
-  assert.deepEqual(kept.warnings, [{ severity: 'warning', slide: 2, slot: 'b1Text', message: `text is ${long.length} characters; the slot fits about ${budget}` }]);
+  assert.deepEqual(withoutCodes(kept.warnings), [{ severity: 'warning', slide: 2, slot: 'b1Text', message: `text is ${long.length} characters; the slot fits about ${budget}` }]);
 });
 
 const quarters = ['Q1', 'Q2', 'Q3', 'Q4'];
@@ -783,7 +784,7 @@ test('sixty charts are written by two calls side by side, and a call is asked ag
   assert.deepEqual(slide.slots.b57Chart, { type: 'line', categories: quarters, series: [{ name: 'Store 57', values: [10, 14, 12, 18] }] });
   assert.ok(!('b58Chart' in slide.slots));
   const told: Issue = { severity: 'warning', message: 'slide 2: 3 parts had no content and were left out' };
-  assert.ok(written.warnings.some((issue) => JSON.stringify(issue) === JSON.stringify(told)), JSON.stringify(written.warnings));
+  assert.ok(withoutCodes(written.warnings).some((issue) => JSON.stringify(issue) === JSON.stringify(told)), JSON.stringify(written.warnings));
   assert.deepEqual(written.warnings.filter((issue) => issue.severity === 'error'), []);
   assert.ok(renderDeck(demo, written.deck, { layout: 'adaptive' }).pptx.length > 1000);
 });
@@ -1148,7 +1149,7 @@ test('of the photos a writer describes for one slide, six are made', async () =>
   const stubborn = scripted(described(), described());
   const six = await writeDeck(template, plan, { llm: stubborn.llm, assets: [rex], maxRepairs: 1 });
   assert.deepEqual(six.deck.slides[0]?.blocks, kinds(['photo', 6]));
-  assert.deepEqual(six.warnings, [{ severity: 'warning', message: 'slide 1: 1 photo was left out, since at most 6 are made for one slide' }]);
+  assert.deepEqual(withoutCodes(six.warnings), [{ severity: 'warning', message: 'slide 1: 1 photo was left out, since at most 6 are made for one slide' }]);
   // A slide of up to six photos is told nothing of it.
   const few = scripted({ s1: {} });
   await writeDeck(template, { ...plan, slides: [{ pattern: 'free', purpose: 'Two dogs', blocks: kinds(['photo', 2]) }] }, { llm: few.llm, assets: [rex], maxRepairs: 0 }).catch(() => undefined);
@@ -1173,7 +1174,7 @@ test('a chart the brief has no numbers for is taken off the slide, without askin
   assert.deepEqual([s1.properties.b2Chart?.properties.categories?.maxItems, s1.properties.b2Chart?.properties.series?.maxItems], [8, 3]);
   // The parts that stay are numbered anew, and the deck is told what was left out: a note on the deck, with no slide to rewrite.
   assert.deepEqual(written.deck.slides[0], { pattern: 'free', blocks: ['chart', 'note'], base: 'list-with-photo', slots: { title: 'Sales', b1Caption: 'North', b1Chart: chartOf('2025'), b2Text: NOTE } });
-  assert.deepEqual(written.warnings.filter((issue) => /left out/.test(issue.message)), [{ severity: 'warning', message: 'slide 1: 1 part had no content and was left out' }]);
+  assert.deepEqual(withoutCodes(written.warnings.filter((issue) => /left out/.test(issue.message))), [{ severity: 'warning', message: 'slide 1: 1 part had no content and was left out' }]);
   assert.doesNotMatch(written.warnings.map((issue) => issue.message).join(' '), /characters|paragraphs|lines/, 'not a message a rewrite would be started for');
   assert.deepEqual(validateDeck(demo, written.deck, { layout: 'adaptive' }).filter((issue) => issue.severity === 'error'), []);
 
@@ -1182,7 +1183,7 @@ test('a chart the brief has no numbers for is taken off the slide, without askin
   const said = await writeDeck(demo, numbersPlan(['figure', 'table', 'chart'], 'Our stores did well this year.'), { llm: bare.llm, layout: 'adaptive' });
   assert.equal(bare.requests.length, 1);
   assert.deepEqual(said.deck.slides[0], { pattern: 'free', blocks: ['text'], base: 'list-with-photo', slots: { b1Text: 'Our stores did well this year.' } });
-  assert.deepEqual(said.warnings.filter((issue) => /left out/.test(issue.message)), [{ severity: 'warning', message: 'slide 1: 3 parts had no content and were left out' }]);
+  assert.deepEqual(withoutCodes(said.warnings.filter((issue) => /left out/.test(issue.message))), [{ severity: 'warning', message: 'slide 1: 3 parts had no content and were left out' }]);
 
   // A table that comes back with its headings and no row shows nothing: it is left empty too. Written by arrays, where
   // every property is asked of every item, that is how a table without numbers comes back.
@@ -1193,7 +1194,7 @@ test('a chart the brief has no numbers for is taken off the slide, without askin
   const rows = scripted({ r01: range(1, 10).map((block) => ({ block, caption: '', header: ['Store', 'Sales'], rows: [] })), r02: [{ block: 11, text: NOTE }], title: 'Sales' });
   const bare10 = await writeDeck(demo, numbersPlan(kinds(['table', 10], ['note', 1])), { llm: rows.llm, layout: 'adaptive' });
   assert.deepEqual([rows.requests.length, bare10.deck.slides[0]?.blocks], [1, ['note']]);
-  assert.deepEqual(bare10.warnings.filter((issue) => /left out/.test(issue.message)), [{ severity: 'warning', message: 'slide 1: 10 parts had no content and were left out' }]);
+  assert.deepEqual(withoutCodes(bare10.warnings.filter((issue) => /left out/.test(issue.message))), [{ severity: 'warning', message: 'slide 1: 10 parts had no content and were left out' }]);
 });
 
 test('a slide left with no part and no purpose still says something, and stops no deck', async () => {
@@ -1208,7 +1209,7 @@ test('a slide left with no part and no purpose still says something, and stops n
   assert.deepEqual(silent.deck.slides[0]?.slots, { b1Text: 'Stores' });
   const untitled = await writeDeck(demo, { ...numbersPlan(kinds(['figure', 12]), ''), title: '' }, { llm: scripted({ r01: [], title: '' }).llm, layout: 'adaptive', maxRepairs: 0 });
   assert.deepEqual(untitled.deck.slides[0]?.slots, { b1Text: stores.prompt });
-  assert.deepEqual(untitled.warnings.filter((issue) => /left out/.test(issue.message)), [{ severity: 'warning', message: 'slide 1: 12 parts had no content and were left out' }]);
+  assert.deepEqual(withoutCodes(untitled.warnings.filter((issue) => /left out/.test(issue.message))), [{ severity: 'warning', message: 'slide 1: 12 parts had no content and were left out' }]);
   // Through planDeck, where the outline gives the empty purpose.
   const planned = scripted({ title: 'Stores', slides: [freeEntry('', [['chart', 2]])] }, { s1: { b1Chart: emptyChart } });
   const whole = await planDeck(demo, { ...stores, slideCount: 1 }, { llm: planned.llm, layout: 'adaptive' });
@@ -1223,7 +1224,7 @@ test('a part whose content is still missing after the last repair is taken off: 
   assert.equal(requests.length, 3, 'two repair rounds, as for any slide');
   assert.match(promptOf(requests[1]), /\nIt has these problems:\n- s1\.b2Text: this slot is required\n\nReturn the full content again/);
   assert.deepEqual(written.deck.slides[0], { pattern: 'free', blocks: ['card', 'chart'], base: 'list-with-photo', slots: { title: 'Two ways', b1Heading: 'Hours', b1Text: 'From five.', b2Chart: chartOf('2025') } });
-  assert.deepEqual(written.warnings.filter((issue) => /left out/.test(issue.message)), [{ severity: 'warning', message: 'slide 1: 1 part had no content and was left out' }]);
+  assert.deepEqual(withoutCodes(written.warnings.filter((issue) => /left out/.test(issue.message))), [{ severity: 'warning', message: 'slide 1: 1 part had no content and was left out' }]);
 
   // A chart that cannot be drawn goes too, and is told apart from one that was never written. A problem on a part
   // that moved up when the empty chart before it went is still told under the name the writer gave it.
@@ -1529,7 +1530,7 @@ test('charts are added to a free slide without the model seeing or returning the
     { s2: { title: 'Sales by store', b7Caption: 'Airport', b7Chart: { ...airport, series: [{ name: 'Airport', values: [1, 2, 3, 4] }] } } },
   );
   const guessed = await planEdit(demo, { ...deck, brief: 'Sales of every store' }, 'Add a chart for Airport', { llm: unknown.llm, ...adaptive });
-  assert.deepEqual(guessed.warnings.filter((issue) => issue.slot !== undefined), [{ severity: 'warning', slide: 2, slot: 'b7Chart', message: 'chart values not stated in the brief: 1, 2, 3, 4. Check them before using the deck.' }]);
+  assert.deepEqual(withoutCodes(guessed.warnings.filter((issue) => issue.slot !== undefined)), [{ severity: 'warning', slide: 2, slot: 'b7Chart', message: 'chart values not stated in the brief: 1, 2, 3, 4. Check them before using the deck.' }]);
 });
 
 test('a free slide of many parts is listed in short, and a change to it is written by calls of its own for the parts that change', async () => {
@@ -1697,7 +1698,7 @@ test('a part that is written again keeps its picture, and keeps what it had wher
     );
     assert.deepEqual(kept.deck.slides[0]?.slots, { ...ways.slots, ...expected });
     assert.deepEqual(kept.deck.slides[0]?.blocks, ['card', 'card', 'card']);
-    assert.deepEqual(kept.warnings, [{ severity: 'warning', message: 'slide 1: nothing was written for 1 part, and it stays as it was' }]);
+    assert.deepEqual(withoutCodes(kept.warnings), [{ severity: 'warning', message: 'slide 1: nothing was written for 1 part, and it stays as it was' }]);
     assert.doesNotMatch(kept.warnings.map((issue) => issue.message).join(' '), /characters|paragraphs|lines/);
   }
   // Asked again, the writer gives the text: the card is as the change wants it, and nothing is left to tell.
@@ -1732,7 +1733,7 @@ test('a chart that is written again and comes back unusable, or not at all, stay
   assert.ok(promptOf(requests[2]).includes('\nIt has these problems:\n- s2.b1Chart: nothing was written for it, and it is to be written again\n\nReturn the full content again'), promptOf(requests[2]).slice(-300));
   assert.deepEqual(result.deck.slides[1]?.slots, { ...before.slots, b1Caption: 'North, revised' });
   assert.deepEqual(result.deck.slides[1]?.blocks, before.blocks);
-  assert.deepEqual(result.warnings.filter((issue) => /stays?/.test(issue.message)), [{ severity: 'warning', message: 'slide 2: nothing was written for 1 part, and it stays as it was' }]);
+  assert.deepEqual(withoutCodes(result.warnings.filter((issue) => /stays?/.test(issue.message))), [{ severity: 'warning', message: 'slide 2: nothing was written for 1 part, and it stays as it was' }]);
 
   // A chart that cannot be drawn is sent back like any; still wrong after the last round, the old one stays and the deck says so.
   const broken = { s2: { title: 'Sales by store', b1Caption: 'North', b1Chart: { type: 'column', categories: quarters, series: [{ name: 'North', values: [10, 14, 20] }] } } };
@@ -1740,7 +1741,7 @@ test('a chart that is written again and comes back unusable, or not at all, stay
   const kept = await planEdit(demo, deck, 'North sold 20 in the last quarter', { llm: model.llm, ...adaptive, maxRepairs: 1 });
   assert.match(promptOf(model.requests[2]), /\nIt has these problems:\n- s2\.b1Chart: series "North" has 3 values; the chart has 4 categories\n\nReturn/);
   assert.deepEqual(kept.deck.slides[1]?.slots, before.slots);
-  assert.deepEqual(kept.warnings.filter((issue) => /stays?/.test(issue.message)), [{ severity: 'warning', message: 'slide 2: what was written for 1 part could not be shown, and it stays as it was' }]);
+  assert.deepEqual(withoutCodes(kept.warnings.filter((issue) => /stays?/.test(issue.message))), [{ severity: 'warning', message: 'slide 2: what was written for 1 part could not be shown, and it stays as it was' }]);
   assert.doesNotMatch(kept.warnings.map((issue) => issue.message).join(' '), /characters|paragraphs|lines/);
 
   // Written by a call of its own, a part of which no item comes back keeps all it had; a new part of which none comes back is left out.
@@ -1946,7 +1947,7 @@ test('a plan that names the parts of a free slide as they are, and has words for
     const same = await planEdit(demo, deck, 'Call the chart of the west "West (new)" on slide 2', { llm: idle.llm, ...adaptive });
     assert.equal(idle.requests.length, 2, 'the plan of the change and the one small call, as before');
     assert.deepEqual(same.deck.slides[1], before);
-    assert.deepEqual(unchanged(same.warnings), [NOTHING]);
+    assert.deepEqual(withoutCodes(unchanged(same.warnings)), [NOTHING]);
     assert.ok(!('slide' in (unchanged(same.warnings)[0] as Issue)));
     assert.deepEqual(same.rewritten, [], 'the slide is not said to be rewritten');
   }
@@ -1980,7 +1981,7 @@ test('a plan that names the parts of a free slide as they are, and has words for
   // The title of sixty charts comes back as it was: told as for a slide of seven parts, after the one call.
   const still60 = scripted(named, { title: 'Every store' });
   const idle60 = await planEdit(demo, storesDeck(sixty), 'Call store 7 "Harbour"', { llm: still60.llm, ...adaptive });
-  assert.deepEqual([still60.requests.length, unchanged(idle60.warnings), idle60.rewritten], [2, [NOTHING], []]);
+  assert.deepEqual([still60.requests.length, withoutCodes(unchanged(idle60.warnings)), idle60.rewritten], [2, [NOTHING], []]);
   assert.equal(JSON.stringify(idle60.deck.slides[1]?.slots), JSON.stringify(sixty.slots));
 
   // The title is asked of every such answer. A slide that has one is told to repeat it unless the request is about it,
@@ -2325,7 +2326,7 @@ test('a slide of a pattern becomes a free slide, and a new free slide is written
   const empty = scripted(changeOf(stay(1, 'cover'), stay(2, 'chart-native'), charts, stay(3, 'closing')), { s3: { title: 'Sales by region' } });
   const lone = await planEdit(demo, deck, 'Add a slide with three charts, one for each region', { llm: empty.llm, ...adaptive });
   assert.deepEqual(lone.deck.slides[2], { pattern: 'free', blocks: ['text'], base: 'list-with-photo', slots: { b1Text: 'Sales by region' } });
-  assert.deepEqual(lone.warnings.filter((issue) => /left out/.test(issue.message)), [{ severity: 'warning', message: 'slide 3: 3 parts had no content and were left out' }]);
+  assert.deepEqual(withoutCodes(lone.warnings.filter((issue) => /left out/.test(issue.message))), [{ severity: 'warning', message: 'slide 3: 3 parts had no content and were left out' }]);
   // Without a title it says the title of the deck, and the words of the plan only when there is nothing else at all.
   const mute = scripted(changeOf(stay(1, 'cover'), stay(2, 'chart-native'), charts, stay(3, 'closing')), { s3: {} });
   assert.deepEqual((await planEdit(demo, deck, 'Add a slide with three charts, one for each region', { llm: mute.llm, ...adaptive })).deck.slides[2]?.slots, { b1Text: 'Stores' });

@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { loadTemplate, renderDeck, slideAlternatives, validateDeck } from '../src/index.ts';
 import type { DeckSpec, PatternDef, SlideSpec, SlotDef, TemplateManifest } from '../src/index.ts';
+import { withoutCodes } from './issues.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const manifest = JSON.parse(readFileSync(join(root, 'templates', 'demo.manifest.json'), 'utf8')) as TemplateManifest;
@@ -98,7 +99,7 @@ test('what does not fit is reported, and comes after what fits', () => {
   const found = slideAlternatives(manifest, deckOf({ pattern: 'section', slots: { title: 'x' } }, slide), 2);
   assert.deepEqual(ids(found), ['section', 'closing']);
   // The warning is the validator's own, under the slide's number in the deck.
-  assert.deepEqual(found[0]?.warnings, [{ severity: 'warning', slide: 2, slot: 'title', message: 'text is 30 characters; the slot fits about 20' }]);
+  assert.deepEqual(withoutCodes(found[0]?.warnings), [{ severity: 'warning', slide: 2, slot: 'title', message: 'text is 30 characters; the slot fits about 20' }]);
 
   const short = slideAlternatives(manifest, deckOf({ pattern: 'closing', slots: { title: 'Thank you', subtitle: 'Questions?' } }), 1);
   assert.deepEqual(short.map((alternative) => [alternative.pattern, alternative.warnings.length]), [['cover', 0], ['section', 0]]);

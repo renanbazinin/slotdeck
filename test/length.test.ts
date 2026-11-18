@@ -14,6 +14,7 @@ import { freeWritePattern } from '../src/plan/free.ts';
 import { WORD_CHARS, charsOfWords, readWords, withoutLength } from '../src/plan/length.ts';
 import type { TextSlotDef } from '../src/template/manifest.ts';
 import { buildFixturePptx, fixtureManifest } from './fixture.ts';
+import { withoutCodes } from './issues.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const demoManifest = JSON.parse(readFileSync(join(root, 'templates', 'demo.manifest.json'), 'utf8')) as TemplateManifest;
@@ -151,7 +152,7 @@ test('without free slides a slide holds what its layout holds, and the plan says
   const body = slotOf(writer.requests[0], 's1', 'body');
   assert.ok(body?.description?.startsWith('Write 49 words, 260 to 290 characters: of the 200 words asked for this slide, the most it holds'), String(body?.description));
   assert.deepEqual(
-    written.warnings.filter((issue) => /words were asked/.test(issue.message)),
+    withoutCodes(written.warnings.filter((issue) => /words were asked/.test(issue.message))),
     [{ severity: 'warning', slide: 1, message: '200 words were asked for this slide, and it holds about 49: ask for the text over more slides, or for a shorter one; free slides are off, so its text is not set smaller' }],
   );
 });
@@ -185,7 +186,7 @@ test('a change to a deck that asks for an amount of text makes the room for it o
   assert.deepEqual(longer.deck.slides.map((slide) => slide.pattern), ['text-only']);
   assert.deepEqual(longer.rewritten, [1]);
   assert.deepEqual(
-    longer.warnings.filter((issue) => /words/.test(issue.message)),
+    withoutCodes(longer.warnings.filter((issue) => /words/.test(issue.message))),
     [{ severity: 'warning', slide: 1, message: '200 words were asked for this slide, and it holds about 49: ask for the text over more slides, or for a shorter one; free slides are off, so its text is not set smaller' }],
   );
 });
@@ -354,7 +355,7 @@ test('a text below the floor is cut on its slide and said before writing', async
   const writer = scripted({ s1: { title: 'Keep it', b1Text: paragraphs(4350, 12) } });
   const written = await writeDeck(demo, plan, { llm: writer.llm, ...options });
   assert.match(String(slotOf(writer.requests[0], 's1', 'b1Text')?.description), /^Write 725 words, 3910 to 4350 characters: of the 1000 words asked for this slide, the most it holds\./);
-  assert.deepEqual(written.warnings.filter(asked), [
+  assert.deepEqual(withoutCodes(written.warnings.filter(asked)), [
     { severity: 'warning', slide: 1, message: '1000 words were asked for this slide, and it holds about 725 even with its text set small, at 9 pt: the rest is cut. Ask for the text over more slides, or for a shorter one' },
   ]);
 });
@@ -437,13 +438,13 @@ test("a photo gives way to an asked text, and a plan's texts become one; a list 
   const one = scripted(change('free'), { s1: { title: 'Keep it', b1Text: paragraphs(3100, 8) } });
   const edited = await planEdit(demo, { version: 1, language: 'en', fields, title: 'Bikes', slides: [free] }, 'Make slide 1 500 words', { llm: one.llm, ...options, assets });
   assert.deepEqual([edited.deck.slides[0]?.blocks, edited.deck.slides[0]?.arrange], [['text'], { dense: true }]);
-  assert.deepEqual(edited.warnings, [left]);
+  assert.deepEqual(withoutCodes(edited.warnings), [left]);
   // A slide of a layout with a photo: the same.
   const layout: DeckSpec = { version: 1, language: 'en', fields, title: 'Bikes', slides: [{ pattern: 'text-and-photo', slots: { title: 'Keep it', body: 'Riders rely on it.', photo } }] };
   const two = scripted(change('text-and-photo'), { s1: { title: 'Keep it', b1Text: paragraphs(3100, 8) } });
   const relaid = await planEdit(demo, layout, 'Make slide 1 500 words', { llm: two.llm, ...options, assets });
   assert.deepEqual([relaid.deck.slides[0]?.blocks, relaid.deck.slides[0]?.arrange], [['text'], { dense: true }]);
-  assert.deepEqual(relaid.warnings, [left]);
+  assert.deepEqual(withoutCodes(relaid.warnings), [left]);
 
   // A list that holds more than half of the words: its part stays, and the slide holds what it can of them, which the plan says.
   const listed = scripted(outlineOf(entry('free', { shows: [{ kind: 'list', count: 1 }], words: 300 })));
@@ -454,7 +455,7 @@ test("a photo gives way to an asked text, and a plan's texts become one; a list 
   const items = { s1: { title: 'Keep it', b1Items: ['Riders rely on it.', 'The city gains.'] } };
   const writer = scripted(items, items, items);
   const written = await writeDeck(demo, plan, { llm: writer.llm, ...options });
-  assert.deepEqual(written.warnings.filter(asked), [{ severity: 'warning', slide: 1, message: `300 words were asked for this slide, and it holds about ${listFit?.holds}: ask for the text over more slides, or for a shorter one` }]);
+  assert.deepEqual(withoutCodes(written.warnings.filter(asked)), [{ severity: 'warning', slide: 1, message: `300 words were asked for this slide, and it holds about ${listFit?.holds}: ask for the text over more slides, or for a shorter one` }]);
   // One that would hold less than half of them gives way: the text alone, set dense, holds them.
   const longer = await planOutline(demo, brief, { llm: scripted(outlineOf(entry('free', { shows: [{ kind: 'list', count: 1 }], words: 700 }))).llm, ...options });
   assert.deepEqual([longer.slides[0]?.blocks, longer.slides[0]?.arrange], [['text'], { dense: true }]);
@@ -717,7 +718,7 @@ test('a text written much shorter than asked is sent back once', async () => {
   const twice = scripted(short, short, short);
   const still = await writeDeck(demo, plan, { llm: twice.llm, ...options });
   assert.equal(twice.requests.length, 2);
-  assert.deepEqual(still.warnings, [{ severity: 'warning', slide: 1, message: '500 words were asked for this slide, and it has about 300: ask for it again to have them all' }]);
+  assert.deepEqual(withoutCodes(still.warnings), [{ severity: 'warning', slide: 1, message: '500 words were asked for this slide, and it has about 300: ask for it again to have them all' }]);
 });
 
 test('a change to a deck that would cut a text stops before writing', async () => {
@@ -735,7 +736,7 @@ test('a change to a deck that would cut a text stops before writing', async () =
   // Without the option the slide is written, cut to what it holds, and the deck is told.
   const written = scripted(change, { s1: { title: 'Keep it', b1Text: paragraphs(4350, 12) } });
   const edited = await planEdit(demo, deck, 'Make slide 1 1500 words', { llm: written.llm, ...options });
-  assert.deepEqual(edited.warnings.filter(asked), [
+  assert.deepEqual(withoutCodes(edited.warnings.filter(asked)), [
     { severity: 'warning', slide: 1, message: '1500 words were asked for this slide, and it holds about 725 even with its text set small, at 9 pt: the rest is cut. Ask for the text over more slides, or for a shorter one' },
   ]);
 });
@@ -773,7 +774,7 @@ test('a change stops before writing for the room its slide is written in, a head
   assert.ok((fit?.holds ?? 720) < 720, JSON.stringify(fit));
   // Written all the same, it holds as many as the stop said.
   const cut = await planEdit(demo, deck(true), 'Make slide 1 720 words', { llm: scripted(change, write(true), write(true), write(true)).llm, ...options });
-  assert.deepEqual(cut.warnings.filter(asked), [
+  assert.deepEqual(withoutCodes(cut.warnings.filter(asked)), [
     { severity: 'warning', slide: 1, message: `720 words were asked for this slide, and it holds about ${fit?.holds} even with its text set small, at 9 pt: the rest is cut. Ask for the text over more slides, or for a shorter one` },
   ]);
 });
@@ -799,7 +800,7 @@ test('a part added beside a dense text leaves it less room: the text is written 
   const edited = await planEdit(demo, deck, 'Add three key points beside the text of slide 1', { llm: model.llm, ...options });
   assert.match(String(slotOf(model.requests[1], 's1', 'b1Text')?.description), /^Write \d+ words, \d+ to \d+ characters: of the 300 words asked for this slide, the most it holds/);
   assert.deepEqual([edited.deck.slides[0]?.blocks, edited.deck.slides[0]?.arrange], [['text', 'list'], undefined]);
-  assert.deepEqual(edited.warnings, [{ severity: 'warning', slide: 1, message: `300 words were asked for this slide, and it holds about ${fit?.holds}: ask for the text over more slides, or for a shorter one` }]);
+  assert.deepEqual(withoutCodes(edited.warnings), [{ severity: 'warning', slide: 1, message: `300 words were asked for this slide, and it holds about ${fit?.holds}: ask for the text over more slides, or for a shorter one` }]);
 });
 
 test('a dense text that still holds beside a part added to it stays as it is, and a photo it leaves no room for gives way', async () => {
@@ -837,7 +838,7 @@ test('a dense text that still holds beside a part added to it stays as it is, an
   const slide = edited.deck.slides[0];
   assert.deepEqual([slide?.blocks, slide?.arrange, slide?.slots.b1Text], [['text'], { dense: true }, deck(1800).slides[0]?.slots.b1Text]);
   assert.equal(slotOf(model.requests[1], 's1', 'b1Text'), undefined);
-  assert.deepEqual(edited.warnings, [{ severity: 'warning', slide: 1, message: 'the photo of this slide is left out to make room for its text of about 300 words' }]);
+  assert.deepEqual(withoutCodes(edited.warnings), [{ severity: 'warning', slide: 1, message: 'the photo of this slide is left out to make room for its text of about 300 words' }]);
 });
 
 test('a dense text written again with no length asked keeps the length it has, and is never stopped as a cut', async () => {

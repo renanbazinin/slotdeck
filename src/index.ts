@@ -32,6 +32,12 @@ export type { GeminiImageOptions, GeminiOptions } from './llm/gemini.ts';
 // Decks.
 export { DeckValidationError, validateDeck } from './deck/validate.ts';
 export type { Issue, LayoutMode, ValidateOptions } from './deck/validate.ts';
+
+// Warnings and notes in a person's language.
+export { ISSUE_CODES } from './messages/codes.ts';
+export type { IssueCode, IssueValues } from './messages/codes.ts';
+export { formatIssue } from './messages/format.ts';
+export type { FormatIssueOptions } from './messages/format.ts';
 export type { ChartType, ChartValue, DeckColors, DeckSpec, ImageRef, SlideSpec, SlotValue, TableValue } from './deck/spec.ts';
 export { isChartValue, isImageRef, isTableValue } from './deck/spec.ts';
 export { slideAlternatives } from './deck/alternatives.ts';

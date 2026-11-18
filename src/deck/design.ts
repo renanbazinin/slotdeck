@@ -9,7 +9,9 @@ import type { TextFit } from '../text/measure.ts';
 import { freeFor } from '../free/resolve.ts';
 import { isFreeSlide } from './spec.ts';
 import type { DeckSpec } from './spec.ts';
-import { deckShapeIssues, fitOptions, freeTextFloor, overflowMessage, resolveSlot } from './validate.ts';
+import { deckShapeIssues, fitOptions, freeTextFloor, overflowTold, resolveSlot } from './validate.ts';
+import { said } from '../messages/en.ts';
+import type { Told } from '../messages/en.ts';
 import type { Issue, LayoutMode } from './validate.ts';
 
 /**
@@ -79,7 +81,6 @@ function rowGroups(pattern: PatternDef, items: number | undefined): string[][] {
 }
 
 const quote = (text: string) => JSON.stringify(text.length > 30 ? `${text.slice(0, 29)}…` : text);
-const lines = (count: number) => `${count} ${count === 1 ? 'line' : 'lines'}`;
 
 /**
  * Lists the design problems of a deck that follow from measurement alone: text that runs over its
@@ -115,9 +116,9 @@ export function checkDesign(template: Template, deck: DeckSpec, options: DesignO
     // A number of items the row does not take is a slide that cannot be rendered: passed over, like the others.
     const range = itemRange(pattern);
     if (range && slide.items !== undefined && !(Number.isInteger(slide.items) && slide.items >= range.min && slide.items <= range.max)) return;
-    const report = (kind: DesignKind, slot: string, message: string) => {
+    const report = (kind: DesignKind, slot: string, told: Told) => {
       if (free && kind !== 'overflow' && kind !== 'orphan') return;
-      if (kinds.has(kind)) issues.push({ severity: 'warning', slide: number, slot, kind, message });
+      if (kinds.has(kind)) issues.push({ severity: 'warning', slide: number, slot, kind, ...told });
     };
     const sources = slotSources(pattern, mirrored, slide.items);
     const measured = new Map<string, Measured>();
@@ -133,7 +134,7 @@ export function checkDesign(template: Template, deck: DeckSpec, options: DesignO
       const entry: Measured = { source, slot, fit, chars: paragraphs.reduce((sum, paragraph) => sum + paragraph.length, 0), paragraphs: paragraphs.length };
       measured.set(source, entry);
 
-      const over = overflowMessage(fit);
+      const over = overflowTold(fit);
       if (over) {
         report('overflow', source, over);
         continue; // the other checks are about text that fits
@@ -147,7 +148,7 @@ export function checkDesign(template: Template, deck: DeckSpec, options: DesignO
       const lone = last !== '' && !/\s/.test(last) && !/[@/]|\.\p{L}/u.test(last);
       if (paragraphs.length === 1 && fit.size >= headingSize && fit.lines >= 2 && lone && lastWidth <= widest * 0.4) {
         const sooner = entry.chars - last.length - 1;
-        report('orphan', source, `the last of its ${lines(fit.lines)} holds one word, ${quote(last)}. Text of about ${sooner} characters ends a line sooner; a few words more fill the line.`);
+        report('orphan', source, said('text-orphan', { lines: fit.lines, word: quote(last), chars: sooner }));
       }
 
       // A box the template fills with several lines, holding a fraction of that. Where the
@@ -156,8 +157,8 @@ export function checkDesign(template: Template, deck: DeckSpec, options: DesignO
       const designed = fit.sampleLines > 0 ? fit.sampleLines : Math.ceil(fit.capacity / 2);
       if (!slot.deckField && designed >= 3 && fit.lines <= Math.max(1, Math.floor(designed * emptyBelow))) {
         const wanted = Math.round((entry.chars * designed) / fit.lines);
-        const against = fit.sampleLines > 0 ? `where the template's own text takes ${fit.sampleLines}` : `in a box that holds ${fit.capacity}`;
-        report('empty', source, `text takes ${lines(fit.lines)} ${against}, so its box will look empty. Text of about ${wanted} characters fills it as designed.`);
+        const against = fit.sampleLines > 0 ? { sampleLines: fit.sampleLines } : { capacity: fit.capacity };
+        report('empty', source, said('text-empty', { lines: fit.lines, ...against, chars: wanted }));
       }
     }
 
@@ -169,7 +170,7 @@ export function checkDesign(template: Template, deck: DeckSpec, options: DesignO
       for (const entry of row) {
         if (entry === fullest || entry.fit.lines > Math.max(1, Math.floor(fullest.fit.lines * emptyBelow))) continue;
         const wanted = Math.round((fullest.chars * 2) / 3);
-        report('uneven', entry.source, `text takes ${lines(entry.fit.lines)} where "${fullest.source}" beside it takes ${fullest.fit.lines}, so the row will look uneven. Text of about ${wanted} characters or more evens it out.`);
+        report('uneven', entry.source, said('row-uneven', { lines: entry.fit.lines, beside: fullest.source, besideLines: fullest.fit.lines, chars: wanted }));
       }
     }
   });

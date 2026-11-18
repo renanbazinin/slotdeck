@@ -27,6 +27,7 @@ import { readImageInfo } from '../util/image.ts';
 import type { ImageInfo } from '../util/image.ts';
 import { colorMap, readColors } from '../color/palette.ts';
 import type { ColorMap } from '../color/palette.ts';
+import { said } from '../messages/en.ts';
 import { inheritedBackground, ownBackground, ownTheBackground, paletteOf, recolorChart, recolorDefaults, recolorIcon, recolorInherited, recolorSlide, schemeOf } from '../color/recolor.ts';
 import { contrast } from '../color/space.ts';
 import { CHART_CONTENT_TYPE, CHART_REL_TYPE, WORKBOOK_CONTENT_TYPE, WORKBOOK_REL_TYPE, buildChartWorkbook, buildChartXml, chartFrameXml } from './chart.ts';
@@ -147,11 +148,11 @@ export function renderDeck(template: Template, deck: DeckSpec, options: RenderOp
   // A second colour asked of a template that has none changes nothing: that is said, for the deck
   // and for a slide, without a slide number in the issue so that no slide is written again for it.
   if (palette && !palette.accent2) {
-    const lacking = (given: unknown, where: string): void => {
-      if (readColors(given).colors?.accent2) issues.push({ severity: 'warning', message: `${where}the template has no second colour; "accent2" is left out` });
+    const lacking = (given: unknown, slide?: number): void => {
+      if (readColors(given).colors?.accent2) issues.push({ severity: 'warning', ...said('accent2-missing', slide !== undefined ? { slide } : {}) });
     };
-    lacking(deck.colors, '');
-    deck.slides.forEach((slide, index) => lacking(slide.colors, `slide ${index + 1}: `));
+    lacking(deck.colors);
+    deck.slides.forEach((slide, index) => lacking(slide.colors, index + 1));
   }
   /** Colours asked for that are close to the page of a slide they are used on, where the page does not change with them. */
   const nearPage = new Set<string>();
@@ -354,7 +355,7 @@ ${colors?.key}` : assetId;
     types.setOverride(part, SLIDE_CONTENT_TYPE);
     newSlideParts.push(part);
   });
-  for (const hex of nearPage) issues.push({ severity: 'warning', message: `the colour ${hex} is close to the page's own; fills, chart bars and icons in it will hardly show` });
+  for (const hex of nearPage) issues.push({ severity: 'warning', ...said('color-near-page', { hex }) });
 
   // Point the presentation at the new slides.
   const sourcePresRels = readRels(source, pres.part);

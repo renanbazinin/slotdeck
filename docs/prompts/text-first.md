@@ -62,11 +62,14 @@ or shows them: on a slide of a plan `words`, `passages`, `text_words`, `text_pt`
 plan `note` and `not_on_slides`; on a presentation `document.kept_words` and `warnings`; the `note` and `next`
 that `edit_presentation` answers with in place of a presentation. Where the app shows a plan, show "holds 474
 of 685 words, 7 pt" beside a cut slide and the note above the plan. The chat model's system prompt already
-says to pass on `note` and `warnings` if the app took own-text.md's lines; if it did not, add these two:
+says to pass on `note` and `warnings` if the app took own-text.md's lines; if it did not, add the first two. On
+0.6.4 or later add the third in any case: it has the chat model say them in the user's language (see
+`node_modules/slotdeck/docs/prompts/warnings-in-language.md`).
 
 ```
 - When a plan has a slide with "holds_words", tell the user what "note" says before you create the presentation.
 - When the result of a tool has "note", "not_on_slides" or "warnings", tell the user what they say before you go on.
+- Speak to the user in the language they write in. What the tools say in "note", "warnings" and "not_on_slides" is English: tell it in the user's language, in your own words, with the same slide numbers and figures, and never paste it as it is.
 ```
 
 **3. What changed in the numbers and the warnings.** Remove expectations of 0.6.2's figures; do not replace
