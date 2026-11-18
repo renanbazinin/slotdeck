@@ -1,0 +1,69 @@
+[
+  {
+    "number": 1,
+    "kind": "text",
+    "text": "The city opened its bike share in 2019 with forty stations and four hundred bikes. Riders took more trips every year, and the busiest month was always June. Students and commuters make up most members, while visitors buy day passes. Each station has room for twelve bikes and a screen that shows the nearest dock.",
+    "section": "Bike share review / Background",
+    "chars": 313,
+    "paragraphs": 1
+  },
+  {
+    "number": 2,
+    "kind": "text",
+    "text": "What riders said:",
+    "section": "Bike share review / Background",
+    "leads": true,
+    "chars": 17,
+    "paragraphs": 1
+  },
+  {
+    "number": 3,
+    "kind": "list",
+    "text": "- Bikes are easy to find near the station\n- The app works well\n- Some docks are often full",
+    "section": "Bike share review / Background",
+    "chars": 82,
+    "paragraphs": 3
+  },
+  {
+    "number": 4,
+    "kind": "table",
+    "text": "| Item | 2023 | 2024 |\n|---|---|---|\n| Bikes | 120 | 140 |\n| Staff | 300 | 320 |",
+    "section": "Costs",
+    "chars": 52,
+    "paragraphs": 3
+  },
+  {
+    "number": 5,
+    "kind": "text",
+    "text": "Add twenty stations.\nOpen at six.",
+    "section": "Next steps",
+    "chars": 32,
+    "paragraphs": 2
+  },
+  {
+    "number": 6,
+    "kind": "text",
+    "text": "Each station has room for twelve bikes and a screen that shows the nearest dock. The council pays for the docks, and a private firm runs the fleet on contract. Repairs take two days on average, and a van moves bikes from full stations at night. Electric bikes were added in 2022 and now make up a third of all trips. A yearly pass costs sixty euros, and a single ride costs one euro.",
+    "section": "Next steps",
+    "chars": 383,
+    "paragraphs": 1
+  },
+  {
+    "number": 7,
+    "kind": "text",
+    "text": "Surveys show that nine in ten riders would recommend the service to a friend. The main complaint is that docks near the station are often full in the morning. Crime is low: fewer than twenty bikes a year are stolen or lost. The firm proposes forty new stations in the outer districts by 2027. The city opened its bike share in 2019 with forty stations and four hundred bikes. Riders took more trips every year, and the busiest month was always June.",
+    "section": "Next steps",
+    "continues": true,
+    "chars": 449,
+    "paragraphs": 1
+  },
+  {
+    "number": 8,
+    "kind": "text",
+    "text": "Students and commuters make up most members, while visitors buy day passes. Each station has room for twelve bikes and a screen that shows the nearest dock. The council pays for the docks, and a private firm runs the fleet on contract. Repairs take two days on average, and a van moves bikes from full stations at night. Electric bikes were added in 2022 and now make up a third of all trips.",
+    "section": "Next steps",
+    "continues": true,
+    "chars": 392,
+    "paragraphs": 1
+  }
+]

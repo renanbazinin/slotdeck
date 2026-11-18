@@ -1,9 +1,13 @@
 import { DeckValidationError, validateDeck } from '../deck/validate.ts';
 import type { Issue } from '../deck/validate.ts';
 import { unstatedChartValues } from '../deck/numbers.ts';
-import { FREE_PATTERN, isChartValue, isFreeSlide, isImageRef } from '../deck/spec.ts';
-import type { DeckColors, DeckSpec, FreeBlockKind, SlideSpec, SlotValue } from '../deck/spec.ts';
+import { FREE_PATTERN, isChartValue, isFreeSlide, isImageRef, toParagraphs } from '../deck/spec.ts';
+import type { DeckColors, DeckSpec, FreeArrange, FreeBlockKind, SlideSpec, SlotValue } from '../deck/spec.ts';
 import { isFreeBlockKind } from '../free/blocks.ts';
+import { freeKit } from '../free/kit.ts';
+import { freeTextRoom } from '../free/offer.ts';
+import { freeBodySize } from '../free/plan.ts';
+import { freeFor } from '../free/resolve.ts';
 import type { JsonSchema } from '../llm/provider.ts';
 import type { Template } from '../render/render.ts';
 import { withLayouts } from '../template/compose.ts';
@@ -12,14 +16,104 @@ import type { Direction, PatternDef, TextSize } from '../template/manifest.ts';
 import { measurerFor } from '../text/measure.ts';
 import { budgetScale, buildCatalog, describeCatalog, isPlainText, planPattern, readItems } from './catalog.ts';
 import type { CatalogContext, ImageDensity, UsablePattern } from './catalog.ts';
-import { MOST_WORDS, WORDS_NOTE, charsOfWords, freeLengths, heldBy, homeFor, partPurpose, partsFor, readWords, shortOfWords, spreads, withLength, wordsOfChars, wordsRule } from './length.ts';
-import type { LengthPlanning, TextHome } from './length.ts';
-import { FREE_ENTRY_ROOM, PlanError, SLIDE_KIND_RULE, allowedPatterns, asker, colorNote, columnsRule, directionOf, freePartsOf, givenPatterns, hasFigures, limitRule, planRoom, reviewWith, storedColors, wishesRule, withoutColorCodes } from './plan.ts';
-import type { PlanOptions } from './plan.ts';
+import {
+  DOCUMENT_EDIT_RULE,
+  documentBlock,
+  documentWriteRule,
+  inLanguage,
+  keptCheck,
+  keptIssues,
+  keptShare,
+  keptWarnings,
+  passageLabel,
+  passageText,
+  passagesChangeProperty,
+  readDocument,
+  readLanguageTag,
+  readPassageNumbers,
+  slideDocument,
+  slideText,
+  textCut,
+  textCutDense,
+} from './document.ts';
+import type { KeptCheck, SlideDocument } from './document.ts';
+import {
+  DENSE_EDIT_RULE,
+  MOST_WORDS,
+  WORDS_NOTE,
+  charsOfWords,
+  documentRoom,
+  freeLengths,
+  heldBy,
+  homeForChars,
+  isDenseHome,
+  photoLeftOut,
+  readWords,
+  runningNames,
+  runningSize,
+  sameHome,
+  setSmall,
+  shortOfWords,
+  shortOfWordsDense,
+  tensDown,
+  toldAsAsked,
+  undense,
+  withLength,
+  withPassages,
+  wordsOfChars,
+  wordsRule,
+  writtenLength,
+  writtenShort,
+  writtenUnder,
+} from './length.ts';
+import type { LengthPlanning, TextHome, ToldLength } from './length.ts';
+import {
+  FREE_ENTRY_ROOM,
+  PlanError,
+  SLIDE_KIND_RULE,
+  allowedPatterns,
+  asker,
+  colorNote,
+  columnsRule,
+  directionOf,
+  filledText,
+  freePartsOf,
+  givenPatterns,
+  hasFigures,
+  limitRule,
+  paragraphsFor,
+  planRoom,
+  reviewWith,
+  storedColors,
+  wishesRule,
+  withoutColorCodes,
+} from './plan.ts';
+import type { PlanOptions, SlideTextFit } from './plan.ts';
 import { MOST_PHOTOS, freeKnown, freeLine, freeOnOffer, freeWritePattern, kindsUsed, namesFree } from './free.ts';
 import { usedLayouts } from './layouts.ts';
 import { partOf } from './parts.ts';
-import { MOVED_RULE, PARTS_RULE, TURN_RULE, arrangeAfter, carryOver, carryParts, freePhotos, heldParts, listFree, listParts, partsProperties, partsRoom, readParts, roomAsHeld, sameArrange, sameParts, settleParts, shownValue, statesArrange } from './reshape.ts';
+import {
+  MOVED_RULE,
+  PARTS_RULE,
+  TURN_RULE,
+  arrangeAfter,
+  carryOver,
+  carryParts,
+  cut,
+  freePhotos,
+  heldParts,
+  listFree,
+  listParts,
+  partsProperties,
+  partsRoom,
+  readParts,
+  roomAsHeld,
+  sameArrange,
+  sameParts,
+  settleParts,
+  shownValue,
+  statesArrange,
+} from './reshape.ts';
 import type { FreeChange, PartPlan } from './reshape.ts';
 import { cleanText, describeParts, suppliesText, systemPrompt, writeSlides, writtenApart } from './write.ts';
 import type { WriteJob } from './write.ts';
@@ -54,6 +148,23 @@ export interface EditOptions extends PlanOptions {
    * nothing.
    */
   deckPatterns?: string[] | null;
+  /**
+   * Stop before writing when a slide the change writes would hold less text than was asked for
+   * it: planEdit then throws a {@link TextCutError} that names those slides, and nothing is
+   * written. Off: such a slide is cut to what it holds, and the result's warnings say so.
+   */
+  stopBeforeCut?: boolean;
+}
+
+/** Thrown by planEdit with `stopBeforeCut` when a slide would be cut: nothing was written. */
+export class TextCutError extends PlanError {
+  /** The slides that would hold less than they carry, numbered as in the deck after the change. */
+  readonly fits: SlideTextFit[];
+  constructor(message: string, fits: SlideTextFit[]) {
+    super(message);
+    this.name = 'TextCutError';
+    this.fits = fits;
+  }
 }
 
 /** Sets or removes the colours of the slides with these numbers (from 1), and of no other. */
@@ -115,6 +226,19 @@ interface PlanEntry {
   free?: FreeChange;
   /** The words of running text the request asks for on the slide, where it asks for an amount. */
   words?: number;
+  /** The slide is a free text alone set dense to hold its words (`FreeArrange.dense`). Set by code. */
+  dense?: true;
+  /**
+   * In a deck made from a document: the passages the slide carries after the change. As the plan
+   * gives them, `undefined` keeps those of the slide it comes from; once settled by code, the list
+   * itself, left out where it is empty.
+   */
+  passages?: number[];
+  /**
+   * In a deck made from a document: the request asks for the slide's text in other words. Its text
+   * is then written by the writer, also where its passages change, and not set by code.
+   */
+  reword?: true;
 }
 
 /** A slide to write, with what the writer is shown of the slide it comes from. */
@@ -135,6 +259,15 @@ type EditJob = WriteJob & {
 };
 
 const SHORTEN = 'Shorten the text to fit the new text size. Keep the meaning.';
+/** What a slide whose passages of the document changed is written for, where the plan says nothing. */
+const FROM_DOCUMENT = 'Write the slide from its text from the document.';
+/** The same for a slide that gave up all its passages. */
+const GAVE_UP = 'Its text from the document is on another slide now: write the slide without it.';
+/**
+ * What `reword` says of a slide of a deck made from a document. A slide whose passages change has
+ * its text set by code as the document has it: a wish for other words on that slide needs saying.
+ */
+const REWORD_NOTE = 'true only when the request asks for the text of this slide in other words: simpler, shorter sentences, another tone. Leave it out otherwise: a slide whose passages change has its text set as the document has it.';
 
 /**
  * Said of a free slide the plan of a change had words for and named no part of to write again,
@@ -155,21 +288,82 @@ function describeValue(value: SlotValue | undefined): string {
 }
 
 /**
+ * The length of a free slide's running texts and lists, as they are written, in words: their
+ * characters at the characters a word takes in the language, as an asked length is counted. A
+ * length kept so takes no more characters than the text has; counted between spaces, a text of
+ * short words would ask for more than it has, and more than a slide that holds it.
+ */
+function wordsIn(slide: SlideSpec, language: string): number {
+  const chars = Object.entries(slide.slots)
+    .filter(([name, value]) => /^b\d+(?:Text|Items)$/.test(name) && (typeof value === 'string' || Array.isArray(value)))
+    .reduce((sum, [, value]) => sum + toParagraphs(value as string | string[]).join('').length, 0);
+  return wordsOfChars(chars, language);
+}
+
+/**
+ * A value of a slide that carries passages of a document: a long text is cut short, its paragraphs
+ * joined by " / ". The document is shown whole before the deck.
+ */
+function describeCarried(value: SlotValue | undefined): string {
+  if (typeof value === 'string' || (Array.isArray(value) && value.every((item) => typeof item === 'string'))) {
+    const text = toParagraphs(value as string | string[])
+      .filter(Boolean)
+      .join(' / ');
+    const shown = cut(text);
+    if (shown !== text) return JSON.stringify(shown);
+  }
+  return describeValue(value);
+}
+
+/**
  * The deck as the model sees it: one line per slide with every slot's content. A free slide is
  * listed by its parts, numbered and without their data: it may hold two hundred charts, and the
- * plan of a change names its parts by these numbers.
+ * plan of a change names its parts by these numbers. `marks` says more of some free slides, by
+ * slide: the words of a text set dense, and the most it holds. `carried` names the passages of a
+ * document a slide carries; such a slide's long texts are cut short.
  */
-function describeDeck(deck: DeckSpec, isFree: (slide: SlideSpec) => boolean): string {
+function describeDeck(deck: DeckSpec, isFree: (slide: SlideSpec) => boolean, marks?: ReadonlyMap<SlideSpec, readonly string[]>, carried?: ReadonlyMap<SlideSpec, string>): string {
   return deck.slides
     .map((slide, index) => {
-      if (isFree(slide)) return `${index + 1}. ${listFree(slide)}`;
+      const own = carried?.get(slide);
+      if (isFree(slide)) return `${index + 1}. ${listFree(slide, [...(own ? [own] : []), ...(marks?.get(slide) ?? [])])}`;
       const slots = Object.entries(slide.slots)
-        .map(([name, value]) => `${name}: ${describeValue(value)}`)
+        .map(([name, value]) => `${name}: ${own ? describeCarried(value) : describeValue(value)}`)
         .filter((line) => !line.endsWith(': '))
         .join('; ');
-      return `${index + 1}. [${slide.pattern}${slide.items !== undefined ? `, ${slide.items} items` : ''}] ${slots}`;
+      return `${index + 1}. [${slide.pattern}${slide.items !== undefined ? `, ${slide.items} items` : ''}${own ? `, ${own}` : ''}] ${slots}`;
     })
     .join('\n');
+}
+
+/**
+ * The passages of the document each slide carries after a change, set on the plan's entries: a
+ * list the plan gives comes first, each passage on the first slide that names it; a slide the plan
+ * gives none keeps those of the slide it comes from, less any the plan names for another slide,
+ * each passage once. Returns the slides whose passages are not those of the slide they come from:
+ * they are written again.
+ */
+function resolveDeckPassages(entries: PlanEntry[], deck: DeckSpec, passages: number): Set<PlanEntry> {
+  const had = (entry: PlanEntry): number[] => readPassageNumbers(entry.from > 0 ? deck.slides[entry.from - 1]?.passages : undefined, passages);
+  const placed = new Set<number>();
+  for (const entry of entries) {
+    if (entry.passages === undefined) continue;
+    entry.passages = entry.passages.filter((number) => !placed.has(number));
+    for (const number of entry.passages) placed.add(number);
+  }
+  for (const entry of entries) {
+    if (entry.passages !== undefined) continue;
+    entry.passages = had(entry).filter((number) => !placed.has(number));
+    for (const number of entry.passages) placed.add(number);
+  }
+  const changed = new Set<PlanEntry>();
+  for (const entry of entries) {
+    const before = had(entry);
+    const now = entry.passages ?? [];
+    if (now.length !== before.length || now.some((number, at) => number !== before[at])) changed.add(entry);
+    if (now.length === 0) delete entry.passages;
+  }
+  return changed;
 }
 
 /** A short label for a slide that is not being rewritten, so the model knows what surrounds its work. */
@@ -182,9 +376,10 @@ function slideLabel(slide: SlideSpec): string {
 /**
  * The schema of the plan of a change. `freeKinds` says the deck may hold free slides after it,
  * and of which kinds of part: an entry then says what such a slide is made of. Without it the
- * schema is what it was before there were free slides.
+ * schema is what it was before there were free slides. `documentPassages` says the deck was made
+ * from a document of so many passages: an entry may then say which it carries after the change.
  */
-function editPlanSchema(patternIds: string[], slideCount: number, fieldNames: string[], mostItems: number, freeKinds?: readonly FreeBlockKind[]): JsonSchema {
+function editPlanSchema(patternIds: string[], slideCount: number, fieldNames: string[], mostItems: number, freeKinds?: readonly FreeBlockKind[], documentPassages?: number): JsonSchema {
   const schema = planSchemaBase(patternIds, slideCount);
   const top = schema.properties as Record<string, JsonSchema>;
   top.text_size = {
@@ -208,6 +403,11 @@ function editPlanSchema(patternIds: string[], slideCount: number, fieldNames: st
     const parts = partsProperties(freeKinds);
     Object.assign(entry, parts);
     (slide.required as string[]).push(...Object.keys(parts));
+  }
+  // Left out, a slide keeps the passages it has: most slides of a change keep theirs.
+  if (documentPassages !== undefined) {
+    entry.passages = passagesChangeProperty(documentPassages);
+    entry.reword = { type: 'boolean', description: REWORD_NOTE };
   }
   if (fieldNames.length > 0) {
     const properties = schema.properties as Record<string, JsonSchema>;
@@ -293,11 +493,20 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
   const fields = options.fields ?? deck.fields ?? {};
   const currentLanguage = deck.language ?? manifest.language ?? 'en';
   const definitions = new Map<string, PatternDef>(manifest.patterns.map((pattern) => [pattern.id, pattern]));
+  // The document the deck was made from, where it has one: read into passages, and in the language
+  // the planner said it is written in. A deck without one is changed as before.
+  const writtenIn = readLanguageTag(deck.documentLanguage);
+  const given = typeof deck.document === 'string' && deck.document.trim() ? readDocument(deck.document, currentLanguage, writtenIn) : undefined;
+  const docNow = given && given.passages.length > 0 ? given : undefined;
+  const passageCount = docNow?.passages.length ?? 0;
+  /** The passages a slide of the deck carries. */
+  const passagesOf = (slide: SlideSpec | undefined): number[] => (docNow && slide ? readPassageNumbers(slide.passages, passageCount) : []);
 
   // What new slides may use. Number patterns need figures from the instruction or the original brief.
   const numbers = options.numberPatterns ?? 'from-brief';
   const colorsGiven = [options.colors, deck.colors, ...deck.slides.map((slide) => slide.colors)];
-  const figures = numbers === 'always' || (numbers === 'from-brief' && hasFigures(withoutColorCodes(`${instruction} ${deck.brief ?? ''}`, ...colorsGiven)));
+  // The figures of the document the deck was made from are the brief's too.
+  const figures = numbers === 'always' || (numbers === 'from-brief' && hasFigures(withoutColorCodes(`${instruction} ${deck.brief ?? ''}${docNow ? ` ${docNow.text}` : ''}`, ...colorsGiven)));
   const context: CatalogContext = {
     layout,
     fields,
@@ -343,10 +552,44 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
   // 1. Plan the edit.
   // Deck-level texts can change too ("translate the deck"), unless the caller fixes them.
   const fieldNames = options.fields ? [] : Object.keys(fields);
+  // A free slide set dense carries a text that was asked for. Its line says how many words it has,
+  // its size where that is small, and the most it holds, so that the plan keeps the text whole or
+  // grows it within that. A deck without such a slide is described as before.
+  const dense = deck.slides.filter((slide) => isFree(slide) && slide.arrange?.dense === true);
+  let marks: Map<SlideSpec, string[]> | undefined;
+  if (dense.length > 0) {
+    const kit = freeKit(loaded);
+    const templateSize = kit ? freeBodySize(kit, context.textScale) : undefined;
+    const room = freeTextRoom(loaded, { direction: deck.direction ?? manifest.direction, textScale: context.textScale });
+    const most = room ? tensDown(wordsOfChars(room.densest, currentLanguage)) : undefined;
+    marks = new Map(
+      dense.map((slide): [SlideSpec, string[]] => {
+        const resolved = freeFor(loaded, deck, slide);
+        const size = typeof resolved === 'string' ? undefined : resolved.plan.smallest;
+        const small = size !== undefined && templateSize !== undefined && setSmall(size, templateSize);
+        return [slide, [`${wordsIn(slide, currentLanguage)} words`, ...(small ? [`text at ${size} pt`] : []), ...(most !== undefined ? [`at most about ${most} words`] : [])]];
+      }),
+    );
+  }
+  // A slide that carries passages of the document says which, and the share of their words it
+  // keeps where that is under nine tenths. The document itself comes after the brief, with the
+  // passages no slide carries marked.
+  const onDeck = new Set(deck.slides.flatMap(passagesOf));
+  const carriedNow = docNow
+    ? new Map(
+        deck.slides.flatMap((slide): Array<[SlideSpec, string]> => {
+          const own = passagesOf(slide);
+          if (own.length === 0) return [];
+          const share = docNow.same ? keptShare(docNow, own, slide.slots) : undefined;
+          return [[slide, `${passageLabel(own)}${share !== undefined && share < 0.9 ? `, ${Math.round(100 * share)}% of its text kept` : ''}`]];
+        }),
+      )
+    : undefined;
   options.onProgress?.({ stage: 'outline' });
   const planRequest = [
     deck.brief ? `The deck was written from this brief:\n${deck.brief}` : '',
-    `The deck as it is now${deck.title ? ` ("${deck.title}")` : ''}, in the language with BCP 47 tag "${currentLanguage}", body text size "${currentSize}":\n${describeDeck(deck, isFree)}`,
+    docNow ? documentBlock(docNow, { change: true, onNoSlide: new Set(docNow.passages.map((passage) => passage.number).filter((number) => !onDeck.has(number))) }) : '',
+    `The deck as it is now${deck.title ? ` ("${deck.title}")` : ''}, in the language with BCP 47 tag "${currentLanguage}", body text size "${currentSize}":\n${describeDeck(deck, isFree, marks, carriedNow)}`,
     fieldNames.length > 0
       ? `Deck-level texts, shown on several slides:\n${fieldNames.map((name) => `${name}: ${JSON.stringify(fields[name])}`).join('\n')}`
       : '',
@@ -368,6 +611,8 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
       '- A request to shorten, cut or rewrite the text of a slide is a change of its content: say it in change.',
       '- images: true only when the pictures or icons of that slide should change.',
       `- words: ${wordsRule('request')}`,
+      ...(docNow ? [`- ${DOCUMENT_EDIT_RULE}`, `- reword: ${REWORD_NOTE}`] : []),
+      ...(marks ? [`- ${DENSE_EDIT_RULE}`] : []),
       '- items: for a pattern with a row of items, the number the slide has after the change.',
       ...(freeIn ? [`- ${PARTS_RULE}`, `- ${MOVED_RULE}`] : []),
       // Only where a slide may become a free slide: its chart is then handed on by code, if the plan lets it.
@@ -399,10 +644,13 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
     const nextFields = Object.fromEntries(fieldNames.map((name) => [name, cleanText(rawFields[name]) || (fields[name] as string)]));
     const countProblems: string[] = [];
     const entries: PlanEntry[] = (Array.isArray(raw.slides) ? raw.slides : []).map((item, index) => {
-      const given = (item ?? {}) as { from?: unknown; pattern?: unknown; change?: unknown; images?: unknown; items?: unknown; words?: unknown };
+      const given = (item ?? {}) as { from?: unknown; pattern?: unknown; change?: unknown; images?: unknown; items?: unknown; words?: unknown; passages?: unknown; reword?: unknown };
       const entry: PlanEntry = { from: Number(given.from) || 0, pattern: cleanText(given.pattern), change: cleanText(given.change), images: given.images === true };
       const words = readWords(given.words);
       if (words !== undefined) entry.words = words;
+      // The passages a slide carries after the change, where the plan names them: a list that is no list keeps those it has.
+      if (docNow && Array.isArray(given.passages)) entry.passages = readPassageNumbers(given.passages, passageCount);
+      if (docNow && given.reword === true) entry.reword = true;
       // What an entry says of parts counts for a free slide alone; on any other slide it is passed over.
       if (freeIn && entry.pattern === FREE_PATTERN) {
         const based = Number.isInteger(entry.from) && entry.from > 0 ? deck.slides[entry.from - 1] : undefined;
@@ -463,20 +711,35 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
   // Rows that take one number are counted in when some row varies: the list names their number, so it must be allowed.
   const itemRanges = patternIds.flatMap((id) => (definitions.has(id) ? [itemRange(definitions.get(id) as PatternDef)] : []));
   const mostItems = itemRanges.some((range) => range && range.max > range.min) ? Math.max(0, ...itemRanges.map((range) => range?.max ?? 0)) : 0;
-  const planSchema = editPlanSchema(patternIds, deck.slides.length, fieldNames, mostItems, freeIn ? kinds : undefined);
+  const planSchema = editPlanSchema(patternIds, deck.slides.length, fieldNames, mostItems, freeIn ? kinds : undefined, docNow ? passageCount : undefined);
   // The edit plan says a little more for each slide than an outline does, and may add slides.
-  // Where slides may be free slides, each says how it is set out, and one whose parts change names every one of them.
+  // Where slides may be free slides, each says how it is set out, and one whose parts change names
+  // every one of them. Of a deck made from a document, a slide may name its passages.
   const partsNow = freeSlides.reduce((sum, slide) => sum + (slide.blocks?.length ?? 0), 0);
-  const room = planRoom(deck.slides.length + 10) * 1.5 + (freeIn ? FREE_ENTRY_ROOM * (deck.slides.length + 10) + partsRoom(partsNow, instruction) : 0);
-  let plan = readPlan(await asker(options.llm, systemPrompt(currentLanguage, 'deck'), options.signal, 'low')(planRequest, planSchema, room));
+  const room =
+    planRoom(deck.slides.length + 10) * 1.5 + (freeIn ? FREE_ENTRY_ROOM * (deck.slides.length + 10) + partsRoom(partsNow, instruction) : 0) + (docNow ? 8 * (deck.slides.length + 10) : 0);
+  const planSystem = systemPrompt(currentLanguage, 'deck', docNow !== undefined);
+  let plan = readPlan(await asker(options.llm, planSystem, options.signal, 'low')(planRequest, planSchema, room));
   if (plan.problem) {
     const retry = `${planRequest}\n\nYour previous answer could not be used: ${plan.problem}. Answer again.`;
-    plan = readPlan(await asker(options.llm, systemPrompt(currentLanguage, 'deck'), options.signal, 'low')(retry, planSchema, room), true);
+    plan = readPlan(await asker(options.llm, planSystem, options.signal, 'low')(retry, planSchema, room), true);
     if (plan.problem) throw new PlanError(`The model did not produce a usable edit plan: ${plan.problem}`);
   }
 
   const language = plan.language;
   const direction = options.direction ?? (language === currentLanguage ? (deck.direction ?? directionOf(language)) : directionOf(language));
+  // Of a deck made from a document: the document as the deck's language after the change has it,
+  // the passages each slide carries, and the slides whose passages changed, which are written again.
+  const doc = docNow ? inLanguage(docNow, language, writtenIn) : undefined;
+  const passagesChanged = doc ? resolveDeckPassages(plan.entries, deck, passageCount) : new Set<PlanEntry>();
+  for (const entry of passagesChanged) if (!entry.change) entry.change = entry.passages ? FROM_DOCUMENT : GAVE_UP;
+  // Words for a slide with passages ask for a shorter text only under four fifths of their words.
+  // Otherwise the slide carries its passages whole.
+  if (doc) {
+    for (const entry of plan.entries) {
+      if (entry.passages && entry.words !== undefined && slideDocument(doc, entry.passages, entry.words, language)?.asked === undefined) delete entry.words;
+    }
+  }
   // The slides the plan itself has words for. A change of language gives every other slide words too, by code.
   const worded = new Set(plan.entries.filter((entry) => entry.change !== ''));
   // A change of language touches every slide, whatever the plan says.
@@ -490,9 +753,10 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
   const resized = textScale !== context.textScale;
   context.textScale = textScale;
 
-  // A slide the request asks an amount of text for gets the room for it: it keeps its layout when
-  // that holds the text, or moves to a layout of plain text or a free slide that does. Where none
-  // does, the text goes over the slides it needs, up to ten more, the others new after it.
+  // A slide the request asks an amount of text for gets the room for it, on that slide: it keeps
+  // its layout when that holds the text, or moves to a layout of plain text or a free slide that
+  // does, its text alone set dense where it needs it. Code adds no slide: where nothing holds the
+  // text, the slide holds what it can, and the deck is told.
   const freeKinds = new Set<FreeBlockKind>(free?.kinds ?? []);
   const plainIds = offer.patterns.filter((pattern) => isPlainText(pattern.def)).map((pattern) => pattern.def.id);
   const lengthPlanning: LengthPlanning = {
@@ -507,18 +771,100 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
     plainText: (id) => plainIds.includes(id),
     plain: plainIds,
     free: freeKinds.has('text')
-      ? (blocks, arrange, lengths) => {
-          const written = freeWritePattern(loaded, { direction, textScale }, { blocks, arrange, lengths }, context);
+      ? (blocks, arrange, lengths, paragraphs) => {
+          const written = freeWritePattern(loaded, { direction, textScale }, { blocks, arrange, lengths, ...(paragraphs ? { paragraphs } : {}) }, context);
           return 'pattern' in written ? written.pattern : undefined;
         }
       : undefined,
     freeParts: (id) => freePartsOf(definitions.get(id), freeKinds),
   };
-  let spare = 10;
-  // Texts that go over several slides: the first slide of each, the words asked, and the number of slides.
-  const spreadOut: Array<{ first: PlanEntry; words: number; parts: number; room: number }> = [];
-  plan.entries = plan.entries.flatMap((entry): PlanEntry[] => {
-    if (entry.words === undefined) return [entry];
+  // A slide set dense keeps the length of its text when that text is written again and the plan
+  // gives it no words: "simpler words on slide 2" must not plan it for a usual length and cut the
+  // text that was asked for. A change that keeps its text as it is (a better title) leaves it so.
+  // No one asked for that length now: where the slide holds less (larger text), its text is
+  // written to what it holds, and the change is not stopped for it (see toldLength).
+  const keptLength = new Set<PlanEntry>();
+  // A slide set dense, or one that carries passages, that keeps its text while a part is added
+  // beside it has less room for that text. It is given the room for the text it has, which may be
+  // shorter than its passages: a text that still holds beside the new part stays as it is, unless
+  // the plan writes it again (`asIs`), and one that does not is written for the room it has, and is
+  // a cut. In another language, or with other passages, the text is written anew all the same.
+  const besides = new Map<PlanEntry, { from: number; chars: number; asIs: boolean }>();
+  for (const entry of plan.entries) {
+    const source = entry.from > 0 ? deck.slides[entry.from - 1] : undefined;
+    if (entry.words !== undefined || !isFree(source)) continue;
+    // A slide with passages has the length of its passages, and one that gives them up has no text
+    // of that length to keep.
+    const carried = entry.passages !== undefined;
+    if (!carried && (passagesOf(source).length > 0 || source.arrange?.dense !== true)) continue;
+    const named = entry.free?.parts ?? [];
+    const old = (source.blocks ?? []) as FreeBlockKind[];
+    const text = named.find((part) => part.kind === 'text' && old[part.from - 1] === 'text');
+    const had = text ? source.slots[`b${text.from}Text`] : undefined;
+    const chars = typeof had === 'string' || Array.isArray(had) ? toParagraphs(had).join('').length : 0;
+    if (text && chars > 0 && !translating && !passagesChanged.has(entry) && named.some((part) => part.from === 0)) {
+      besides.set(entry, { from: text.from, chars, asIs: !text.rewrite });
+      if (!carried) entry.words = Math.max(1, wordsOfChars(chars, language));
+      continue;
+    }
+    if (carried) continue;
+    const words = readWords(wordsIn(source, currentLanguage));
+    const again = translating || (worded.has(entry) && (named.length === 0 || named.some((part) => part.kind === 'text' && part.rewrite)));
+    if (!again || words === undefined) continue;
+    entry.words = words;
+    keptLength.add(entry);
+  }
+  /** Whether a slide of a layout has a photo: a filled image slot of a photo. A free slide has no layout of the template. */
+  const filledPhoto = (slide: SlideSpec | undefined): boolean => {
+    const definition = slide ? definitions.get(slide.pattern) : undefined;
+    return slide !== undefined && (definition?.slots ?? []).some((slot) => slot.kind === 'image' && slot.imageKind === 'photo' && isImageRef(slide.slots[slot.name]));
+  };
+  /**
+   * Whether the running text of a slide is written again: its passages changed, the deck is
+   * translated, words are asked for it, a part is added beside it, or the plan changes it and names
+   * no part of it, or names its text to be written again. A slide of a layout, or one that becomes
+   * a free slide, is written whole.
+   */
+  const textAgain = (entry: PlanEntry): boolean => {
+    if (passagesChanged.has(entry) || translating || entry.words !== undefined || besides.has(entry)) return true;
+    if (!entry.change) return false;
+    const source = entry.from > 0 ? deck.slides[entry.from - 1] : undefined;
+    if (!entry.free || !isFree(source)) return true;
+    return entry.free.parts.length === 0 || entry.free.parts.some((part) => part.kind === 'text' && part.rewrite);
+  };
+  // The slides whose text from the document is written again, with what they carry of it. A slide
+  // whose text stays (a better title) keeps it as it is.
+  const carries = new Map<PlanEntry, SlideDocument>();
+  if (doc) {
+    for (const entry of plan.entries) {
+      // A table of its passages goes into a table where the slide has one after the change, and is running text where it has none.
+      const source = entry.from > 0 ? deck.slides[entry.from - 1] : undefined;
+      const blocks = entry.free ? (entry.free.parts.length > 0 ? entry.free.parts.map((part) => part.kind) : isFree(source) ? ((source.blocks ?? []) as FreeBlockKind[]) : []) : undefined;
+      const tables = blocks ? blocks.includes('table') : (definitions.get(entry.pattern)?.slots.some((slot) => slot.kind === 'table') ?? false);
+      const carry = entry.passages && textAgain(entry) ? slideDocument(doc, entry.passages, entry.words, language, tables) : undefined;
+      // A text a part is added beside carries what it has, where that is less than its passages: a text asked to be shorter, say.
+      const kept = besides.get(entry);
+      if (carry) carries.set(entry, kept && kept.chars < carry.need ? { ...carry, need: kept.chars, words: Math.max(1, wordsOfChars(kept.chars, language)) } : carry);
+    }
+  }
+  /** The words a slide is to carry: those of its passages, or those asked for it. */
+  const wordsFor = (entry: PlanEntry): number => carries.get(entry)?.words ?? (entry.words as number);
+  /** The characters of text a slide is given the room for: its text from the document, the text a part is added beside, or the words asked for it. */
+  const needFor = (entry: PlanEntry, carry: SlideDocument | undefined): number | undefined =>
+    carry ? carry.need : (besides.get(entry)?.chars ?? (entry.words !== undefined ? charsOfWords(entry.words, language) : undefined));
+  // The slides given the room for their text, and set dense where it needs that. A slide with words
+  // always is. A slide with passages is where they changed, where it is asked to be shorter, where
+  // a part is added beside its text, or where the deck is translated: one whose passages stay was
+  // fitted when it was planned, and a better title does not move it to another layout.
+  const homed = new Set<PlanEntry>();
+  // Slides whose photo gives way to a text set dense.
+  const dropped: PlanEntry[] = [];
+  for (const entry of plan.entries) {
+    const found = carries.get(entry);
+    const carry = found && (passagesChanged.has(entry) || translating || found.asked !== undefined || besides.has(entry)) ? found : undefined;
+    const need = needFor(entry, carry);
+    if (need === undefined) continue;
+    homed.add(entry);
     const source = entry.from > 0 ? deck.slides[entry.from - 1] : undefined;
     // The parts a free slide has after the change: those the plan names, or else those it has. A
     // plan that names none ("[]") and has words for the slide writes them all again, as a change
@@ -526,50 +872,42 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
     const named = entry.free?.parts.length ? entry.free.parts : undefined;
     const partsNow: PartPlan[] = named ?? (entry.free && isFree(source) ? ((source.blocks ?? []) as FreeBlockKind[]).map((kind, at) => ({ from: at + 1, kind, rewrite: true })) : []);
     const current: TextHome = entry.free ? { blocks: partsNow.map((part) => part.kind) } : { pattern: entry.pattern, items: entry.items };
-    const found = homeFor(current, entry.words, lengthPlanning);
-    if (found.home !== current) {
-      if ('blocks' in found.home) {
+    const placed = homeForChars(current, need, lengthPlanning, { shape: carry?.shape, dense: true });
+    // A free text alone that is only set dense now keeps the parts the plan gave it.
+    if (!sameHome(undense(placed.home), current)) {
+      if (isDenseHome(placed.home)) {
+        // A text alone, set dense. Such a home is found only for a slide of one running text and
+        // photos, so no text or list of the slide is lost: the text is written again, the photos go.
+        const text = partsNow.find((part) => part.kind === 'text');
+        entry.free = { ...(entry.free ?? {}), parts: [{ from: text?.from ?? 0, kind: 'text', rewrite: true }] };
+        entry.pattern = FREE_PATTERN;
+        delete entry.items;
+        if (partsNow.some((part) => part.kind === 'photo') || filledPhoto(source)) dropped.push(entry);
+      } else if ('blocks' in placed.home) {
         // A free slide that gets a running text keeps its parts after it. A slide of a layout
         // becomes a free slide of a running text and its chart, table or photo, which it hands
         // on as they are (not written again: see carryOver); a new slide has none to hand on.
-        const added = entry.free ? found.home.blocks.length - partsNow.length : found.home.blocks.length;
+        const added = entry.free ? placed.home.blocks.length - partsNow.length : placed.home.blocks.length;
         const keeps = (kind: FreeBlockKind) => source !== undefined && !entry.free && (kind === 'chart' || kind === 'table' || kind === 'photo');
-        const fresh = found.home.blocks.slice(0, added).map((kind): PartPlan => ({ from: 0, kind, rewrite: !keeps(kind) }));
+        const fresh = placed.home.blocks.slice(0, added).map((kind): PartPlan => ({ from: 0, kind, rewrite: !keeps(kind) }));
         entry.free = { ...(entry.free ?? {}), parts: [...fresh, ...(entry.free ? partsNow : [])] };
         entry.pattern = FREE_PATTERN;
         delete entry.items;
       } else {
-        entry.pattern = found.home.pattern;
+        entry.pattern = placed.home.pattern;
         delete entry.free;
-        if (found.home.items !== undefined) entry.items = found.home.items;
+        if (placed.home.items !== undefined) entry.items = placed.home.items;
         else delete entry.items;
       }
     }
-    // The text is written whatever else the plan says of the slide.
-    if (!entry.change) entry.change = 'Write the text at the length asked for.';
-    // A text goes over more slides only where it is all the slide shows, and such a slide can be new.
-    const addable = 'blocks' in found.home ? free !== undefined : offered.has(found.home.pattern);
-    const parts = found.holds || !addable || !spreads(found.home, lengthPlanning) ? 1 : partsFor(entry.words, wordsOfChars(found.room, language), spare);
-    spare -= parts - 1;
-    if (parts === 1) return [entry];
-    spreadOut.push({ first: entry, words: entry.words, parts, room: found.room });
-    const words = Math.ceil(entry.words / parts);
-    const change = entry.change;
-    const home = found.home;
-    return Array.from({ length: parts }, (_, at): PlanEntry => {
-      if (at === 0) return Object.assign(entry, { words, change: partPurpose(change, 1, parts) });
-      // The slides after the first are new, of the same layout or the same running texts, each written whole.
-      const next: PlanEntry = { from: 0, pattern: entry.pattern, change: partPurpose(change, at + 1, parts), images: false, words };
-      if ('blocks' in home) next.free = { parts: home.blocks.map((kind) => ({ from: 0, kind, rewrite: true })) };
-      else if (home.items !== undefined) next.items = home.items;
-      return next;
-    });
-  });
-  // The deck is told where such a text went: the summary of the change was written before, and says nothing of the slides added for it.
-  const spread: Issue[] = spreadOut.map(({ first, words, parts, room }) => {
-    const number = plan.entries.indexOf(first) + 1;
-    return { severity: 'warning', message: `the ${words} words asked for slide ${number} go over slides ${number} to ${number + parts - 1}: one slide holds about ${wordsOfChars(room, language)}` };
-  });
+    if (isDenseHome(placed.home)) entry.dense = true;
+    // The text is written whatever else the plan says of the slide. A part added beside a text has
+    // nothing said of it but the request, where the plan says nothing.
+    if (!entry.change && !besides.has(entry)) entry.change = carry ? FROM_DOCUMENT : 'Write the text at the length asked for.';
+  }
+  // The deck is told of a photo that gave way: the summary of the change was written before, and says nothing of it.
+  // Beside a text no one asked for now, it gives way to the text the slide has.
+  const leftOut: Issue[] = dropped.map((entry) => photoLeftOut(plan.entries.indexOf(entry) + 1, wordsFor(entry), !besides.has(entry)));
   // A deck that holds a free slide is checked with the template as it was loaded: the slide is
   // then laid out, and its text checked against the room it gets. Any other deck is checked as before.
   const check = (given: DeckSpec): Issue[] =>
@@ -580,11 +918,61 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
 
   // Slides that hold less text than the request asked for them, said with the deck.
   const short: Issue[] = [];
-  /** The pattern a slide is written against, told the length asked for it where there was one. */
-  const toldLength = (pattern: UsablePattern, number: number, words: number | undefined, names?: ReadonlySet<string>): UsablePattern => {
-    if (words === undefined) return pattern;
+  // Slots told the whole of the length asked for their slide, held to it once they are written.
+  const told: ToldLength[] = [];
+  // Slides written from their passages of the document, held to its words.
+  const keptChecks: KeptCheck[] = [];
+  // Slides given the room for their text that hold less than they carry, as they are written: with
+  // the heading or caption they keep. Where the caller asks, the change stops on them before writing.
+  const cuts: SlideTextFit[] = [];
+  const cutAt = (entry: PlanEntry, number: number, words: number, need: number, room: number, size: number | undefined): void => {
+    if (!homed.has(entry)) return;
+    const label = carries.get(entry)?.label;
+    cuts.push({
+      slide: number,
+      words,
+      holds: Math.floor((words * room) / need),
+      ...(size !== undefined ? { size } : {}),
+      ...(entry.dense ? { dense: true as const } : {}),
+      ...(label !== undefined ? { passages: label } : {}),
+    });
+  };
+  /**
+   * The pattern a slide is written against, told its text from the document where its text from
+   * the document is written again, or else the length asked for it where there was one. A slide set
+   * dense (`dense`) that still holds less says the size its text is set at.
+   */
+  const toldLength = (pattern: UsablePattern, number: number, entry: PlanEntry, names?: ReadonlySet<string>, dense = false): UsablePattern => {
+    const carry = carries.get(entry);
+    const size = dense ? runningSize(pattern, names) : undefined;
+    if (carry && doc) {
+      const room = documentRoom(pattern, context, carry.shape, names);
+      // A slide written again only because the deck is translated, whose passages and parts stay and
+      // of which no length was asked, held its text: it is not stopped as a cut. In another script
+      // than the document's, its length is a guess from the words of its passages, and it is
+      // written to what it holds; in the document's own, a slide that holds less is said after.
+      const translated = translating && !passagesChanged.has(entry) && carry.asked === undefined;
+      const need = translated && !doc.same ? Math.min(carry.need, room) : carry.need;
+      if (room < need) {
+        short.push(size !== undefined ? textCutDense(number, carry.label, need, room, size) : textCut(number, carry.label, need, room));
+        if (!translated) cutAt(entry, number, carry.words, need, room, size);
+      }
+      // A slide whose passages changed is held to their words. One the request has written otherwise is not.
+      const check = passagesChanged.has(entry) && !entry.reword ? keptCheck(doc, number, carry, room, runningNames(pattern, names)[0]) : undefined;
+      if (check) keptChecks.push(check);
+      return withPassages(pattern, need, context, { names, language, label: carry.label, shape: carry.shape, words: carry.asked });
+    }
+    if (entry.words === undefined) return pattern;
     const room = heldBy(pattern, context, { names, language });
-    if (room < charsOfWords(words, language)) short.push(shortOfWords(number, words, room, language));
+    // A length kept by code, which no one asked for now, is what the slide holds where that is less.
+    const kept = keptLength.has(entry);
+    const words = kept ? Math.min(entry.words, Math.max(1, wordsOfChars(room, language))) : entry.words;
+    if (!kept && room < charsOfWords(words, language)) {
+      short.push(size !== undefined ? shortOfWordsDense(number, words, room, size, language) : shortOfWords(number, words, room, language));
+      cutAt(entry, number, words, charsOfWords(words, language), room, size);
+    }
+    const whole = toldAsAsked(pattern, words, context, { names, language });
+    if (whole) told.push({ slide: number, words, ...whole });
     return withLength(pattern, words, context, { names, language });
   };
 
@@ -604,10 +992,13 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
   const planFree = (entry: PlanEntry, number: number, source: SlideSpec | undefined): void => {
     const before = isFree(source) ? source : undefined;
     const stated: FreeChange = entry.free ?? { parts: [] };
+    // Its text from the document, where that is written again.
+    const carry = carries.get(entry);
     // A length asked for the slide is the length of its running texts, or of its lists where it
-    // has no running text (as `freeLengths` shares it out): those are written again.
+    // has no running text (as `freeLengths` shares it out): those are written again. So are they
+    // where its text from the document is written again.
     const holder: FreeBlockKind = stated.parts.some((part) => part.kind === 'text') ? 'text' : 'list';
-    let parts: PartPlan[] = entry.words !== undefined ? stated.parts.map((part) => (part.kind === holder ? { ...part, rewrite: true } : part)) : stated.parts;
+    let parts: PartPlan[] = entry.words !== undefined || carry ? stated.parts.map((part) => (part.kind === holder ? { ...part, rewrite: true } : part)) : stated.parts;
     // The title is written with the parts, and whenever the plan has words for the slide: where
     // nothing is written and nothing is said, it stays.
     let title: boolean | undefined;
@@ -667,11 +1058,23 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
     // A slide that names a part of no kind cannot be laid out. Left alone it was copied above, and the check of the deck speaks of it.
     if (before && !(before.blocks ?? []).every(isFreeBlockKind)) throw new PlanError(`Slide ${number}: "blocks" names a kind of part that does not exist, so the slide cannot be changed`);
 
-    const arrange = arrangeAfter(before?.arrange, stated, parts.length, changed);
-    const prepare = (images: boolean) => {
+    let arrange = arrangeAfter(before?.arrange, stated, parts.length, changed);
+    // A slide given the room for its text is set dense where its text needed that, and at the
+    // template's own sizes otherwise. Any other slide keeps what it had.
+    if (homed.has(entry)) {
+      const { dense: _dense, ...rest }: FreeArrange = arrange ?? {};
+      const set: FreeArrange = entry.dense ? { ...rest, dense: true } : rest;
+      arrange = Object.keys(set).length > 0 ? set : undefined;
+    }
+    // A text that a part is added beside: its length is its own, and a new text beside it is written as the request says.
+    const beside = besides.get(entry);
+    const besideAt = beside ? parts.findIndex((part) => part.from === beside.from && part.kind === 'text') : -1;
+    // `filled` names a running text that code sets from the document: the writer is not asked for it.
+    const prepare = (images: boolean, filled?: string) => {
       const moved = new Set<string>();
       const shape = before ? carryParts(before, parts, images) : carryOver(source, source ? definitions.get(source.pattern) : undefined, parts, images, moved);
       const skip = new Set(shape.skip);
+      if (filled !== undefined) skip.add(filled);
       const carried = { ...shape.carried };
       // In the order the writer is asked for them: the title, then the parts.
       const current: Record<string, SlotValue> = {};
@@ -691,17 +1094,37 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
       // what it had, and one the plan named to be written again is then asked for once more (`due`).
       // The slide is planned with the optional parts it has (a caption under its one photo, a
       // heading over its one text), so that they have their room and can be written again.
-      // Its running texts are set out for the length asked, where one was.
-      const lengths = entry.words !== undefined ? freeLengths(shape.blocks, charsOfWords(entry.words, language)) : undefined;
-      const planned = freeWritePattern(loaded, { direction, textScale }, { blocks: shape.blocks, arrange, base: before?.base, lengths }, context, skip, heldParts(shape));
+      // Its running texts are set out for the length asked, where one was, or for its text from the document.
+      const need = needFor(entry, carry);
+      const lengths = need === undefined ? undefined : besideAt >= 0 ? { [`b${besideAt + 1}Text`]: need } : freeLengths(shape.blocks, need);
+      const names = new Set(Object.keys(lengths ?? {}));
+      const planned = freeWritePattern(loaded, { direction, textScale }, { blocks: shape.blocks, arrange, base: before?.base, lengths, ...paragraphsFor(carry, names) }, context, skip, heldParts(shape));
       // A chart or a table that is offered with what it holds is asked for at the size it has.
       const written = 'reason' in planned ? planned : { ...planned, pattern: roomAsHeld(planned.pattern, current) };
-      return { shape, moved, carried, current, written };
+      return { shape, moved, carried, current, written, names };
     };
-    let made = prepare(entry.images);
+    let images = entry.images;
+    let made = prepare(images);
     // Its pictures cannot be replaced with what the caller supplied (say, images are turned off): keep them all.
-    if ('reason' in made.written && source && entry.images) made = prepare(false);
-    const { shape, carried, current, written } = made;
+    if ('reason' in made.written && source && entry.images) {
+      images = false;
+      made = prepare(false);
+    }
+    // A text whose passages changed, and that holds them, is set by code as the document has it:
+    // the writer writes the title and the rest. One the request asks for in other words, it writes.
+    let fill = doc && carry && passagesChanged.has(entry) && !entry.reword && 'pattern' in made.written ? filledText(doc, carry, made.written.pattern, context, made.names) : undefined;
+    // A text that a part is added beside, which the plan keeps as it is, stays so where it still
+    // holds as the slide is written: it is not written again.
+    const had = beside?.asIs && besideAt >= 0 ? before?.slots[`b${beside.from}Text`] : undefined;
+    if (beside && (typeof had === 'string' || Array.isArray(had)) && 'pattern' in made.written && heldBy(made.written.pattern, context, { names: made.names }) >= beside.chars) {
+      fill = { slot: `b${besideAt + 1}Text`, value: had };
+    }
+    if (fill) {
+      const again = prepare(images, fill.slot);
+      if ('pattern' in again.written) made = again;
+      else fill = undefined;
+    }
+    const { shape, carried, current, written, names } = made;
     if ('reason' in written) throw new PlanError(`Slide ${number}: the free slide ${written.reason}`);
 
     // What the writer is not asked for stays as it is: an icon where no icon set came with this change.
@@ -711,6 +1134,7 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
       carried[name] = value;
       delete current[name];
     }
+    if (fill) carried[fill.slot] = fill.value;
     if (before && asked.size === 0) {
       // Parts taken off or moved, none to write, and no words from the plan: the slide is made by code from what it keeps, its title too.
       const had = before.slots.title;
@@ -732,7 +1156,7 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
     const anew = before !== undefined && parts.every((part) => part.from === 0);
     const job: EditJob = {
       number,
-      pattern: entry.words !== undefined ? toldLength(written.pattern, number, entry.words, new Set(Object.keys(freeLengths(shape.blocks, charsOfWords(entry.words, language))))) : written.pattern,
+      pattern: (entry.words !== undefined || carry) && !fill ? toldLength(written.pattern, number, entry, names, arrange?.dense === true) : written.pattern,
       // A plan that names new parts and says nothing of them leaves the request itself to go by.
       purpose: entry.change || instruction.trim(),
       carried,
@@ -744,6 +1168,9 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
     const deckTitle = plan.title || deck.title;
     if (deckTitle) job.fallback = deckTitle;
     if (source) job.source = source;
+    if (fill) job.filled = fill.slot;
+    // The writer is shown the slide's text from the document, to write it, or its title, from it.
+    if (doc && entry.passages?.length) job.passage = { label: passageLabel(entry.passages), text: passageText(doc.passages, entry.passages) };
     if (Object.keys(current).length > 0) job.current = current;
     if (wordsOnly && before) job.asItWas = before;
     if (outright) {
@@ -837,16 +1264,31 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
     }
     if ('reason' in planned) throw new PlanError(`Slide ${number}: pattern "${entry.pattern}" ${planned.reason}`);
 
+    // A text whose passages changed, and that holds them, is set by code as the document has it,
+    // unless the request asks for it in other words.
+    const carry = carries.get(entry);
+    const fill = doc && carry && passagesChanged.has(entry) && !entry.reword ? filledText(doc, carry, planned.pattern, context) : undefined;
+    if (fill) carried[fill.slot] = fill.value;
     const job: EditJob = {
       number,
-      pattern: toldLength(planned.pattern, number, entry.words),
+      pattern: fill ? { ...planned.pattern, slots: planned.pattern.slots.filter((one) => one.slot.name !== fill.slot) } : toldLength(planned.pattern, number, entry),
       purpose: entry.change,
       carried,
       relaid: !!source && source.pattern !== entry.pattern,
     };
     if (source) job.source = source;
+    if (fill) job.filled = fill.slot;
+    if (doc && entry.passages?.length) job.passage = { label: passageLabel(entry.passages), text: passageText(doc.passages, entry.passages) };
     jobs.push(job);
   });
+
+  // A cut is said before anything is written, where the caller asks for that: the person can then
+  // ask for more slides or a shorter text, or accept the cut. It is found in the patterns the slides
+  // are written against, which count the heading or caption a slide keeps: no model was asked yet.
+  if (options.stopBeforeCut && cuts.length > 0) {
+    const said = cuts.map((fit) => `slide ${fit.slide} would hold about ${fit.holds} of its ${fit.words} words${fit.size !== undefined ? ` (text at ${fit.size} pt)` : ''}`).join('; ');
+    throw new TextCutError(`Nothing was changed: ${said}. Ask for more slides or a shorter text, or accept that the rest is cut.`, cuts);
+  }
 
   // The slides the caller's colours are for, when some were named. The caller numbered the deck
   // as it was; the plan says where each of those slides is now. A slide the edit adds (from 0) is
@@ -854,14 +1296,18 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
   const named = options.colors !== undefined && options.colorSlides?.length ? [...new Set(options.colorSlides)] : undefined;
   const recolored = named ? plan.entries.flatMap((entry, index) => (entry.from > 0 && named.includes(entry.from) ? [index + 1] : [])) : undefined;
   const removed = (named ?? []).filter((number) => Number.isInteger(number) && number >= 1 && number <= deck.slides.length && !plan.entries.some((entry) => entry.from === number));
-  const notes: Issue[] = [...idle.map(nothingChanged), ...removed.map((number): Issue => ({ severity: 'warning', message: `the change removed slide ${number}, which was to be recoloured` })), ...spread, ...short];
+  const notes: Issue[] = [...idle.map(nothingChanged), ...removed.map((number): Issue => ({ severity: 'warning', message: `the change removed slide ${number}, which was to be recoloured` })), ...leftOut, ...short];
 
   const assemble = (written: Map<number, SlideSpec>): DeckSpec => {
     const slides = plan.entries.map((entry, index) => {
       const slide = kept.get(index + 1) ?? written.get(index + 1) ?? { pattern: entry.pattern, slots: {} };
       // A slide's own colours travel with it: a slide that is rewritten or moved keeps them.
       const own = entry.from > 0 ? deck.slides[entry.from - 1]?.colors : undefined;
-      return own && slide.colors === undefined ? { ...slide, colors: structuredClone(own) } : slide;
+      const coloured = own && slide.colors === undefined ? { ...slide, colors: structuredClone(own) } : slide;
+      if (!doc) return coloured;
+      // Of a deck made from a document, each slide carries the passages the change gave it.
+      const { passages: _passages, ...rest } = coloured;
+      return entry.passages?.length ? { ...rest, passages: [...entry.passages] } : rest;
     });
     // The request joins the brief: later edits, and the check of chart numbers, see what was asked for.
     const brief = [deck.brief, instruction.trim()].filter(Boolean).join('\n');
@@ -907,16 +1353,18 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
     })
     .join('\n');
   const materialLine = (job: EditJob): string[] => (job.material ? [`Content of the slide it replaces: ${JSON.stringify(job.material)}`] : []);
+  /** The slide's text from the document, under its first line, where it carries passages. */
+  const textOf = (job: EditJob): string[] => (job.passage ? [slideText(job.number, job.passage)] : []);
   const taskOf = (job: EditJob): string => {
     if (job.free) {
       // A free slide's slots are named by the numbers of its parts, so the line says which parts are what.
-      const lines = [`s${job.number} (${job.pattern.def.id}: ${describeParts(job.free.blocks)}). ${job.source ? 'Change' : 'New slide'}: ${job.purpose}`, ...(job.notes ?? [])];
+      const lines = [`s${job.number} (${job.pattern.def.id}: ${describeParts(job.free.blocks)}). ${job.source ? 'Change' : 'New slide'}: ${job.purpose}`, ...textOf(job), ...(job.notes ?? [])];
       // What the slots to write hold now, under the names they are written by. Nothing of the parts that stay is shown.
       if (job.current) lines.push(`Current content: ${JSON.stringify(Object.fromEntries(Object.entries(job.current).map(([name, value]) => [name, shownValue(value)])))}`);
       return [...lines, ...materialLine(job)].join('\n');
     }
     const offeredSlots = new Set(job.pattern.slots.map((planned) => planned.slot.name));
-    const lines = [`s${job.number} (${job.pattern.def.id}). ${job.source ? 'Change' : 'New slide'}: ${job.purpose}`];
+    const lines = [`s${job.number} (${job.pattern.def.id}). ${job.source ? 'Change' : 'New slide'}: ${job.purpose}`, ...textOf(job)];
     if (job.source) {
       // Show what is there now. After a layout change the slot names differ, so everything is shown as material.
       const current = Object.entries(job.source.slots).filter(([name, value]) => (job.relaid || offeredSlots.has(name)) && value !== null);
@@ -928,10 +1376,13 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
   // A free slide of many parts is written by calls of its own. Every other slide is in one call, as before.
   const together = jobs.filter((job) => !writtenApart(job));
   const head = [deck.brief ? `The deck was written from this brief:\n${deck.brief}` : '', `Requested change:\n${instruction.trim()}`, `The deck after the change:\n${overview}`];
+  // Slides with text from the document are written in its words: the rules for that come once, after the slides.
+  const fromDocument = together.some((job) => job.passage) ? [documentWriteRule(together.some((job) => job.filled !== undefined))] : [];
   const request = [
     ...head,
     'Write only the slides below. When a slide has current content, start from it and change only what is asked: keep every other text word for word.',
     together.map(taskOf).join('\n\n'),
+    ...fromDocument,
     ...suppliesText(together, context),
     'Fill every required property. Leave an optional property out when the slide is better without it.',
   ]
@@ -943,12 +1394,24 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
       ...head,
       'Write only the parts asked for below. Where they have current content, start from it and change only what is asked: keep every other text word for word.',
       [task, ...(job.notes ?? []), ...materialLine(job)].join('\n'),
+      ...(job.passage ? [slideText(job.number, job.passage), documentWriteRule(job.filled !== undefined)] : []),
       ...suppliesText([job], context),
     ]
       .filter(Boolean)
       .join('\n\n');
 
-  const system = systemPrompt(language, 'deck');
+  const system = systemPrompt(language, 'deck', doc !== undefined);
+  // A text written well short of the length asked for it goes back once, with the first answer's
+  // problems, and so does a slide that keeps too few of the words of its text from the document.
+  // The issues that send them are the writer's alone: the deck is told after the last answer.
+  const sent = new WeakSet<Issue>();
+  const lengthNotes = (written: DeckSpec, issues: Issue[], round: number): Issue[] =>
+    round > 0
+      ? []
+      : [...writtenUnder(written, told).map(writtenLength), ...(doc ? keptIssues(doc, keptChecks, written, issues) : [])].map((issue) => {
+          sent.add(issue);
+          return issue;
+        });
   const draft = await writeSlides({
     ask: asker(options.llm, system, options.signal),
     askLight: asker(options.llm, system, options.signal, 'low'),
@@ -961,6 +1424,7 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
     template: loaded,
     measure,
     review: reviewWith(options),
+    ...(told.length > 0 || keptChecks.length > 0 ? { notes: lengthNotes } : {}),
     layout,
     maxRepairs: options.maxRepairs ?? 2,
     onRepair: (attempt, issues) => options.onProgress?.({ stage: 'repair', attempt, issues }),
@@ -968,6 +1432,8 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
 
   const errors = draft.issues.filter((issue) => issue.severity === 'error');
   if (errors.length > 0) throw new DeckValidationError(errors);
+  if (doc) notes.push(...keptWarnings(doc, keptChecks, draft.deck));
+  notes.push(...writtenUnder(draft.deck, told).map((under) => writtenShort(under, language)));
   // A slide the plan had words for and named no part of to write: its title was offered. Where
   // that came back as it was and the slide is set out as before, the deck is told that nothing
   // changed, and the slide is not among those that were rewritten.
@@ -987,5 +1453,5 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
     return kept !== undefined && !kept.has(JSON.stringify(draft.deck.slides[(issue.slide as number) - 1]?.slots[issue.slot ?? '']));
   });
   const rewritten = [...jobs.map((job) => job.number).filter((number) => !same.has(number)), ...reshaped].sort((a, b) => a - b);
-  return result(draft.deck, rewritten, [...draft.issues, ...unstated]);
+  return result(draft.deck, rewritten, [...draft.issues.filter((issue) => !sent.has(issue)), ...unstated]);
 }

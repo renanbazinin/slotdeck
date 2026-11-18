@@ -21,7 +21,8 @@ const MOST_LISTED = 24;
 /** A text of a part is shown up to this many characters. */
 const TEXT_SHOWN = 160;
 
-const cut = (text: string): string => (text.length <= TEXT_SHOWN ? text : `${text.slice(0, TEXT_SHOWN - 3).trimEnd()}...`);
+/** A text as the model that plans a change is shown it: cut short where it is longer than {@link TEXT_SHOWN}. */
+export const cut = (text: string): string => (text.length <= TEXT_SHOWN ? text : `${text.slice(0, TEXT_SHOWN - 3).trimEnd()}...`);
 const some = (count: number, one: string, many: string): string => `${count} ${count === 1 ? one : many}`;
 const isPicture = (part: FreePart): boolean => part.holds === 'icon' || part.holds === 'photo' || part.holds === 'graphic';
 const isText = (part: FreePart): boolean => part.holds === 'text' || part.holds === 'paragraphs';
@@ -106,12 +107,13 @@ export function listParts(blocks: readonly FreeBlockKind[], slots: Record<string
 /**
  * A free slide as the model that plans a change is shown it: what it is made of, how it is set
  * out, its title, and its parts by number. No data: a chart is its caption, its type and the
- * number of its categories.
+ * number of its categories. `more` is said of the slide after how it is set out, such as the words
+ * of a text set dense and the most it holds.
  */
-export function listFree(slide: SlideSpec): string {
+export function listFree(slide: SlideSpec, more: readonly string[] = []): string {
   const blocks = kindsOf(slide);
   const title = said({ name: 'title', holds: 'text', required: false }, slide.slots.title);
-  const head = `[${FREE_PATTERN}: ${describeEntry({ blocks, ...(slide.arrange ? { arrange: slide.arrange } : {}) })}]`;
+  const head = `[${FREE_PATTERN}: ${[describeEntry({ blocks, ...(slide.arrange ? { arrange: slide.arrange } : {}) }), ...more].join('; ')}]`;
   return `${head} ${[...(title ? [`title: ${title}`] : []), ...listParts(blocks, slide.slots)].join('; ')}`;
 }
 

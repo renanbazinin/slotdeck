@@ -397,7 +397,7 @@ test('gemini() limits every answer, and asks once more when one is cut off', asy
   await gemini({ model: 'm', fetch: fixed.fetch, maxOutputTokens: 5000 }).generateJson({ ...request, maxOutputTokens: 1360 });
   assert.deepEqual(fixed.limits, [5000]);
 
-  // A model that ran away is stopped at the limit; the same request usually works the second time.
+  // A model that ran away is stopped at the limit; the request usually works the second time.
   const once = sequence([cutOff, good]);
   assert.deepEqual(await gemini({ model: 'm', fetch: once.fetch }).generateJson(request), { ok: true });
   assert.equal(once.limits.length, 2);
@@ -406,6 +406,102 @@ test('gemini() limits every answer, and asks once more when one is cut off', asy
   const twice = sequence([cutOff, cutOff, good]);
   await assert.rejects(gemini({ model: 'm', fetch: twice.fetch }).generateJson(request), /cut off at the limit of 24576 tokens, twice/);
   assert.equal(twice.limits.length, 2, 'it is not asked a third time');
+});
+
+test('gemini() asks again with light thinking when an answer is cut off, and says what filled the limit', async () => {
+  const good = { status: 'completed', steps: [{ type: 'model_output', content: [{ type: 'text', text: '{"ok":true}' }] }] };
+  // An answer cut off at the limit, as the service gives it, with the tokens it spent when they are given.
+  const cutOff = (usage?: unknown) => ({ status: 'incomplete', steps: [{ type: 'thought' }, { type: 'model_output', content: [{ type: 'text', text: '{"s1":{"title":"' }] }], ...(usage === undefined ? {} : { usage }) });
+  const sequence = (answers: unknown[]) => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(JSON.stringify(answers[Math.min(bodies.length, answers.length) - 1]));
+    }) as typeof globalThis.fetch;
+    return { fetch, bodies };
+  };
+  const request = { system: 's', prompt: 'p', schema: {}, maxOutputTokens: 3142 };
+  // Seen live: a long reasoning filled the limit before a short answer was done.
+  const reasoned = { total_tokens: 13612, total_input_tokens: 2293, total_output_tokens: 462, total_thought_tokens: 10857 };
+
+  // The first request keeps the model's default thinking; the one sent again asks for light thinking, with the same limit.
+  const once = sequence([cutOff(reasoned), good]);
+  assert.deepEqual(await gemini({ model: 'm', fetch: once.fetch }).generateJson(request), { ok: true });
+  assert.deepEqual(once.bodies[0]?.generation_config, { max_output_tokens: 11334 });
+  assert.deepEqual(once.bodies[1]?.generation_config, { max_output_tokens: 11334, thinking_level: 'low' });
+  assert.deepEqual({ ...once.bodies[1], generation_config: undefined }, { ...once.bodies[0], generation_config: undefined }, 'nothing else changes');
+
+  // A request that says effort low asks for light thinking the first time already, and the second time the same.
+  const light = sequence([cutOff(reasoned), good]);
+  await gemini({ model: 'm', fetch: light.fetch }).generateJson({ ...request, effort: 'low' });
+  assert.deepEqual(light.bodies[0]?.generation_config, { max_output_tokens: 11334, thinking_level: 'low' });
+  assert.deepEqual(light.bodies[1], light.bodies[0]);
+
+  // A level set on the adapter is the caller's decision, and is kept both times.
+  const high = sequence([cutOff(reasoned), good]);
+  await gemini({ model: 'm', fetch: high.fetch, thinkingLevel: 'high' }).generateJson({ ...request, effort: 'low' });
+  assert.deepEqual(high.bodies.map((body) => body.generation_config), [
+    { max_output_tokens: 11334, thinking_level: 'high' },
+    { max_output_tokens: 11334, thinking_level: 'high' },
+  ]);
+  // An empty level, from a caller without type checks, means none, the second time as the first.
+  const empty = sequence([cutOff(reasoned), good]);
+  await gemini({ model: 'm', fetch: empty.fetch, thinkingLevel: '' as never }).generateJson(request);
+  assert.deepEqual(empty.bodies.map((body) => body.generation_config), [
+    { max_output_tokens: 11334 },
+    { max_output_tokens: 11334, thinking_level: 'low' },
+  ]);
+
+  const twice = async (usage: unknown, thinkingLevel?: 'high') => {
+    const answers = sequence([cutOff(usage), cutOff(usage), good]);
+    const llm = gemini({ model: 'm', fetch: answers.fetch, ...(thinkingLevel ? { thinkingLevel } : {}) });
+    const error = await llm.generateJson(request).then(
+      () => assert.fail('a second cut-off is an error'),
+      (thrown: unknown) => thrown,
+    );
+    assert.ok(error instanceof GeminiError);
+    assert.equal(answers.bodies.length, 2, 'it is not asked a third time');
+    return error.message;
+  };
+
+  // The adapter's limit replaces every request's, so the advice says to keep it above the others too.
+  const larger = `set maxOutputTokens on the adapter above 11334, and above any other request's limit, since it replaces them all`;
+
+  // Reasoning filled the limit the second time too: the cause is named, and a larger limit is the way out.
+  assert.equal(
+    await twice(reasoned),
+    `Gemini's answer was cut off at the limit of 11334 tokens, twice. The second time reasoning took 10857 of them and the answer 462: try again, or ${larger}`,
+  );
+  // With a level set on the adapter, lowering it is said too.
+  assert.ok((await twice(reasoned, 'high')).endsWith(`reasoning took 10857 of them and the answer 462: try again, or set a lower thinkingLevel than "high", or ${larger}`));
+
+  // The answer itself filled it: a runaway, or an answer larger than its estimate.
+  assert.equal(
+    await twice({ total_output_tokens: 11100, total_thought_tokens: 0 }),
+    `Gemini's answer was cut off at the limit of 11334 tokens, twice. The second time the answer took 11100 of them and reasoning 0: the model ran away inside a text field, or the answer is larger than its estimate. Try again, or for a large answer ${larger}`,
+  );
+  // A gateway that gives one count only: it is named when it fills the limit by itself, and the other is not made up.
+  assert.match(await twice({ total_output_tokens: 11300 }), /The second time the answer took 11300 of them: the model ran away/);
+  assert.match(await twice({ total_thought_tokens: 11000 }), /The second time reasoning took 11000 of them: try again/);
+
+  // No usage, usage in another shape, as a gateway may give, or counts that do not fill the limit: nothing is said of the cause.
+  const plain = `Gemini's answer was cut off at the limit of 11334 tokens, twice. Try again, or for a large answer ${larger}`;
+  for (const usage of [
+    undefined,
+    null,
+    'x',
+    5,
+    [],
+    {},
+    { total_thought_tokens: '10857', total_output_tokens: '462' },
+    { total_thought_tokens: -1, total_output_tokens: Number.NaN },
+    { total_tokens: 13612 },
+    { total_output_tokens: 462 },
+    { total_output_tokens: 462, total_thought_tokens: '10857' },
+    { total_output_tokens: 300, total_thought_tokens: 200 },
+  ]) {
+    assert.equal(await twice(usage), plain, JSON.stringify(usage));
+  }
 });
 
 test('a text-only deck is offered the plain text patterns and nothing else', async () => {

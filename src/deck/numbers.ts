@@ -22,12 +22,14 @@ export function statedNumbers(text: string): Set<number> {
 }
 
 /**
- * Chart values that the deck's brief does not state. A model asked for a chart can fill it with
- * plausible numbers; this flags them so a person can check. Values worked out from the brief
- * (a sum, a growth rate applied) are flagged too: the check cannot tell them from invented ones.
+ * Chart values that the deck's brief, or the document it was made from, does not state. A model
+ * asked for a chart can fill it with plausible numbers; this flags them so a person can check.
+ * Values worked out from the brief (a sum, a growth rate applied) are flagged too: the check
+ * cannot tell them from invented ones.
  */
 export function unstatedChartValues(manifest: TemplateManifest, deck: DeckSpec): Issue[] {
-  const stated = statedNumbers(deck.brief ?? '');
+  // A deck made from a document may chart the figures the document states.
+  const stated = statedNumbers(deck.document?.trim() ? `${deck.brief ?? ''}\n${deck.document}` : (deck.brief ?? ''));
   const issues: Issue[] = [];
   deck.slides.forEach((slide, index) => {
     const pattern = manifest.patterns.find((candidate) => candidate.id === slide.pattern);

@@ -114,17 +114,18 @@ export function freeOnOffer(template: Template, context: CatalogContext, deck: P
  *
  * `lengths` gives texts the length a person asked for, in characters, by slot name: the slide is
  * set out for them, and their budgets say what their boxes hold at that length (length.ts says
- * what the writer is then told).
+ * what the writer is then told). `paragraphs` gives some of them the number of paragraphs they
+ * will have, where that is known: a text that code fills is set out as it will be.
  */
 export function freeWritePattern(
   template: Template,
   deck: Pick<DeckSpec, 'direction' | 'textScale'>,
-  entry: { blocks: readonly FreeBlockKind[]; arrange?: FreeArrange | undefined; base?: string | undefined; lengths?: Readonly<Record<string, number>> | undefined },
+  entry: { blocks: readonly FreeBlockKind[]; arrange?: FreeArrange | undefined; base?: string | undefined; lengths?: Readonly<Record<string, number>> | undefined; paragraphs?: Readonly<Record<string, number>> | undefined },
   context: CatalogContext,
   skip?: ReadonlySet<string>,
   withParts?: readonly string[],
 ): { pattern: UsablePattern; base: string } | { reason: string } {
-  const planned = freePattern(template, deck, { blocks: [...entry.blocks], arrange: entry.arrange, base: entry.base, lengths: entry.lengths }, context.icons.length > 0, withParts);
+  const planned = freePattern(template, deck, { blocks: [...entry.blocks], arrange: entry.arrange, base: entry.base, lengths: entry.lengths, paragraphs: entry.paragraphs }, context.icons.length > 0, withParts);
   if (typeof planned === 'string') return { reason: `cannot be made from this template: ${planned}` };
   const photos = entry.blocks.filter((kind) => kind === 'photo').length;
   const slots = planned.pattern.slots.map((slot): SlotDef => {

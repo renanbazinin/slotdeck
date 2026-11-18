@@ -131,6 +131,13 @@ It was tied to reasoning. With the model's default reasoning, a request for a te
 24 calls. With light reasoning it did not run away in 18 calls, and each took 4 seconds instead of about 35.
 That is why planning requests carry `effort: 'low'`.
 
+A long reasoning before a short answer can also fill the limit by itself, where the model counts reasoning
+against it. A writing request whose answer was about 550 tokens took 5,300 to 10,900 reasoning tokens, and one
+send in five was cut off at its limit of 11,334: a normal answer, cut off part of the way through. Asked again
+with light reasoning it took none, and every answer was complete. It is no setting for the first send of every
+request, though: where the writer copied a passage of 55 words into a layout's two columns, it kept 41 to 44 of
+them with light reasoning and 46 to 50 with the default.
+
 So a provider should do three things:
 
 1. **Use light reasoning when a request says `effort: 'low'`**, if your model has such a setting.
@@ -138,27 +145,31 @@ So a provider should do three things:
    ceiling for that answer (for an outline of six slides, 1,360 tokens). Pass it to your model as its output
    limit. If your model counts reasoning tokens against the same limit, add room for them. When a request
    carries no estimate, use a default of your own rather than no limit.
-3. **Ask once more when an answer is cut off at the limit.** A cut-off answer is not valid JSON. Retry the same
-   request once, and throw if it is cut off again.
+3. **Ask once more, with light reasoning, when an answer is cut off at the limit.** A cut-off answer is not
+   valid JSON. Send the request once more with the same limit and your model's light reasoning setting, and
+   throw if it is cut off again. The first send keeps the reasoning of point 1.
 
 ```ts
 async generateJson({ system, prompt, schema, maxOutputTokens, effort, signal }) {
   const limit = (maxOutputTokens ?? 16_000) + 8_000; // room for reasoning, if your model counts it here
   const reasoning = effort === 'low' ? 'low' : undefined; // whatever your model calls its light setting
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    const answer = await callModel({ system, prompt, schema, limit, reasoning, signal });
-    if (!answer.cutOffAtLimit) return JSON.parse(answer.text);
-  }
+  const answer = await callModel({ system, prompt, schema, limit, reasoning, signal });
+  if (!answer.cutOffAtLimit) return JSON.parse(answer.text);
+  // Cut off: once more with light reasoning, which leaves the limit to the answer.
+  const again = await callModel({ system, prompt, schema, limit, reasoning: 'low', signal });
+  if (!again.cutOffAtLimit) return JSON.parse(again.text);
   throw new Error(`The model's answer was cut off at ${limit} tokens twice`);
 }
 ```
 
 The included Gemini adapter does all three. Its limit is the request's estimate plus 8,192 tokens for reasoning
-(24,576 when there is no estimate, or its own `maxOutputTokens` option when set). It sends a cut-off request
-once more. It uses thinking level `low` for requests with `effort: 'low'`, unless `thinkingLevel` is set on the
-adapter, which then applies to every request. It also sends a request once more after a server error (500 to
-504) or when the service's recitation filter blocks an ordinary answer, which happens at random; a bad key, a
-quota or a bad request is not repeated.
+(24,576 when there is no estimate, or its own `maxOutputTokens` option when set). It uses thinking level `low`
+for requests with `effort: 'low'`, unless `thinkingLevel` is set on the adapter, which then applies to every
+request. It sends a cut-off request once more with the same limit and thinking level `low`, or with the
+adapter's `thinkingLevel` when one is set; the first send is as before. When the answer is cut off again, the
+error says what filled the limit the second time, reasoning or the answer itself, where the service's counts
+show it. It also sends a request once more after a server error (500 to 504) or when the service's recitation
+filter blocks an ordinary answer, which happens at random; a bad key, a quota or a bad request is not repeated.
 
 ### Timeouts and cancellation
 
@@ -248,7 +259,7 @@ Options of both:
 
 Only for `gemini`: `thinkingLevel` (`minimal`, `low`, `medium`, `high`) and `maxOutputTokens`, the output limit
 of a request with reasoning included. By default the limit is the request's own estimate plus 8,192 tokens, or
-24,576 when the request has none.
+24,576 when the request has none. Set on the adapter, it replaces the limit of every request, larger or smaller.
 
 Only for `geminiImages`: `imageSize` (`512`, `1K`, `2K`, `4K`; default `1K`) and `style`, a sentence appended to
 every prompt, such as a house photo style.

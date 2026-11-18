@@ -21,6 +21,8 @@ the template's own slides and fills them, so the design is never redrawn.
   a chart beside three cards, twelve charts, two hundred. The code lays such a **free slide** out on the
   template's own frame, in the template's own text styles. A deck, or a single slide, may also ask for other
   **colours** than the template's.
+- **The person's own text.** Keeps the text a person gives or asks for: a long text is set smaller on its
+  slide, and a deck can carry a document in its own words.
 - **A studio for templates.** A model drafts the manifest that describes a template; you correct it by hand or
   by instruction; the code checks every change against the pptx.
 
@@ -142,6 +144,12 @@ contains figures. In a live run without this guard the model filled such a slide
 `numberPatterns: 'always'` to offer them regardless, or `'never'` to rule them out. Chart values the brief does
 not state come back as warnings (`chart values not stated in the brief: 89`).
 
+An amount of text a person asks for ("500 words on each slide") stays on its slide: a slide that cannot hold it
+at the template's text size becomes a free slide of that text, set smaller down to the least size that reads.
+A document passed as `brief.document` is split into numbered passages, and the slides carry them word for
+word, in order. See "Asking for an amount of text" and "Making a deck from a document" in
+[docs/generating.md](docs/generating.md).
+
 A wish about the kind of slides, such as "text only" or "no tables", decides which patterns may be used and
 comes before variety. For a deck of text and nothing else, set `textOnly: true` on the brief (`text_only` in the
 chat tool): only the template's plain text patterns are then offered.
@@ -212,8 +220,8 @@ The model only ever handles ids and short summaries. Everything else is kept in 
 
 | Key | Content | Typical size |
 | --- | --- | --- |
-| `plan/<id>.json` | A plan: the brief and the slide list | 1 KB |
-| `deck/<id>.json` | A deck: all text, and for each picture its id and description | 4 KB |
+| `plan/<id>.json` | A plan: the brief and the slide list, and the person's text when one was named | 1 KB, plus the text |
+| `deck/<id>.json` | A deck: all text, and for each picture its id and description, and the person's text when one was named | 4 KB, plus the text |
 | `asset/<id>` | One picture | tens of KB to 1 MB |
 | `pptx/<id>.pptx` | The rendered file | 1 MB and up |
 

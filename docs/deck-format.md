@@ -92,6 +92,8 @@ manifest.
 | `layouts` | `PatternDesign[]` | no | Layouts made for this deck (see "New layouts for a deck" in [generating.md](generating.md)). Slides use them by their `id`, like the template's patterns. |
 | `colors` | `DeckColors` | no | Colours in place of the template's, for every slide: `{ "accent": "1565C0" }`. See [colors.md](colors.md). |
 | `patterns` | string[] | no | The only patterns the deck was asked to use, by id. A wish the planner keeps to when the deck is changed later; rendering and validation do not look at it. See "Asking for a kind of slide" in [generating.md](generating.md). |
+| `document` | string | no | The document the deck was made from (`Brief.document`), word for word. A later change draws on it; rendering and validation do not look at it. See "Making a deck from a document" in [generating.md](generating.md). |
+| `documentLanguage` | string | no | BCP 47 tag of the language the document is written in, as the planner read it. A change sets the document's text into a slide by code only where this is the deck's language. |
 
 A deck without `colors`, `patterns` and free slides renders to the same bytes as before 0.6.0, unless that file did not open in PowerPoint.
 
@@ -104,8 +106,9 @@ A deck without `colors`, `patterns` and free slides renders to the same bytes as
 | `items` | integer | no | Only for a pattern with a row or grid of items: how many items this slide has. Defaults to the number drawn on the template slide. Must be within the pattern's range. |
 | `colors` | `DeckColors` | no | Colours for this slide alone, in place of the deck's. See [colors.md](colors.md). |
 | `blocks` | array of kinds | no | Makes the slide a free slide: one the software lays out itself from these blocks, such as `["chart", "chart", "note"]`. With it go `arrange` and `base`. See "Free slides" below. |
-| `arrange` | `{ columns?, lead? }` | no | A free slide only: wishes about how its blocks are set out. See [free-slides.md](free-slides.md). |
+| `arrange` | `{ columns?, lead?, dense? }` | no | A free slide only: wishes about how its blocks are set out. `dense: true`, set by the planner, marks a long text a person asked to have whole: where it is too long for the template's size it is set smaller, down to the least size that reads. See "A long text a person asked for" in [free-slides.md](free-slides.md). |
 | `base` | string | no | A free slide only: the id of the pattern whose frame it stands on. Left out, the template's usual one. |
+| `passages` | integer[] | no | A deck made from a document: the passages of it this slide carries, by number from 1, as `documentPassages` numbers them. Rendering does not read it. |
 
 ## Slot values
 

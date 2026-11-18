@@ -3,16 +3,18 @@ export { editDeck, generateDeck } from './generate.ts';
 export type { EditDeckOptions, EditDeckResult, GenerateOptions, GenerateProgress, GenerateResult } from './generate.ts';
 
 // Tools for a chat model: plan, change the plan, create, change the deck.
-export { TOOL_NAMES, presentationTools, storeKeys } from './tools.ts';
-export type { PresentationTools, PresentationToolsOptions, ToolDefinition, ToolResult } from './tools.ts';
+export { TOOL_NAMES, describeDocuments, presentationTools, storeKeys } from './tools.ts';
+export type { ChatDocument, PresentationTools, PresentationToolsOptions, ToolCallContext, ToolDefinition, ToolResult } from './tools.ts';
 export { memoryStore } from './store.ts';
 export type { BlobStore } from './store.ts';
 
 // The steps of generateDeck, usable on their own.
-export { PlanError, composeLayouts, directionOf, editPlan, planDeck, planOutline, writeDeck } from './plan/plan.ts';
-export type { Brief, DeckPlan, OutlineEntry, PlanOptions, PlanProgress, PlanResult, PlanSettings } from './plan/plan.ts';
+export { PlanError, composeLayouts, directionOf, editPlan, planDeck, planOutline, planTextFit, writeDeck } from './plan/plan.ts';
+export type { Brief, DeckPlan, OutlineEntry, PlanOptions, PlanProgress, PlanResult, PlanSettings, SlideTextFit } from './plan/plan.ts';
 export type { ComposeLayoutsResult, FailedLayout, MadeLayout } from './plan/layouts.ts';
-export { planEdit, recolorDeck } from './plan/edit.ts';
+export { MOST_DOCUMENT_CHARS, documentPassages } from './plan/document.ts';
+export type { DocumentPassage } from './plan/document.ts';
+export { TextCutError, planEdit, recolorDeck } from './plan/edit.ts';
 export type { EditOptions, EditResult } from './plan/edit.ts';
 export { resolveAssets } from './plan/assets.ts';
 export type { ResolveOptions } from './plan/assets.ts';

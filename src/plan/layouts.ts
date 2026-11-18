@@ -189,8 +189,9 @@ export async function composeForPlan(
   const slideLayout = new Map(made.flatMap((layout) => layout.slides.map((number) => [number, layout.pattern] as const)));
   const slides = plan.slides.map((entry, index): OutlineEntry => {
     const pattern = slideLayout.get(index + 1);
-    // A row made for the slide holds as many items as it was drawn with. The length asked for it stays.
-    return pattern ? { pattern, purpose: entry.purpose, ...(entry.words !== undefined ? { words: entry.words } : {}) } : entry;
+    // A row made for the slide holds as many items as it was drawn with. The length asked for it
+    // stays, and so do the passages of a document it carries.
+    return pattern ? { pattern, purpose: entry.purpose, ...(entry.words !== undefined ? { words: entry.words } : {}), ...(entry.passages !== undefined ? { passages: entry.passages } : {}) } : entry;
   });
   return { plan: { ...plan, slides, layouts: [...prior, ...designs] }, made, failed };
 }

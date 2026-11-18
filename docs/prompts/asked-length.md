@@ -4,6 +4,8 @@ This is a prompt for a coding agent working in an app whose chat makes presentat
 0.6.0 a person who asked for "200 words" on a slide got what the layout said it holds: 76 words, on a template
 in Hebrew. From 0.6.1 the planner reads the amount, gives the text a slide that holds it (a layout, a free slide
 set out for that length, or several slides that share it), and tells the writer the length.
+From 0.6.2 a slide keeps the amount on its own slide, set smaller where it must, and is never spread over
+more slides: for an app on 0.6.2, hand over [own-text.md](own-text.md) instead.
 
 Paste everything below the line to the agent. It is on by default, so the prompt asks for little: the upgrade,
 and the few places where the app's own code or prompts can stand between the person's wish and the planner. No

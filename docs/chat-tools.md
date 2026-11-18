@@ -4,7 +4,7 @@
 talks to the person; the tools do the work; the person approves a plan before anything is written.
 
 ```ts
-import { presentationTools, TOOL_NAMES, storeKeys, memoryStore } from 'slotdeck';
+import { presentationTools, describeDocuments, TOOL_NAMES, storeKeys, memoryStore } from 'slotdeck';
 import { directoryStore } from 'slotdeck/node';
 ```
 
@@ -12,7 +12,7 @@ import { directoryStore } from 'slotdeck/node';
 
 | Tool name | What it does | Model calls inside |
 | --- | --- | --- |
-| `plan_presentation` | Decides the slides, the layout of each and the point each makes. Writes nothing yet. | 1 |
+| `plan_presentation` | Decides the slides, the layout of each and the point each makes. Writes nothing yet. | 1; 2 when a named text only asks for a presentation |
 | `edit_presentation_plan` | Changes a plan by instruction. Returns a new plan with a new id. | 1; none for a colour alone |
 | `create_presentation` | Writes the approved plan's content, makes its pictures, renders the file. | 1, plus repairs, plus one per photo; more for a free slide of over nine parts |
 | `edit_presentation` | Changes a created presentation by instruction. Returns a new presentation with a new id. | 1 or 2, plus repairs; none for a colour alone; more when many parts of a free slide of over nine parts change |
@@ -47,6 +47,7 @@ const tools = presentationTools({
   preview,                                      // optional PreviewProvider: draws every presentation the tools make
   newId: (kind) => `${kind}_${crypto.randomUUID()}`, // optional; default is a short random id
   onProgress: (event, tool) => console.log(tool, event.stage), // optional
+  documents: true,                              // optional: the plan tool takes the names of texts the person gave (see below); off unless true
 });
 ```
 
@@ -84,6 +85,57 @@ the same `template` object costs nothing. An app that loads the template anew an
 chat turn pays it on every turn, also on turns that call no tool: load the template once and keep it. With
 `free: false`, or a `patterns` list that does not name `free`, nothing is worked out.
 
+### Texts the person gave
+
+A person pastes a report or attaches a file and wants it on the slides. With `documents: true` the plan tool
+takes `documents`: the names of such texts. The slides then carry every part of them, in their own words and
+order, and the planner sets a long text smaller where it must. Without the option the chat model can only
+retell the text in `topic`, and the slides sum it up.
+
+The app builds the list of the conversation's texts on every turn, passes it with every tool call, and puts
+the line `describeDocuments` makes into the chat's system prompt:
+
+```ts
+const list: ChatDocument[] = [
+  { name: 'risk-review.docx', text: textOfTheFile },   // an attached file whose text the app has, under its name
+  { name: 'pasted text 1', text: longMessage },         // a message of 1,000 characters or more, whole
+];
+const system = [appPrompt, describeDocuments(list)].filter(Boolean).join('\n\n');
+const result = await tools.call(call.name, call.arguments, { signal, documents: list });
+```
+
+Build the list from the whole conversation, oldest first: each file whose text the app has, under its file
+name, and each message of the person's of 1,000 characters or more as "pasted text 1", "pasted text 2", so
+that a message keeps its name on every turn. A message's length and text leave out the text of a file that
+came with it, which is listed under the file's name. Take a text as the person gave it, with its line breaks,
+which mark its paragraphs, lists and headings. No two texts have the same name. `describeDocuments` lists the
+last ten, each with its words and first words, and returns `''` for an empty list.
+
+A shorter paste is not listed. With the option, the `instructions` argument says that a text of the person's
+that the app does not list goes there whole and word for word, in quotation marks, and the error for a name
+the list does not have says so too.
+
+The plan tool reads a name exactly, then without regard to case, then as the beginning of one listed name
+("plan 2027" finds "Plan 2027.docx"), each time in one Unicode form and without direction marks: a file name
+in decomposed letters is found by the same name composed. It reads only the list on the call: the tools are
+built once, and the list belongs to the conversation. Any number of texts may be named. A text named twice, or
+under two names (a file and the message it came in), is carried once: a named text whose words all come in a
+row in another named text is left out. A name it cannot find, an empty text and more than 12,000
+characters in all are errors the chat model can act on (see "Errors"). A new text for an existing plan or
+presentation needs a new plan: the tools that change one take no `documents`.
+
+When no text is named, the plan tool checks `topic` and `instructions`, each on its own, against each listed
+text of 1,500 characters or more. A shorter message is most often the request itself. An argument that copies
+a listed text (120 or more runs of four words from it, at least half of the argument's runs) is an error that
+names the argument and tells the chat model to name the text instead. A topic and instructions that retell
+one (40 or more words, three quarters of them words of the text) plan, and the output says so in
+`not_on_slides`.
+
+A named text of which the planner puts no part on a slide only asks for the presentation: a long request,
+listed and named. The plan is then made again with that text as `instructions` and no document, which is a
+second planning call, and `next` begins `"pasted text 1" only asks for a presentation, so the planner took it
+as instructions, and no slide carries it word for word.`
+
 ## Giving the tools to the chat model
 
 `tools.definitions` is an array of `{ name, description, parameters }`, where `parameters` is a JSON Schema
@@ -100,7 +152,7 @@ const declarations = tools.definitions.map((tool) => ({ type: 'function', functi
 When the chat model calls a tool, pass the name and the parsed arguments to `tools.call`:
 
 ```ts
-const result = await tools.call(call.name, call.arguments, { signal });
+const result = await tools.call(call.name, call.arguments, { signal }); // and documents, with that option
 // result.output  -> send this back to the chat model as the tool's result (JSON, small, no binary data)
 // result.plan    -> the DeckPlan, when the tool made or changed one (for your own UI)
 // result.deck    -> the DeckSpec, when the tool made or changed one
@@ -120,12 +172,13 @@ Arguments:
 | Name | Type | Required | Meaning |
 | --- | --- | --- | --- |
 | `topic` | string | yes | What the presentation is about, with every fact, figure and name the person gave. Numbers not stated here will not appear on slides. |
-| `slide_count` | integer 1 to 30 | no | Number of slides. The chat model must set it whenever the person names a number: the planner does not read one out of the topic, and plans 6 to 10 slides without it. A number over 30 is taken as 30. |
+| `slide_count` | integer 1 to 30 | no | Number of slides in all. The chat model must set it whenever the person names a number of slides: the planner does not read one out of the topic or the instructions, and chooses the number without it. With it the presentation has exactly that many slides: long text is set smaller, and no slide is added. Where no free slide of text is on offer, the description says instead that a slide holds what its layout holds, and that the plan says what is cut. A number over 30 is taken as 30. |
 | `language` | string | no | BCP 47 tag, such as `he` or `en`. Defaults to the template's language. |
 | `image_density` | `none`, `low`, `medium`, `high` | no | How many slides carry a photo. Default `medium`. Forced to `none` when no photos can be made. |
 | `text_size` | `normal`, `large`, `x-large` | no | Size of body text. Default `normal`. |
 | `text_only` | boolean | no | `true` when the person asks for a presentation of text only. Every slide is then plain text: a title with paragraphs or a list, with no pictures, icons, cards, figures, tables or charts. Only the template's plain text layouts are used, and free slides of text, lists, quotations and notes where free slides are on offer. Not together with `layouts`: the layouts named then decide, and the plan is not marked text only. |
-| `instructions` | string | no | Everything else the person asked for, in their own words: audience, tone, and every wish about how slides look or are arranged that has no argument of its own ("three columns", "no cover slide"). |
+| `instructions` | string | no | Everything else the person asked for, in their own words: audience, tone, every amount of text they ask for ("500 words on each slide"), and every wish about how slides look or are arranged that has no argument of its own ("three columns", "no cover slide"). With the `documents` option, also a text of the person's for the slides that the app does not list (a short paste), whole and word for word, in quotation marks. |
+| `documents` | array of strings | no | Only with the `documents` option: the names of the texts of the conversation the presentation is made from, as the app lists them. The slides carry every part of them in their own words. Named also for a summary or some parts of a text, which `instructions` then says. `topic` is then a sentence or two on what the presentation is for, and `language` the language of the text unless the person asks for another. |
 | `accent_color` | string | no | Only when the person asks for a colour: the main colour as six hex digits, such as `1E6B3A`, in place of the template's. |
 | `layouts` | array of layout ids | no | Only when the person limits the layouts: the only layouts the presentation may use, the first and last slides too. The ids on offer are the layouts these tools can plan with, and `free` where free slides are on offer: a layout the `patterns` option leaves out, or one that needs icons, photos, a graphic or a deck field the app did not supply, is not among them. Naming one all the same is an error that says which and why. A number layout named for a topic without a figure is an error too. |
 
@@ -165,12 +218,36 @@ where it keeps the template's inside a coloured presentation).
 
 A slide the person asked an amount of text for ("200 words on the expansion", passed on in `instructions` or
 `topic`) has `"words"` in its line: the words its text will have. The plan gives such a slide the room for the
-text: a layout that holds it, a free slide set out for it, or several slides that share it, each with its share
-and its purpose numbered "(1/3)". See "Asking for an amount of text" in [generating.md](generating.md).
+text on that slide: a layout that holds it, or a free slide set out for it, set smaller where it must. A slide
+asked for words is never spread over more slides. See "Asking for an amount of text" in
+[generating.md](generating.md).
 
 ```json
 { "number": 2, "layout": "free", "layout_description": "A slide laid out for this presentation: a text.", "purpose": "Our expansion north.", "words": 200, "free_layout": true }
 ```
+
+A plan with words or a text the person gave says, before anything is written, what each such slide will carry.
+Each of these is present only when it applies:
+
+| Field | Where | Meaning |
+| --- | --- | --- |
+| `passages` | slide | The parts of the person's text the slide carries, as `"p3-p5"`. |
+| `text_words` | slide | The words of those parts. |
+| `text_pt` | slide | The size its running text is set at, in points, where that is under four fifths of the template's size. |
+| `holds_words` | slide | The words it keeps, where even the least size that reads cannot hold its text: the rest is cut. |
+| `document` | plan | `{ "passages": 9, "words": 491, "left_out": "p1" }`: the person's text, and the parts no slide carries. |
+| `note` | plan | What the chat model is to tell the person before the presentation is made: the slides that are cut, then those set in much smaller type. |
+| `not_on_slides` | plan | The listed texts the topic retells, which no slide will carry word for word. `next` then says so first. |
+
+```json
+{
+  "slides": [{ "number": 1, "layout": "free", "purpose": "Our plan.", "words": 1000, "text_pt": 9, "holds_words": 815, "free_layout": true }],
+  "note": "Not all the text fits: slide 1 holds about 815 of its 1000 words (text at 9 pt). The rest will be cut. Tell the user before creating the presentation, and offer more slides or a shorter text."
+}
+```
+
+Where a slide has words and the call had no `slide_count`, `next` begins: `No slide_count was given, so the
+planner chose 6 slides. If the user named a number of slides, plan again with slide_count.`
 
 ### `edit_presentation_plan`
 
@@ -179,7 +256,7 @@ Arguments:
 | Name | Type | Required | Meaning |
 | --- | --- | --- | --- |
 | `plan_id` | string | yes | The plan to change. |
-| `instruction` | string | no | What to change, in the person's words, with any new facts they gave. It may be left out or empty when `accent_color` is given: the tool then writes the colour to the plan and calls no model. With neither, the call is an error. |
+| `instruction` | string | no | What to change, in the person's words, with any new facts they gave. Text the person gives for a slide goes in whole and word for word, in quotation marks. It may be left out or empty when `accent_color` is given: the tool then writes the colour to the plan and calls no model. With neither, the call is an error. |
 | `accent_color` | string | no | Only when the person asks for a colour: six hex digits, or `template` to return to the template's colours. |
 | `layouts` | array of layout ids | no | Only when the person changes which layouts may be used. Slides that are planned already keep their layout unless the instruction says otherwise. An empty array lifts the limit; an argument that names no layout sets nothing. |
 
@@ -208,6 +285,18 @@ Output:
 
 `file` is the store key of the rendered pptx. `warnings` is present only when there are any.
 
+A presentation made from a text the person gave has `"document": { "words": 491, "kept_words": 488 }`, with
+`"left_out"` naming the parts no slide carries. A slide that holds its part of the text has it set word for word
+by the software. A presentation in another language than the text has `"translated": true` in place of
+`kept_words`: the words of a translation are not the text's, so none are counted.
+
+A slide that holds less than was asked for it, or less than its part of the person's text, is cut, and
+`warnings` says so, as the plan's `note` did before: `slide 1: 1000 words were asked for this slide, and it holds
+about 527 even with its text set small, at 7 pt: the rest is cut. Ask for the text over more slides, or for a
+shorter one`. So does a slide written well short of the words asked (`... and it has about 380: ask for it again
+to have them all`), and one that kept too few of the words of the person's text. The chat model passes these
+on. See "Deck warnings" in [troubleshooting.md](troubleshooting.md).
+
 A free slide is listed with what it is made of, and a warning about one of its parts names the part by its
 number on the slide and its kind:
 
@@ -229,10 +318,11 @@ Arguments:
 | Name | Type | Required | Meaning |
 | --- | --- | --- | --- |
 | `presentation_id` | string | yes | The presentation to change. |
-| `instruction` | string | no | What to change, in the person's words. It may be left out when `accent_color` is given: the tool then recolours and renders, and calls no model. |
+| `instruction` | string | no | What to change, in the person's words. Text the person gives for a slide goes in whole and word for word, in quotation marks. It may be left out when `accent_color` is given: the tool then recolours and renders, and calls no model. |
 | `accent_color` | string | no | Only when the person asks for a colour: six hex digits, or `template` to return to the template's colours. With `color_slides`, `template` returns those slides to the template's colours, also inside a presentation that has a colour of its own. |
 | `color_slides` | array of integers | no | The slides to colour, by number, when the colour is for some slides only. Left out, the whole presentation takes it. It needs `accent_color`: without one the call is an error. The numbers are those of the presentation before the change; a slide the same change removes is named in `warnings`. |
 | `layouts` | array of layout ids | no | Only when the person changes which layouts may be used. Slides that are there already keep their layout unless the instruction says otherwise. An empty array lifts the limit; an argument that names no layout sets nothing. |
+| `accept_cut` | boolean | no | Only after the person accepted that a slide's text is cut, when an earlier call with the same instruction answered with a `note` saying so. Left out, a change that would cut a slide's text is not made. |
 
 Output: the same shape as `create_presentation` with a new `presentation_id`, plus:
 
@@ -244,9 +334,22 @@ Output: the same shape as `create_presentation` with a new `presentation_id`, pl
 changed with nothing to write: a part taken off, three side by side.
 
 An instruction that asks for an amount of text on a slide ("make slide 2 about 200 words") gives that slide
-the room for it: a layout that holds the text, or a free slide set out for it. Where no slide holds that much,
-the text goes over new slides after it, and `warnings` says so, as in
-`the 200 words asked for slide 2 go over slides 2 to 4: one slide holds about 55`.
+the room for it: a layout that holds the text, or a free slide set out for it, set smaller where it must. No
+slide is added for it. Where even the least size that reads cannot hold the text, nothing is changed and
+nothing is stored. The output is then:
+
+```json
+{
+  "note": "Nothing was changed: slide 2 would hold about 815 of its 1500 words (text at 9 pt). Ask for more slides or a shorter text, or accept that the rest is cut.",
+  "next": "Nothing was written. Tell the user what the note says. If they accept that the rest is cut, call edit_presentation again with the same instruction and accept_cut: true; otherwise change the request (more slides, a shorter text)."
+}
+```
+
+So does any other change that would leave a slide less of its text than it carries, such as a part added
+beside a long text. A change that asks no length of a slide and keeps its parts and passages (other words, a
+new title, another language) is never stopped: its text is written to what it holds.
+
+With `accept_cut: true` the change is made, the slide holds what it can, and `warnings` says the rest is cut.
 
 A change that was planned for a part of a free slide and did not come back from the writer is in `warnings`,
 such as `slide 3: nothing was written for 1 part, and it stays as it was`. So is a change the plan spoke of
@@ -277,6 +380,18 @@ the title of a slide of ten parts or more but does not remove it. See "Free slid
 Other messages: `"topic" is required`, `"instruction" is required unless a colour is given`,
 `There is no presentation with id "..."`, `Unknown tool "..."`, and the messages of `PlanError` and
 `DeckValidationError` (see [generating.md](generating.md)).
+
+With the `documents` option, `plan_presentation` answers these before any model is asked:
+
+| Case | Message |
+| --- | --- |
+| A name the list does not have | `"documents" names a text the app does not have: "budget.xlsx". The texts the app lists for this conversation are "pasted text 1" and "Garden notes.docx": use those names. A text the user pasted in a short message is not listed: pass it in instructions, whole and word for word, in quotation marks. A file that is not listed could not be read: tell the user.` With an empty list the second sentence is `The app lists no text for this conversation.` |
+| An empty text | `The text "notes.txt" is empty: tell the user it could not be read.` |
+| Too much text | `The text is 15230 characters, and a presentation is made from at most 12000 (about 1,800 words). Ask the user to paste the part the presentation is about, and name that.` |
+| A topic or instructions that copies a listed text | `"topic" copies the text "pasted text 1". Name it in documents instead and keep topic to what the presentation is for: the planner reads the text word for word. If the user wants a presentation about it or a summary of it, name it all the same and say so in instructions.` It begins `"instructions" copies` where that argument is the copy. |
+
+A named text that only asks for a presentation is no error: the plan is made again with it as instructions
+(see "Texts the person gave").
 
 What your own parts throw comes back as its message, unchanged: the `llm`, the `images` provider, the `store`
 and the `review`. A network that fails (`fetch failed`) is told to the chat model in those words.
@@ -309,8 +424,8 @@ interface BlobStore {
 
 | Key | Content | Typical size |
 | --- | --- | --- |
-| `plan/<id>.json` | A plan: the brief and the slide list | 1 KB |
-| `deck/<id>.json` | A deck: all text, and for each picture its id and description | 4 KB |
+| `plan/<id>.json` | A plan: the brief and the slide list, and the person's text when one was named | 1 KB, plus the text |
+| `deck/<id>.json` | A deck: all text, and for each picture its id and description, and the person's text when one was named | 4 KB, plus the text |
 | `asset/<id>` | One generated picture | tens of KB to 1 MB |
 | `pptx/<id>.pptx` | The rendered file | hundreds of KB and up |
 | `preview/<id>/slide-01.svg` | A picture of one slide, when the tools have a `preview` provider. The extension follows the provider: `svg`, `png` | tens of KB each |
@@ -394,7 +509,15 @@ async function runTurn(messages) {
 
 The tool descriptions already tell the model the order to work in. It helps to add, in your own system prompt:
 
-- Put every fact, figure and name the person gave into `topic`. Numbers that are not in `topic` will not be used.
+- When the person wants their own text on the slides, have the chat model name it in `documents` and keep
+  `topic` to what the presentation is for. A shorter paste, which is not listed, goes in `instructions`, whole
+  and word for word, in quotation marks. Otherwise put every fact, figure and name the person gave into
+  `topic`. A number that is in none of these is not used.
+- Set `slide_count` whenever the person names a number of slides, and pass an amount of text on in
+  `instructions` as they said it. The chat model should not split slides or shorten text itself: the planner
+  sets long text smaller.
+- When a tool's result has `note`, `not_on_slides` or `warnings`, the chat model tells the person before it goes
+  on. It sets `accept_cut` only after the person accepted the cut.
 - Pass wishes about the kind of slides on, in the person's words ("no tables", "only cards"), in `topic` or
   `instructions`. For a presentation of text only, set `text_only: true`: "no pictures" alone
   (`image_density: "none"`) still allows cards, tables and charts.

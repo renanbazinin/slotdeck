@@ -4,6 +4,7 @@ import type { LayoutMode } from '../deck/validate.ts';
 import type { JsonSchema } from '../llm/provider.ts';
 import { defaultItems, effectiveSlots, itemRange, rowLayout, tableAtScale, textBudget } from '../template/manifest.ts';
 import type { ChartSlotDef, ImageSlotDef, PatternDef, SlotDef, TableSlotDef, TemplateManifest, TextSlotDef } from '../template/manifest.ts';
+import { askedSlidesProperty, documentLanguageProperty, leftOutProperty, passagesProperty } from './document.ts';
 import { MOST_WORDS, WORDS_NOTE } from './length.ts';
 
 /** An icon the app offers; the planning model picks from these by id. */
@@ -386,13 +387,18 @@ export const SHOWS_MAIN_NOTE = 'Only for free: where the first part stands when 
  * varies, how many it has. A new plan and a change to a plan ask for the same entry, so that what
  * one can say about a slide the other can too. With `free`, a slide may also be a free slide,
  * and the entry says what it is made of; without it the entry is what it was before free slides.
+ * With `document`, a deck made from a document of so many passages, each slide says which of them
+ * it carries.
  */
-export function outlineEntrySchema(catalog: Catalog, free?: FreeShows): JsonSchema {
+export function outlineEntrySchema(catalog: Catalog, free?: FreeShows, document?: { passages: number }): JsonSchema {
   const ids = catalog.patterns.map((pattern) => pattern.def.id);
   const purpose: JsonSchema = { type: 'string', description: 'The one point this slide makes: a single sentence of at most 25 words' };
   // An amount of text asked for a slide. Optional: most slides have none, and are planned as before.
   const words: JsonSchema = { type: 'integer', minimum: 1, maximum: MOST_WORDS, description: WORDS_NOTE };
-  if (!free) return { type: 'object', properties: { pattern: { type: 'string', enum: ids }, purpose, ...itemsProperty(catalog), words }, required: ['pattern', 'purpose'] };
+  // The passages of a document a slide carries, asked of every slide: [] says it carries none.
+  const passages: Record<string, JsonSchema> = document ? { passages: passagesProperty(document.passages) } : {};
+  const carries = document ? ['passages'] : [];
+  if (!free) return { type: 'object', properties: { pattern: { type: 'string', enum: ids }, purpose, ...itemsProperty(catalog), words, ...passages }, required: ['pattern', 'purpose', ...carries] };
 
   // A free slide names its parts where a pattern has its slots. The three properties are asked of
   // every slide, so that a model cannot choose `free` and leave its parts out.
@@ -416,8 +422,9 @@ export function outlineEntrySchema(catalog: Catalog, free?: FreeShows): JsonSche
       shows_main: { type: 'string', enum: [...SHOWS_MAIN], description: SHOWS_MAIN_NOTE },
       side_by_side: { type: 'integer', minimum: 0, description: 'Only for free, when the brief asks for a number of columns; 0 lets the software decide.' },
       words,
+      ...passages,
     },
-    required: ['pattern', 'purpose', 'shows', 'shows_main', 'side_by_side'],
+    required: ['pattern', 'purpose', 'shows', 'shows_main', 'side_by_side', ...carries],
   };
 }
 
@@ -426,7 +433,16 @@ export interface FreeShows {
   kinds: readonly FreeBlockKind[];
 }
 
-export function outlineSchema(catalog: Catalog, count: { min: number; max: number }, free?: FreeShows): JsonSchema {
+/**
+ * Schema of an outline. With `document`, a deck made from a document of so many passages: the
+ * answer also names the passages it leaves out, where the brief gave no number of slides
+ * (`askedSlides`) the number of slides the brief asks for in its words, and the language the
+ * document is written in.
+ */
+export function outlineSchema(catalog: Catalog, count: { min: number; max: number }, free?: FreeShows, document?: { passages: number; askedSlides: boolean }): JsonSchema {
+  const more: Record<string, JsonSchema> = document
+    ? { left_out: leftOutProperty(document.passages, 'brief'), ...(document.askedSlides ? { asked_slides: askedSlidesProperty('brief') } : {}), document_language: documentLanguageProperty }
+    : {};
   return {
     type: 'object',
     properties: {
@@ -435,10 +451,11 @@ export function outlineSchema(catalog: Catalog, count: { min: number; max: numbe
         type: 'array',
         minItems: count.min,
         maxItems: count.max,
-        items: outlineEntrySchema(catalog, free),
+        items: outlineEntrySchema(catalog, free, document ? { passages: document.passages } : undefined),
       },
+      ...more,
     },
-    required: ['title', 'slides'],
+    required: ['title', 'slides', ...Object.keys(more)],
   };
 }
 

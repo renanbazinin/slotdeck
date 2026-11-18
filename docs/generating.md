@@ -5,7 +5,7 @@ file and never positions anything: it chooses patterns from the manifest and wri
 a JSON schema built from the manifest.
 
 ```ts
-import { generateDeck, editDeck, planDeck, planOutline, editPlan, writeDeck, planEdit, resolveAssets, PlanError, DeckValidationError } from 'slotdeck';
+import { generateDeck, editDeck, planDeck, planOutline, editPlan, writeDeck, planEdit, planTextFit, resolveAssets, PlanError, TextCutError, DeckValidationError } from 'slotdeck';
 import type { Brief, PlanOptions, GenerateOptions, IconDef, AssetDef } from 'slotdeck';
 ```
 
@@ -39,6 +39,7 @@ It runs `planDeck`, then `resolveAssets`, then `renderDeck`.
 | `textOnly` | boolean | `false` | Plan every slide as plain text. Only the template's plain text patterns are offered, and free slides of text. See "Asking for a kind of slide" below. |
 | `patterns` | string[] | none | The only patterns the person asked for, by id, `free` among them for free slides. Every slide then uses one of them. Kept with the plan and the deck; a later change keeps to it unless it asks for another pattern. |
 | `colors` | `DeckColors` | none | Colours in place of the template's; copied to the deck. See [colors.md](colors.md). |
+| `document` | string | none | A document to make the deck from, word for word: a report, minutes, an article. The slides carry its own text, every part of it, in its order. `prompt` then says what the deck is for, and `instructions` any wish ("only the risks", "a short summary"). At most 12,000 characters (`MOST_DOCUMENT_CHARS`). Copied to the deck. See "Making a deck from a document" below. |
 
 ### Options (`GenerateOptions`)
 
@@ -158,7 +159,7 @@ Two things to know:
 A person may ask for an amount of text on a slide: "200 words on the expansion", "a paragraph of about 80
 words". Every slot says how much to write, in its description ("About 420 characters in all") and its limit,
 and without more the writer keeps to that: 200 words asked came out as 76. From 0.6.1 the planner reads such a
-wish and makes room for it.
+wish and makes room for it, and from 0.6.2 the text stays on the slide it was asked for.
 
 1. The outline gives the slide `words`: the number of words asked. A slide with no such wish has none, and is
    planned and written as before.
@@ -170,27 +171,173 @@ wish and makes room for it.
    - else, for a slide of plain text, the smallest layout of plain text that holds it;
    - else a free slide, where free slides are on offer, set out for that length: one text alone that long is
      set at the template's running-text size in two columns where it needs them, and its budget is what its
-     box then holds. A slide of a layout with a chart or a table keeps it beside the text.
-3. Where none holds it and the slide shows text alone, the text goes over as many slides as it needs, while
-   the deck may have more (`slideCount` up to its most, or ten more in a change), each with its share of the
-   words, counted in whole words, and its purpose numbered "(1/3)". A slide with a chart, a table, a photo or
-   cards is not repeated for its text: every copy would ask for that content again. Such a slide, and one in a
-   deck that may have no more slides, holds what it can.
+     box then holds. A slide of a layout with a chart or a table keeps it beside the text;
+   - else the same free slide set dense: its text alone, set smaller down to the least size that reads (9 pt on
+     a slide 13.33 inches wide, 7 pt on one 10 inches wide), in two or three columns in the larger room under
+     the title. A photo gives way. So do the texts of a plan's slide of several texts, where nothing is written
+     yet and they would be cut: they are one text (`planOutline`, `editPlan`). A list, a chart, a table or cards
+     do not, nor a second text of a deck's slide (`planEdit`).
+
+   A free slide of one text that carries an asked length is always marked dense (`arrange.dense`), so that the
+   paragraphs the writer chooses never overflow it; where its text fits at the template's size it is laid out
+   as before. See "A long text a person asked for" in [free-slides.md](free-slides.md).
+3. A slide asked for words is never spread over more slides. A text longer than a slide holds at the least size
+   is cut to what it holds, and the plan says so before anything is written (`planTextFit`, below). A slide
+   that keeps a chart, a table, a list, cards or a deck's second text holds what it can beside them.
 4. The writer is told the length before the rest of the slot's description, from which what it said of length
-   is taken out, in words and as a range of characters that starts at the length:
+   is taken out, in words and as a range of characters that starts at the length, or at 95% of what the slot
+   holds where that is less:
    `Write 200 words, as was asked: 1200 to 1370 characters in all`. A model writes short of a length it is told
-   "about", by a fifth. A long text with nothing else to say of itself is asked for in paragraphs. The slot's
-   limits stay as they are. A slide that holds less is told what it holds, and the deck gets a warning:
-   `200 words were asked for this slide, and it holds about 92: ask for the text over more slides, or for a shorter one`.
+   "about", by a fifth. A long text with nothing else to say of itself is asked for in paragraphs, at most 12 on
+   a dense slide, whose range ends where the text fits in any number of them. The slot's limits stay as they
+   are. A text written under 85% of the least it was told is sent back once; still short, the deck gets a
+   warning:
+   `500 words were asked for this slide, and it has about 380: ask for it again to have them all`. A slide that
+   holds less is told what it holds (`Write 527 words, 3080 to 3430 characters: of the 1000 words asked for this
+   slide, the most it holds`), and the deck gets a warning:
+   `200 words were asked for this slide, and it holds about 92: ask for the text over more slides, or for a shorter one`,
+   or on a slide set dense,
+   `1000 words were asked for this slide, and it holds about 527 even with its text set small, at 7 pt: the rest is cut. Ask for the text over more slides, or for a shorter one`.
+
+With free slides off a slide holds what its layout holds: no text is set smaller, no slide is added, and the
+rest of a long text is cut, which the plan says before writing.
+
+What to expect: 500 Hebrew words (about 3,250 characters) go on one slide 10 inches wide at 7 to 7.5 pt, which
+holds at most about 520 at 7 pt. 500 English words (about 3,000 characters) go on one slide 13.33 inches wide
+at 10.5 to 12 pt, which holds at most about 800 at 9 pt.
 
 ```ts
 const plan = await planOutline(template, { prompt: 'Our expansion north', instructions: 'One slide of 200 words of running text.', slideCount: 1 }, { llm });
-// plan.slides = [{ pattern: 'free', purpose: 'Our expansion north', words: 200, blocks: ['text'] }]
+// plan.slides = [{ pattern: 'free', purpose: 'Our expansion north', words: 200, blocks: ['text'], arrange: { dense: true } }]
 ```
 
 `words` is part of a plan an app keeps, from 1 to 3000. A change to the plan keeps it unless the request changes
-it, and `writeDeck` writes a plan that has it as above. A change to a deck reads it the same way: see "Editing a
-deck" below.
+it, and `writeDeck` writes a plan that has it as above. `editPlan` shows each such slide with its words, the size
+its text is set at where that is small, and the most it holds (`2. free (a text; 500 words; text at 7 pt; at
+most about 520 words): ...`), so that "make it longer" stays within what the slide holds. It adds no slide for a
+text unless the request asks for more slides, and "keep it to 2 slides" gives the two slides the words of
+those they take in. A change to a deck reads `words` the same way: see "Editing a deck" below.
+
+### Making a deck from a document
+
+A person who gives a report, minutes or an article and asks for slides wants that text on them, not a summary
+of it. Pass it as `document` (from 0.6.2), and keep `prompt` to what the deck is for:
+
+```ts
+const plan = await planOutline(template, { prompt: 'A briefing for the team on the office move', document: memo, language: 'en' }, { llm });
+// for example: plan.slides[1] = { pattern: 'free', purpose: 'Why we move', blocks: ['text'], arrange: { dense: true }, passages: [1, 2, 3] }
+const { deck } = await writeDeck(template, plan, { llm });
+// deck.document is the memo, and deck.slides[1].passages is [1, 2, 3]
+```
+
+**How the text is split.** Code splits the document into numbered passages, p1 to pN, the same way every time
+(`documentPassages`):
+
+- A line ends a paragraph. A line of 60 characters or more that ends with no stop goes on in the next one: a
+  paragraph broken where a page was.
+- A line that starts with `-`, `•`, a number or a letter followed by `.` or `)` is an item; items in a row are
+  one list. An `o` or a `§` followed by a tab is a bullet too: a word processor writes the bullets of a list
+  within a list so, and a slide shows them as `◦` and `▪`. A line with a tab between two of its cells, or with
+  two or more `|`, is a row; two rows or more on lines one after another are a table. A tab at the start of a
+  line only sets it in, and a tab after an item's marker is the item's, as text pasted from a word processor has
+  them. Tabs that set in every row of a table are no cells; one more, as the empty corner of a table pasted from
+  a spreadsheet, is an empty cell.
+- A line that starts with `#`, or a short line on its own (at most 80 characters and 12 words, with no stop at
+  its end, under 60 characters or with a blank line under it), is a heading over the passages after it. A line
+  right under a line of text with no stop at its end is no heading, and nor is the first of three short lines or
+  more with no stops, one under another: such a run, as a list typed without bullets, is text, all of it. A
+  short line over one other is a heading over it. Headings are not passages.
+- Short lines of one section (each under 120 characters) go together, up to 500 characters. A paragraph or a
+  list over 500 characters is cut at the ends of its sentences, or between its items, into even pieces. A table
+  is never cut. A document is cut into at most 150 passages.
+
+**The outline places them.** The outline is shown the document in its passages, with their sizes, and gives
+each slide those it carries (`OutlineEntry.passages`): every passage on one slide, in the document's order
+unless the brief asks for another. An opening, a closing or a section slide carries none. A passage goes in
+`left_out` only when the brief asks to leave that part out, or when it only asks for the presentation ("make two
+slides from this:"); what such a passage asks is read as part of the brief. Code puts right what the answer
+missed: a passage on two slides stays on the first, one on no slide joins the slide of the passage before it,
+and an answer that places more than half of the document nowhere is asked again once. One that still places
+none has the passages shared over its slides of content; with no number of slides and no such slide, over
+slides added for them, never more than the document has passages. The outline also says the language the
+document is written in, which the plan keeps (`documentLanguage`). A language the text's letters belie, with
+hardly any of them (under a tenth) in its script, is not kept: a Hebrew text said to be English. The script most
+of the letters are in then decides. A Hebrew text full of English names and terms, said to be Hebrew, is Hebrew.
+
+**How many slides.** With no number of slides, the document takes as many as it needs. The outline is told
+what one slide holds at the template's own text size: nine tenths of what a free slide of one text holds there,
+or else the room of the largest layout of plain text. If the text takes K such slides, the outline may answer
+with 1 to K + 4 slides, or up to 10 where that is more. A slide given more than one slide holds then goes over
+more slides, each with its own run of passages and its purpose numbered "(1/3)", while the deck may have more:
+up to 30 slides, or the most of a `slideCount` range. The table of a slide, a free slide's or a layout's, goes
+to the part that carries the document's table. A number of slides is fixed by a `slideCount` of one
+number, by a number of slides the brief names ("2 slides"), or by "each part on its own slide". Without a
+`slideCount` the outline answers `asked_slides` with the number it read, and an answer that does not have that
+many slides is asked again once. With a fixed number no slide is added and nothing is left out to make room:
+the passages are shared over the slides that carry them, each set dense where it needs it (see "Asking for an
+amount of text" above). A slide of several texts that would be cut is one text, set dense. Where one still holds
+less, the passages are shared again, in order, over the slides that carry them, and the table of a slide goes
+with the document's table. Only where one is cut even so do the slides of text that carry none take their share
+too (free slides of texts and photos, and plain text layouts), so that no slide stands empty while another is
+cut; a chart or any other slide keeps what it was planned for. A slide asked to be shorter than its passages
+keeps them, and the passages are shared again only between such slides. A deck of three slides or fewer has no
+opening or closing slide unless the brief asks for one: an answer of that many slides with a slide that carries
+no passage is asked again once, and one that keeps an opening slide then stands. A change to a plan that names
+a number of slides ("keep it to 2 slides") shares the passages again over all of them, a slide it keeps as it
+was too, and asks again in the same way.
+
+**Writing.** A slide that holds its passages gets them word for word, set by code, where the document is in
+the deck's language, nothing asks for it shorter, it has no table that goes into a table, and its pattern has
+one running text. The writer then writes only its title and its short slots. In a layout's list, an item set
+by code has the list's bullet in place of its own; a number stays. Any other slide carrying passages is given
+its text and told to keep the text's words and order, shortened only where a limit makes it: a translation, a
+summary, a slide that is cut, a table on a slide with a table (which goes into the table, cut to the limits of
+its cells), a layout of several running texts. On a slide with no table, a table of the document is part of the
+running text, a paragraph for each row with its cells joined by " | ", and the slide's room is counted for it.
+A slide in the deck's language that was not asked to be shorter, has no table that goes into a table and has
+room for nearly all of its text is checked for the words it keeps: under 85% it is sent back once, and the deck
+is told when it is still so:
+`the slide keeps 72% of the words of its text from the document (p3-p5), though it has room for nearly all of it`.
+A slide that holds less than its passages is cut to fit, and the deck is told:
+`the text from the document for this slide (p3-p5) is 4100 characters, and the slide holds about 3700 even with its text set small, at 7 pt: it is cut to fit. Ask for more slides to keep it whole`.
+The numbers a chart shows may come from the document as well as from the brief.
+
+**A summary or some parts.** "A short summary" or "short slides" in the brief makes the outline set `words` on
+the slides that carry passages: the slide is then written shorter, from its own passages. `words` of four
+fifths or more of the words of a slide's passages asks for no shorter text, and is dropped. "Only the part on
+risks" puts the other passages in `left_out`.
+
+**Limits.** At most 12,000 characters, about 1,800 Hebrew or 2,000 English words: a longer document is a
+`PlanError` that asks for the part the deck is about. One document for a deck. A deck that is changed later
+keeps its document and draws on it, but a new document needs a new plan. Without a `slideCount`, a deck of a
+document has as few slides as its text takes, down to one. `imageDensity` defaults to `low`. Titles, headings
+and table cells are cut to their limits. A heading of 60 characters or more with no `#` and no blank line under
+it is read as text, and so is one right under a line of text with no stop at its end, or one over two short lines
+with no stops: give a heading `#`, or a blank line under it. A short line over one other short line is read as
+a heading over it, which a slide may take as its title. Passages shared again over a fixed number of slides go
+by the size of their text, not by each slide's room: a slide with a table beside its text may be cut while
+another has room.
+
+### Before writing: `planTextFit`
+
+`planTextFit(template, plan)` works out by code, without a model, what each slide that was asked for words or
+carries passages will hold when the plan is written: the size its running text is set at on a free slide, the
+words it holds, and whether it is set dense. A caller can tell the person before anything is written:
+
+```ts
+const plan = await planOutline(template, brief, { llm });
+for (const fit of planTextFit(template, plan)) {
+  if (fit.holds < fit.words) console.log(`slide ${fit.slide} holds ${fit.holds} of ${fit.words} words`);
+  else if (fit.size !== undefined && fit.templateSize !== undefined && fit.size < 0.8 * fit.templateSize) console.log(`slide ${fit.slide}: text at ${fit.size} pt`);
+}
+```
+
+Each `SlideTextFit` has `slide` (from 1), `words` (asked, or of its passages) and `holds`; on a free slide `size`
+and `templateSize`, the size running text has there when nothing makes it smaller; on a dense slide `dense` and
+`most`, the most words it holds at the least size that reads; and on a slide of a document `passages`, as
+`"p3-p5"`. A plan with neither words nor a document gives `[]`. Pass it the options the plan was made with:
+`patterns`, `free`, `icons`, `assets`, `layout` and `numberPatterns`. The chat tools say the same in `text_pt`,
+`holds_words` and `note` (see [chat-tools.md](chat-tools.md)).
 
 ### New layouts for a deck
 
@@ -355,7 +502,7 @@ Use these when a person should see and approve a plan before the content is writ
 ```ts
 // 1. Decide the slides. One call, quick, small result: the thing to show a person.
 const plan = await planOutline(template, brief, { llm, icons, layout: 'adaptive' });
-// plan = { version: 1, title, brief, slides: [{ pattern, purpose, items?, blocks?, arrange?, words? }], layouts? }
+// plan = { version: 1, title, brief, slides: [{ pattern, purpose, items?, blocks?, arrange?, words?, passages? }], layouts?, documentLanguage? }
 
 // 2. Change the plan by instruction. One call. Returns a new plan and one sentence on what changed.
 const { plan: revised, summary } = await editPlan(template, plan, 'Add a slide about pricing before the end', { llm, icons, layout: 'adaptive' });
@@ -429,15 +576,56 @@ no second call.
 - "Use three cards instead of four" changes `items` on that slide.
 - "Make slide 2 about 200 words" gives that slide the room for the text, as a plan does (see "Asking for an
   amount of text" above): its layout, another layout of plain text, or a free slide written from what the slide
-  held, which keeps the slide's chart, table or photo as it is. Where nothing holds it and the slide shows text
-  alone, the text goes over new slides after it, of the same kind, and a warning without a slide number says
-  where it went:
-  `the 200 words asked for slide 2 go over slides 2 to 4: one slide holds about 55`.
+  held, which keeps the slide's chart, table or photo as it is, or a free slide of the text alone set dense.
+  A photo that gives way to such a text is left out, and the deck is told:
+  `the photo of this slide is left out to make room for the 500 words asked for it`. The text stays on that
+  slide: a change adds no slide by itself, only where the instruction asks for more slides.
+- A dense slide whose text is written again (in other words, in another language, as a whole) keeps its length
+  unless the instruction asks for another: its characters, counted as words of about 6 characters. A change
+  that keeps the text, such as a better title, writes the title alone, and the text stays as it was.
+- A part added beside a dense text, or beside a text from the document ("add three key points next to the
+  text"), leaves that text less room. A text that still holds there stays as it is. One that does not is
+  written again for the room it has, and cut, as below. The length it is held to is the one it has, so a text
+  asked to be shorter before stays short, and a new text beside it takes none of that length: it is written
+  as the request says. A photo that leaves a dense text too little room gives way to it,
+  as for an amount of text asked: the text stays as it is, and the deck is told
+  `the photo of this slide is left out to make room for its text of about 300 words`.
 - A free slide is changed part by part: the parts the instruction does not touch stay exactly as they are. See
   "Free slides in an edit" below.
+- In a deck made from a document (`deck.document`), the first call is shown the document with the passages of
+  each slide and those on no slide, and the passages each slide carries after the change. "Put the part on the
+  budget on its own slide" moves passages; "make slide 3 longer" gives it more from its neighbour or from those
+  on no slide. A slide whose passages change is written again, its text set by code as the document has it
+  where the slide holds it and the document is in the deck's language. Where the instruction asks for that
+  slide's text in other words ("slide 2 in simpler words, and move the part on bikes onto it"), the first call
+  says so, and the writer writes it. A slide whose passages stay keeps its text unless the instruction is about
+  it.
 
 `planEdit(template, deck, instruction, options)` does the same without pictures or rendering and returns
 `{ deck, summary, rewritten, warnings }`.
+
+A slide the change writes that would hold less than it was asked for, or less than its passages, is cut to
+what it holds, and `warnings` says so after it was written. To be told before anything is written, pass
+`stopBeforeCut`: `planEdit` then stops after its first call with a `TextCutError`, which names the slides. What
+a slide holds is counted as it will be written, with the heading or caption it keeps, so the number the error
+gives is the one the slide would have. A slide the change asks no length of, and whose parts and passages stay
+(other words, a new title, another language), does not stop the change: its text is written to what it holds.
+In a deck made from a document, the length of a slide's text in another script is a guess from the words of its
+passages; only a deck put back into the language of its document, where that text is known, says after
+writing that a slide holds less of it.
+
+```ts
+try {
+  const { deck: next } = await planEdit(template, deck, 'Make slide 2 1000 words', { llm, stopBeforeCut: true });
+} catch (error) {
+  if (error instanceof TextCutError) console.log(error.message, error.fits); // nothing was written
+  else throw error;
+}
+```
+
+The message reads `Nothing was changed: slide 2 would hold about 527 of its 1000 words (text at 7 pt). Ask for
+more slides or a shorter text, or accept that the rest is cut.`; `error.fits` has a `SlideTextFit` for each such
+slide, numbered as after the change. Call again without `stopBeforeCut` to make the change and cut the text.
 
 ### Free slides in an edit
 
@@ -540,6 +728,7 @@ Extra options for edits (`EditOptions`):
 | `fields` | Replaces the deck-level values, for example a translated header text. Defaults to the deck's own. |
 | `direction` | Reading direction after the edit. Defaults to the direction of the deck's language. |
 | `imageDensity` | Whether slides added by the edit may use photo patterns. Default `medium`. |
+| `stopBeforeCut` | Stop before writing, with a `TextCutError`, when a slide the change writes would hold less than was asked for it or less than its passages. Off: such a slide is cut, and `warnings` says so. |
 
 Changes made by hand in PowerPoint are not read back. The deck JSON is the source of truth.
 
@@ -547,7 +736,8 @@ Changes made by hand in PowerPoint are not read back. The deck JSON is the sourc
 
 | Error | When | What to do |
 | --- | --- | --- |
-| `PlanError` | No pattern can be used with what was supplied; or the model's outline or edit plan is unusable; or the plan or the edit uses patterns that cannot be filled, or has a free slide the template cannot carry; or a plan given to `writeDeck` has a number of items its pattern does not take, or a free slide of more than 400 parts | Read the message: it names the patterns and reasons, or the slide and its number. Supply the missing icons, fields or images, correct the plan, or retry. |
+| `PlanError` | No pattern can be used with what was supplied; or the model's outline or edit plan is unusable; or the plan or the edit uses patterns that cannot be filled, or has a free slide the template cannot carry; or a plan given to `writeDeck` has a number of items its pattern does not take, or a free slide of more than 400 parts; or the brief's `document` is no text, or longer than 12,000 characters | Read the message: it names the patterns and reasons, or the slide and its number. Supply the missing icons, fields or images, correct the plan, or retry. |
+| `TextCutError` (a `PlanError`) | `planEdit` with `stopBeforeCut`: a slide the change writes would hold less text than it carries. Nothing was written. | Tell the person what `error.message` says. Ask for more slides or a shorter text, or call again without `stopBeforeCut` to accept the cut. |
 | `DeckValidationError` | After all repairs the draft still has error-level issues | `error.issues` lists them. Retry, raise `maxRepairs`, or simplify the brief. |
 | Anything your provider throws | The model call failed | Handled by you: slotdeck does not retry model calls. |
 
@@ -562,7 +752,16 @@ slide of many charts takes about a minute of model time for every 50 charts, in 
 
 Planning calls (the outline, a change to a plan, the first step of an edit) ask the model for light reasoning,
 because they choose and arrange rather than write. This made them several times faster and removed the runaway
-answers described in [providers.md](providers.md). Writing the slides keeps the model's default.
+answers described in [providers.md](providers.md). Writing the slides keeps the model's default; the included
+Gemini adapter asks for light reasoning only when it sends a request again after an answer cut off at its limit.
+
+A deck made from a document or with an amount of text adds no call of its own: the outline is asked again at
+most once, as for any answer it cannot use, and that now also covers one that places most of the document
+nowhere or misses the number of slides asked. The prompts that plan carry the document, and the writer's answer
+carries the text asked for: 500 Hebrew words are about 1,000 to 1,700 tokens.
+A slide filled by code is not written by the model, so a document whose slides hold their text costs the writer
+little more than its titles. A text written well short of what was asked, or a slide that keeps too few of its
+document's words, takes at most one repair round, within `maxRepairs`. `planTextFit` asks no model.
 
 To keep cost down: reuse `cache` across calls, set `imageDensity: 'low'` or `'none'`, and use `planOutline`
 first so a person can correct the plan before content and pictures are produced.

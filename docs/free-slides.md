@@ -65,7 +65,7 @@ the deck format.
 | `pattern` | `"free"` | Always `free` (`FREE_PATTERN`). |
 | `blocks` | array of kinds | What the slide is made of, in reading order. Any number, at least one. This field is what makes a slide a free slide (`isFreeSlide`). |
 | `slots` | object | The content. The title is `title` and may be left out. The parts of block *n* (from 1) are `b`*n* followed by the part's name: `b1Text`, `b2Chart`, `b12Heading`. |
-| `arrange` | object | Optional wishes about the arrangement: `columns` and `lead` (see "How the blocks are set out"). |
+| `arrange` | object | Optional wishes about the arrangement: `columns` and `lead` (see "How the blocks are set out"). `dense` marks a long text a person asked to have whole, set by the planner (see "A long text a person asked for"). |
 | `base` | string | Optional. The id of the pattern whose frame the slide stands on. Left out, the template's usual one. A pattern that cannot be a frame gives way to the usual one, and the deck is told (see "What the checks say"). |
 | `colors` | `DeckColors` | Optional. Colours for this slide alone; see [colors.md](colors.md). |
 
@@ -101,7 +101,7 @@ reported as `expected text`.
 its reverse, so that code adds, removes or reorders blocks without renumbering slot names by hand:
 
 ```ts
-const content = freeContent(slide);                 // { title, blocks: [{ chart, caption }, ...], columns?, lead?, base?, colors? }
+const content = freeContent(slide);                 // { title, blocks: [{ chart, caption }, ...], columns?, lead?, dense?, base?, colors? }
 content.blocks.splice(1, 1);                        // drop the second block
 content.blocks.push({ card: { heading: 'Next', text: 'Forty more bikes.', icon: 'bolt' } });
 const changed = freeSlide(content);
@@ -126,6 +126,7 @@ interface FreeSlideContent {
   blocks: FreeBlockContent[];
   columns?: number;                           // how many blocks stand side by side on one line
   lead?: 'left' | 'right' | 'top' | 'none';   // where the first block stands when it is the main one
+  dense?: boolean;                            // a long text a person asked to have whole (arrange.dense)
   base?: string;
   colors?: DeckColors;
 }
@@ -440,6 +441,71 @@ what its box holds at the size that ends on.
   at 15.5 pt in two columns and holds 1,377. The writer is told the length asked
   (`Write 200 words, as was asked: 1200 to 1370 characters in all`). See "Asking for an amount of text" in
   [generating.md](generating.md).
+
+### A long text a person asked for
+
+A person may ask for an amount of text ("500 words on each slide") or give their own text for the slides. From
+0.6.2 such a text stays on the slide it was asked for, set smaller where it must. The switch is
+`arrange.dense`: a free slide of one text, with or without a heading, that carries a text someone asked to
+have whole.
+
+```json
+{
+  "pattern": "free",
+  "blocks": ["text"],
+  "arrange": { "dense": true },
+  "slots": { "title": "Our plan for 2027", "b1Text": ["The first of up to twelve paragraphs.", "The second."] }
+}
+```
+
+- **The planner sets it.** Every free slide of one text that the planner gives an asked length (`words`) or
+  passages of a document is marked dense, in the plan and in the deck. No model sets it, and no prompt shows
+  it. A change to a plan or a deck keeps it. Code that writes a deck may set it too.
+- **A text that fits is set out as without it.** The flag changes only a text alone of more than 600
+  characters that does not fit at four fifths of the template's size, the most a free text is set down to
+  without it. Every other slide with the flag is laid out as if it had none. It is there so that the
+  paragraphs a writer chooses never make the text run over its box: where they need more room than the plan
+  counted, the text is set smaller instead.
+- **Down to the least size that reads.** Such a text is set as large as it fits, half a point at a time, down
+  to 9 pt on a slide 13.33 inches wide, and less on a narrower one by its width, never under 5 pt: 7 pt on a
+  slide 10 inches wide. That is the size under which the checks say a slide's text is small.
+- **In the larger room, in columns.** It takes the larger part of the slide that a crowded slide takes, under
+  the title, in two columns, or three where two would make its lines longer than about 95 characters as
+  PowerPoint sets them.
+- **Counted as PowerPoint sets it.** A character of such a text is counted at 0.48 of its size wide, where other
+  text is counted at a generous 0.55. In PowerPoint's own rendering of 3,035 lines of such text at 6 to 17.5 pt,
+  in Hebrew and in English, a character took 0.41 of its size on a middling line, 0.44 on one line in twenty,
+  and never more than 0.47. Lines still break at words.
+- **Planned for what the writer may write.** While the slide is planned, its text is counted as the most the
+  writer is told, 1.15 times the length asked, in any number of paragraphs up to twelve, each ending on a line
+  of its own. Its budget is what the slide holds at the size chosen in every such number of paragraphs, and its
+  slot says at most 12 paragraphs. Paragraphs end on whole lines, so seven, ten or eleven can take more lines
+  than twelve: a writer that keeps inside its budget, in paragraphs of about one length, is not sent back,
+  however many it writes. A text from a document that code sets as it is (see "Making a deck from a document"
+  in [generating.md](generating.md)) is planned for the paragraphs it has.
+- **Beyond the least size it is cut.** A text the slide does not hold even at that size is planned at it, its
+  budget is what the slide holds there, and the plan says what is cut before anything is written
+  (`planTextFit`).
+- **Code that changes the blocks keeps it.** `freeContent` gives `dense: true` for such a slide and `freeSlide`
+  writes it back (`FreeSlideContent.dense`), so `freeSlide(change(freeContent(slide)))` keeps the flag.
+
+What it gives, from the plan and from PowerPoint:
+
+| Template | 500 words | Set at | The most one slide holds |
+| --- | --- | --- | --- |
+| The demo template, 13.33 inches wide, English | about 3,000 characters | 10.5 to 12 pt, in 2 or 3 columns | about 4,900 characters, some 800 words, at 9 pt |
+| A right-to-left template 10 inches wide, Hebrew | about 3,250 characters | 7 to 7.5 pt, in 3 columns | about 3,400 characters, some 520 words, at 7 pt |
+
+A heading over the text takes some of that room: under one, the right-to-left template holds about 3,100
+characters at 7 pt. The engine was proved in PowerPoint on 161 dense slides of both templates, of 1,000 to
+5,500 characters in 3 to 12 paragraphs, and its planning on 132 more, with and without a heading, at text scale
+1 and 1.25, the last 36 of them the top of the told range in 1 to 12 paragraphs on both templates: the text
+ends inside its box on every one, at worst right at its bottom.
+
+A list, a chart, a table or cards beside the text keep the slide from being set dense: such a slide is set out
+as without the flag, and holds what it holds. So does a second text of a deck's slide (`planEdit`). A plan's
+slide of several texts, where nothing is written yet, becomes one text set dense where its texts would be cut.
+With free slides off no slide is set dense.
 
 ## What a template gives a free slide
 

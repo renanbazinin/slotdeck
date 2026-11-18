@@ -66,8 +66,13 @@ These do not stop rendering. `renderDeck` and the planner return them.
 | `pattern "x" has a fixed number of items; "items" is ignored` | `items` on a pattern without a `repeat`. | Remove `items`. |
 | `chart format "x" is not known and is ignored; use "number" or "percent"` | An unknown `format`. | Use one of the two, or leave it out. |
 | `chart values not stated in the brief: 89` | (Planner only.) The model charted a number the brief does not contain. It may be invented, or worked out from the brief. | Check the number. Put the figures you want charted into the brief. |
-| `200 words were asked for this slide, and it holds about 92: ask for the text over more slides, or for a shorter one` | (Planner only.) An amount of text was asked for a slide, and no slide the plan could give it holds that much: free slides are off, or the text is longer than a free slide holds at a readable size, and the deck may not have more slides (`slideCount`). The slide holds what it can, and the writer was told so. | Allow more slides, or free slides (`free`, and `free` in an app's `patterns`), or ask for less. See "Asking for an amount of text" in [generating.md](generating.md). |
-| `the 200 words asked for slide 2 go over slides 2 to 4: one slide holds about 55` | (Edits only.) A change asked for more text on a slide than any slide holds, and the text went over new slides after it. No slide number in `Issue.slide`: it says what the change did, which its `summary` does not. | Nothing, or allow free slides, which hold more. |
+| `200 words were asked for this slide, and it holds about 92: ask for the text over more slides, or for a shorter one` | (Planner only.) An amount of text was asked for a slide, and the slide the plan could give it holds less: free slides are off, or the slide keeps a chart, a table, a list, cards or a deck's second text beside its text, or it stays on a layout. The slide holds what it can, and the writer was told so. The plan said so before writing (`planTextFit`, `holds_words`). | Ask for the text over more slides, or for less. Allow free slides (`free`, and `free` in an app's `patterns`), which set a long text smaller. See "Asking for an amount of text" in [generating.md](generating.md). |
+| `1000 words were asked for this slide, and it holds about 527 even with its text set small, at 7 pt: the rest is cut. Ask for the text over more slides, or for a shorter one` | (Planner only.) The slide was set dense for the text asked, down to the least size that reads, and still holds less. The rest is cut. | Ask for the text over more slides, or for less. A slide holds about 520 Hebrew words on a slide 10 inches wide, and about 800 English words on one 13.33 inches wide. |
+| `500 words were asked for this slide, and it has about 380: ask for it again to have them all` | (Planner only.) The writer wrote the slide well short of the length asked, under 85% of the least it was told, and again when it was sent back. | Ask for the slide again, or change it with the length in the words of the request. |
+| `the photo of this slide is left out to make room for the 500 words asked for it` | (Edits only.) A change asked for more text on a slide of a text and a photo than it holds, and the slide became a text alone, set dense. | Nothing, or ask for the text over two slides and put the photo on one of them. |
+| `the photo of this slide is left out to make room for its text of about 300 words` | (Edits only.) A change added a photo beside a dense text, or a text from the document, that does not hold beside it. The text stays as it is, alone, and the photo is not added. | Ask for the text over two slides and put the photo on one of them, or for a shorter text. |
+| `the text from the document for this slide (p3-p5) is 4100 characters, and the slide holds about 3200: it is cut to fit. Ask for more slides to keep it whole` (also `... even with its text set small, at 7 pt: ...`) | (Planner only.) A deck made from a document: the slide's passages are more than it holds, where no slide could be added for them (the number of slides was fixed, or the deck had its most) or the slide keeps a chart, a table or cards. The writer shortened them. The plan said so before writing. | Ask for more slides, or for fewer passages on that slide. |
+| `the slide keeps 72% of the words of its text from the document (p3-p5), though it has room for nearly all of it` | (Planner only.) A deck made from a document: the writer wrote the slide's text in other words, and kept under 85% of its words when it was sent back. | Ask for that slide again, with its text "word for word". |
 | `slide 4 holds 60 blocks, as asked; its smallest text is set at 5.5 pt` | A free slide was made with as many blocks as asked for, and some of its text is under 9 pt (on a slide 13.33 inches wide; in proportion on a narrower one), which nobody reads on a projected slide. It has no slide number in `Issue.slide`: it is a note on what was asked for, not a request to write the slide again. Where the small text is a table's and its long cells are the cause, the table's slot is told as well. | Nothing, when that many on one slide is what was wanted. Otherwise spread the blocks over more slides. |
 | `slide 4: 12 side by side were asked for; the slide holds 5` | A free slide's `arrange.columns` would have left some block under its smallest size: narrower than its kind sits well in, or under half the least height. The slide was set out with the nearest number of blocks side by side at which every block has that size. No slide number in `Issue.slide`. | Nothing, or state the number the slide holds. See "How the blocks are set out" in [free-slides.md](free-slides.md). |
 | `slide 4 holds 9 blocks, as asked; the deck asks for larger text, and this slide has no room for it` (also `... has room for half of that`) | The deck's `textScale` is above 1. On this free slide larger text would leave some part less room than it needs, and its text would have to be set smaller than without the wish. The slide is made with half of the larger text, or with none. No slide number in `Issue.slide`. | Nothing, or fewer blocks on the slide. |
@@ -92,6 +97,9 @@ These do not stop rendering. `renderDeck` and the planner return them.
 | `Template "x" has no plain text pattern, so a text-only deck cannot be planned from it` | `textOnly` was asked for, and no pattern of the manifest is plain text. | Add a plain text pattern to the manifest (see [layout-freedom.md](layout-freedom.md)), or plan without `textOnly`. |
 | `The plan uses patterns that cannot be filled with what was supplied: a, b` | A plan was made with icons, assets or fields that are not passed now. | Pass the same `icons`, `assets`, `fields` and `layout` to every step. |
 | `Slide 3: pattern "x" needs icons, and no icon set was supplied` | The same, for an edit. | As above. |
+| `The document is 15230 characters, and a deck is made from at most 12000 (about 1,800 words): pass the part the deck is about` | `brief.document` is longer than `MOST_DOCUMENT_CHARS`. One writing call carries at most that much. | Pass the part the deck is about. |
+| `"document" must be text` | `brief.document` is no string: a stored plan read back wrongly, or a file's bytes. | Pass the text of the document. A blank one is read as none. |
+| `Nothing was changed: slide 2 would hold about 527 of its 1000 words (text at 7 pt). Ask for more slides or a shorter text, or accept that the rest is cut.` | A `TextCutError`, from `planEdit` with `stopBeforeCut`: a slide the change writes would hold less than it carries. Nothing was written. `error.fits` names the slides. | Tell the person. Ask for more slides or a shorter text, or call again without `stopBeforeCut` to cut the text. |
 
 Reasons a pattern is not offered:
 
@@ -102,6 +110,18 @@ Reasons a pattern is not offered:
 | `needs icons, and no icon set was supplied` | Pass `icons`. |
 | `needs a graphic asset, and none was supplied` | Pass an asset of kind `graphic`. |
 | `needs the deck field "x"` | Add it to `brief.fields`. |
+
+## Chat tool errors
+
+The tools answer these to the chat model as `{ "error": "..." }`, which it can act on. The rest are in "Errors"
+in [chat-tools.md](chat-tools.md). These come from `plan_presentation` built with `documents: true`.
+
+| Message | Meaning | Fix |
+| --- | --- | --- |
+| `"documents" names a text the app does not have: "budget.xlsx". The texts the app lists for this conversation are "pasted text 1" and "notes.docx": use those names. A text the user pasted in a short message is not listed: ...` | The chat model named a text that is not in the list passed with the call: a short paste, which is not listed, or a file the app has no text for. | Pass the conversation's list with every call (`call(name, args, { documents })`), and put `describeDocuments(list)` in the chat's system prompt. The chat model then passes a short paste in `instructions`, in quotation marks, and tells the person that a file not listed could not be read. |
+| `The text "notes.txt" is empty: tell the user it could not be read.` | The named text is blank: a file whose text the app could not read. | Make the text of such files, or leave them out of the list. |
+| `The text is 15230 characters, and a presentation is made from at most 12000 (about 1,800 words). Ask the user to paste the part the presentation is about, and name that.` | The named texts together are longer than a deck is made from. | Nothing: the person pastes the part, which becomes a new text of the list. |
+| `"topic" copies the text "pasted text 1". Name it in documents instead ...` (or `"instructions" copies ...`) | No text was named, and that argument copies a listed text of 1,500 characters or more. | Nothing: the chat model plans again with the name. A named text that only asks for a presentation is planned as instructions. If it keeps happening, take out the lines of the system prompt that send attached files or all the person's facts into `topic`. |
 
 ## Manifest problems (`checkManifest`)
 
@@ -171,7 +191,7 @@ Plain `Error`s from `renderDeck`. They mean the manifest and the pptx disagree, 
 | `Gemini did not answer within 180 seconds` | The request hung. Retry, or raise `timeoutMs`. |
 | `Gemini did not return valid JSON: ...` | The model's text was not JSON. Retry. |
 | `Gemini interaction ended with status "..."` | The service did not complete the request; the reason follows when it gives one. |
-| `Gemini's answer was cut off at the limit of 9552 tokens, twice. ...` | The model wrote until the output limit, twice in a row. It is nearly always a model running away inside one text field (see "Runaway answers" in [providers.md](providers.md)). Try again. If it keeps happening, set `thinkingLevel: 'low'`; if the limit is too small for a legitimately large answer, set `maxOutputTokens`. |
+| `Gemini's answer was cut off at the limit of 9552 tokens, twice. ...` | The output limit was reached twice in a row, the second time with light thinking, or with the adapter's `thinkingLevel` when one is set. The rest of the message says what filled the limit the second time, where the service's counts of tokens show it (see "Runaway answers" in [providers.md](providers.md)). `reasoning took ... of them`: a long reasoning before the answer. Try again, or lower the adapter's `thinkingLevel` if it sets one above `low`. `the answer took ... of them`: the model ran away inside one text field, or the answer is larger than the request's estimate. Try again. With neither, the service gave no counts, or none that fill the limit: try again. If it keeps happening, set `maxOutputTokens` on the adapter. It replaces the limit of every request, raising some and lowering others, so set it above the largest limit the app's requests get, not only above the one in the message: a request's limit is its estimate plus 8,192, or 24,576 when it has none. |
 | `Gemini request failed (400): Request blocked due to copyright/recitation content` | The service's recitation filter tripped on an ordinary answer. It happens at random. The adapter already sent the request twice; try again. |
 | `Gemini request failed (400): Thinking level ... is not supported for this model` | The `thinkingLevel` set on the adapter is not one the model accepts (`minimal` is refused by some models). Use `low`, or leave it unset. |
 | `Gemini request failed (429): Your project has exceeded its monthly spending cap` | The key's project reached the spending cap set for it. Nothing works until the cap is raised in the provider's console. |
@@ -197,6 +217,8 @@ Plain `Error`s from `renderDeck`. They mean the manifest and the pptx disagree, 
 | The planner never uses a pattern | It is not offered. | See "Reasons a pattern is not offered". Also check the pattern's `description`: the model chooses by it. |
 | A deck that was asked to be "text only" has cards, tables or charts | The wish did not reach the planner as a wish about slides: only "no pictures" was passed (`imageDensity: 'none'`, or `image_density` in the chat tool), which still allows cards, tables and charts. | Set `textOnly: true` on the brief, or `text_only: true` in `plan_presentation`. See "Asking for a kind of slide" in [generating.md](generating.md). |
 | A text-only deck uses one layout for every content slide | The template has one plain text pattern besides its opening and closing. | Add more plain text patterns to the manifest as derived patterns: a list without its photo, a quotation, two paragraphs side by side. |
+| Asked in a chat for "2 slides of 500 words", the plan has 6 to 10 slides | The chat model put the number in `instructions` or `topic`, where the planner reads no number of slides. The plan's `next` then says so, and asks it to plan again with `slide_count`. | Add the lines of "Guidance for the chat model's system prompt" in [chat-tools.md](chat-tools.md). See [own-text.md](prompts/own-text.md). |
+| A presentation of a text the person pasted or attached sums it up | The chat model retold the text in `topic`, and the planner never saw it. | Build the tools with `documents: true` and pass the conversation's texts on each call. See "Texts the person gave" in [chat-tools.md](chat-tools.md). |
 | A slide states a number or contact detail that nobody gave | The model invented it. | Figures are guarded only for patterns marked `figures` and for charts. State details in the brief and review the deck. |
 
 ## Known limits
@@ -215,6 +237,19 @@ Plain `Error`s from `renderDeck`. They mean the manifest and the pptx disagree, 
   slots with several paragraphs. A template loaded with its fonts measures text in lines and does not have this
   limit for text slots: see [text-fit.md](text-fit.md). Tables and charts are not measured.
 - **Text boxes do not resize.** Text longer than its box overflows.
+- **A slide holds so much.** A long text a person asked for is set smaller on its slide, down to the least size
+  that reads, and then cut: at most about 520 Hebrew words on a slide 10 inches wide, and about 800 English
+  words on one 13.33 inches wide. Only a free slide of that text alone is set smaller: not with free slides off,
+  nor beside a chart, a table, a list, cards or a deck's second text. A slide of a deck made by 0.6.1 carries no
+  mark that its text was asked for, so a change that writes its text again plans it for the usual length unless
+  the request names one.
+- **`planEdit` says a cut after writing** unless it is given `stopBeforeCut`: then it stops before writing with
+  a `TextCutError`. The chat tool `edit_presentation` stops so unless it is called with `accept_cut: true`.
+- **Documents.** A deck is made from at most 12,000 characters of a document, about 1,800 Hebrew or 2,000
+  English words. Several texts named together are one document, and a new document needs a new plan. Titles,
+  headings and table cells are cut to their limits. A heading of 60 characters or more, with no `#` and no
+  blank line under it, is read as text, and so is one right under a line of text with no stop at its end, or
+  one over two short lines with no stops. A short line over one other short line is read as a heading over it.
 - **Charts:** `column`, `bar`, `line` and `pie` only. No stacked or combined charts.
 - **Tables:** the sample table must not have merged cells.
 - **Pictures:** PNG, JPEG and GIF only.

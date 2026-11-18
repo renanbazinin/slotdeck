@@ -68,6 +68,7 @@ interface Interaction {
   status?: string;
   steps?: Array<{ type?: string; content?: ContentBlock[] }>;
   errors?: Array<{ message?: string }>;
+  usage?: { total_output_tokens?: number; total_thought_tokens?: number };
 }
 
 async function createInteraction(
@@ -139,6 +140,43 @@ function outputBlocks(interaction: Interaction): ContentBlock[] {
     .flatMap((step) => (Array.isArray(step.content) ? step.content : []).filter((block): block is ContentBlock => isObject(block)));
 }
 
+/**
+ * The tokens an answer cut off at `limit` spent reasoning and writing, when the service says so and they fill
+ * the limit. A gateway may say nothing, say it in another shape, or give one count only; what it gives is
+ * used only when it accounts for the cut-off. The service counts both against the limit: an answer seen cut
+ * off at 11334 had spent 11319.
+ */
+function tokensSpent(interaction: Interaction, limit: number): { thought: number | undefined; output: number | undefined } | undefined {
+  const usage: unknown = interaction.usage;
+  if (typeof usage !== 'object' || usage === null) return undefined;
+  const count = (value: unknown): number | undefined => (typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined);
+  const thought = count((usage as { total_thought_tokens?: unknown }).total_thought_tokens);
+  const output = count((usage as { total_output_tokens?: unknown }).total_output_tokens);
+  const total = (thought ?? 0) + (output ?? 0);
+  return total > 0 && total >= 0.9 * limit ? { thought, output } : undefined;
+}
+
+/** An answer cut off twice, with what filled the limit the second time when the service says. */
+function cutOffTwice(limit: number, last: Interaction, thinkingLevel: string): GeminiError {
+  // The adapter's limit replaces that of every request, so one set for this answer must not lower another's.
+  const larger = `set maxOutputTokens on the adapter above ${limit}, and above any other request's limit, since it replaces them all`;
+  const spent = tokensSpent(last, limit);
+  let cause: string;
+  if (!spent) cause = `Try again, or for a large answer ${larger}`;
+  else if ((spent.thought ?? 0) > (spent.output ?? 0)) {
+    // The retry reasons as lightly as the adapter lets it; a level set on the adapter is the caller's to lower.
+    const lower = thinkingLevel === 'medium' || thinkingLevel === 'high' ? `set a lower thinkingLevel than "${thinkingLevel}", or ` : '';
+    const answer = spent.output === undefined ? '' : ` and the answer ${spent.output}`;
+    cause = `The second time reasoning took ${spent.thought} of them${answer}: try again, or ${lower}${larger}`;
+  } else {
+    const reasoning = spent.thought === undefined ? '' : ` and reasoning ${spent.thought}`;
+    cause =
+      `The second time the answer took ${spent.output} of them${reasoning}: the model ran away inside a text field, ` +
+      `or the answer is larger than its estimate. Try again, or for a large answer ${larger}`;
+  }
+  return new GeminiError(`Gemini's answer was cut off at the limit of ${limit} tokens, twice. ${cause}`);
+}
+
 /** A Gemini text model as an {@link LlmProvider}. */
 export function gemini(options: GeminiOptions): LlmProvider {
   return {
@@ -173,23 +211,22 @@ export function gemini(options: GeminiOptions): LlmProvider {
       };
       body.generation_config = generationConfig;
 
-      const send = () => createInteraction(options, body, request.signal, true);
+      const send = (sent: Record<string, unknown>) => createInteraction(options, sent, request.signal, true);
       let interaction: Interaction;
       try {
-        interaction = await send();
+        interaction = await send(body);
       } catch (error) {
         // A failure that comes and goes by chance is worth one more try; any other is the caller's to see.
         if (!passesByItself(error)) throw error;
-        interaction = await send();
+        interaction = await send(body);
       }
       if (interaction.status === 'incomplete') {
-        // Running away is a matter of chance too, so the same request is sent once more.
-        interaction = await send();
-        if (interaction.status === 'incomplete') {
-          throw new GeminiError(
-            `Gemini's answer was cut off at the limit of ${limit} tokens, twice. The model is probably running away inside a text field; try again, or set thinkingLevel to "low"`,
-          );
-        }
+        // Cut off at the limit: by a model running away inside a text field, or by a long reasoning before a short
+        // answer, which was seen to fill the limit by itself. Both are a matter of chance, so the request is sent
+        // once more, with light thinking unless the adapter sets a level. The limit stays.
+        const thinkingLevel = options.thinkingLevel || 'low';
+        interaction = await send({ ...body, generation_config: { ...generationConfig, thinking_level: thinkingLevel } });
+        if (interaction.status === 'incomplete') throw cutOffTwice(limit, interaction, thinkingLevel);
       }
       const text = outputBlocks(interaction)
         .filter((block) => block.type === 'text')
