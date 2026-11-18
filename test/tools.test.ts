@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { placeholderPhoto } from '../examples/placeholder.ts';
-import { PptxPackage, TOOL_NAMES, describeDocuments, documentPassages, loadTemplate, memoryStore, presentationTools, storeKeys } from '../src/index.ts';
+import { PptxPackage, TOOL_NAMES, describeDocuments, documentPassages, formatIssue, loadTemplate, memoryStore, presentationTools, storeKeys } from '../src/index.ts';
 import type { ChatDocument, DeckPlan, DeckSpec, ImageRef, JsonRequest, LlmProvider, PresentationToolsOptions, TemplateManifest, ToolDefinition } from '../src/index.ts';
 import { directoryStore } from '../src/node.ts';
 import { readPresentation } from '../src/pptx/presentation.ts';
@@ -12,6 +12,8 @@ import { buildFixturePptx, fixtureManifest } from './fixture.ts';
 
 const template = loadTemplate(buildFixturePptx(), fixtureManifest);
 const png = placeholderPhoto(20, 10, [0, 0, 0], [255, 255, 255]);
+/** What `next` ends with in a result that has something for the person. */
+const IN_THEIR_LANGUAGE = 'Tell the user what this result says in the language they write in, in your own words and with the same slide numbers and figures; never paste its sentences as they are.';
 
 function scripted(...answers: unknown[]): { llm: LlmProvider; requests: JsonRequest[] } {
   const requests: JsonRequest[] = [];
@@ -323,14 +325,14 @@ const UNLISTED_TEXT = " A text of the user's for the slides that the app does no
 
 /** The declarations of 0.6.1, taken from its tree. */
 const BEFORE = JSON.parse(readFileSync(new URL('./fixtures/tools-0.6.1.json', import.meta.url), 'utf8')) as Record<string, ToolDefinition[]>;
-/** Declarations of 0.6.1 with the texts of 0.6.2 put in their place and `accept_cut` added. */
+/** Declarations of 0.6.1 with the texts of 0.6.2 put in their place, `accept_cut` added, and from 0.6.4 the plan shown in the user's language. */
 function asNow(before: ToolDefinition[] | undefined, forms: typeof SMALLER): ToolDefinition[] {
   const after = structuredClone(before ?? []);
   const [plan, editPlan, , edit] = after;
   const planned = propertiesOf(plan);
   (planned.slide_count as Property).description = SLIDE_COUNT + forms.slideCount;
   (planned.instructions as Property).description = INSTRUCTIONS;
-  (plan as ToolDefinition).description = (plan as ToolDefinition).description.replace('Show the plan to the user', `${AS_ASKED}${forms.plan}Show the plan to the user`);
+  (plan as ToolDefinition).description = (plan as ToolDefinition).description.replace('Show the plan to the user', `${AS_ASKED}${forms.plan}Show the plan to the user in the language they write in,`);
   for (const tool of [editPlan, edit]) {
     const instruction = propertiesOf(tool).instruction as Property;
     instruction.description = instruction.description.replace('figures they gave', `figures they gave${GIVEN_TEXT}`);
@@ -568,8 +570,17 @@ test('a topic that copies a listed text is an error; one that retells it is a no
   assert.equal(
     retold.output.next,
     'The topic retells "pasted text 1", and the slides will not carry that text word for word. If the user wanted their text on the slides, plan again and name it in documents. ' +
-      'Show this plan to the user. Use edit_presentation_plan for changes and create_presentation once they approve.',
+      `Show this plan to the user. Use edit_presentation_plan for changes and create_presentation once they approve. ${IN_THEIR_LANGUAGE}`,
   );
+  // The app is given the same as a note, to show in the person's language.
+  assert.deepEqual(retold.issues, [
+    {
+      severity: 'warning',
+      message: 'the topic retells "pasted text 1", and the slides will not carry that text word for word',
+      code: 'text-retold',
+      values: { name: 'pasted text 1' },
+    },
+  ]);
   assert.equal(retold.plan?.brief.document, undefined);
   // A sentence on what the presentation is for, and a topic of its own, say neither.
   for (const topic of ['מצגת על תוכנית השיפוץ של הספרייה לישיבת הוועד', unrelated]) {
@@ -727,6 +738,12 @@ test('the plan says the size of a long text and what is cut', async () => {
   );
   assert.equal(planned.output.note, "Slides 1 and 2 carry all their text in smaller type than the template's: 10 pt, where the template's is 18 pt. Tell the user, and offer more slides if they want it larger.");
   assert.deepEqual(Object.keys(planned.output), ['plan_id', 'title', 'language', 'slides', 'note', 'next']);
+  assert.equal(planned.output.next, `${NEXT} ${IN_THEIR_LANGUAGE}`);
+  // The app is given the note slide by slide, to show in the person's language.
+  assert.deepEqual(
+    planned.issues?.map((issue) => [issue.code, issue.values, issue.message, issue.slide]),
+    [1, 2].map((slide) => ['slide-set-small', { slide, size: 10, templateSize: 18 }, `slide ${slide} carries all its text in smaller type than the template's: 10 pt, where the template's is 18 pt`, undefined]),
+  );
 
   // 1000 words on one slide: cut, said before anything is written.
   const long = await bikes({ title: 'Bikes', slides: [asked(1000)] }).tools.call(TOOL_NAMES.plan, { topic: 'The bike share', language: 'en', slide_count: 1 });
@@ -744,6 +761,14 @@ test('the plan says the size of a long text and what is cut', async () => {
     long.output.note,
     'Not all the text fits: slide 1 holds about 725 of its 1000 words (text at 9 pt). The rest will be cut. Tell the user before creating the presentation, and offer more slides or a shorter text.',
   );
+  assert.deepEqual(long.issues, [
+    {
+      severity: 'warning',
+      message: 'slide 1 holds about 725 of its 1000 words (text at 9 pt): the rest will be cut',
+      code: 'slide-holds-less',
+      values: { slide: 1, words: 1000, holdsWords: 725, size: 9, freeOff: false },
+    },
+  ]);
 
   // 200 words are set at four fifths of the template's size or more: as in 0.6.1, nothing is said.
   const short = await bikes({ title: 'Bikes', slides: [asked(200)] }).tools.call(TOOL_NAMES.plan, { topic: 'The bike share', language: 'en', slide_count: 1 });
@@ -767,9 +792,10 @@ test('the plan asks for slide_count when words came without one', async () => {
   const hint = 'No slide_count was given, so the planner chose 2 slides. If the user named a number of slides, plan again with slide_count. ';
   const words = { title: 'Bikes', slides: [asked(500), asked(500, 'Grow the bike share')] };
   const open = await bikes(words).tools.call(TOOL_NAMES.plan, { topic: 'The bike share', language: 'en', instructions: '2 slides of 500 words' });
-  assert.equal(open.output.next, hint + NEXT);
+  // Two slides of 500 words are set small, which the note says: next ends with the language to say it in.
+  assert.equal(open.output.next, `${hint}${NEXT} ${IN_THEIR_LANGUAGE}`);
   const counted = await bikes(words).tools.call(TOOL_NAMES.plan, { topic: 'The bike share', language: 'en', slide_count: 2 });
-  assert.equal(counted.output.next, NEXT);
+  assert.equal(counted.output.next, `${NEXT} ${IN_THEIR_LANGUAGE}`);
   // Without words the planner's own number is as it was.
   const plain = await bikes({ title: 'Bikes', slides: [{ pattern: 'text-only', purpose: 'Keep the bike share' }] }).tools.call(TOOL_NAMES.plan, { topic: 'The bike share', language: 'en' });
   assert.equal(plain.output.next, NEXT);
@@ -777,7 +803,8 @@ test('the plan asks for slide_count when words came without one', async () => {
   const { tools } = bikes(words, { summary: 'Done.', language: 'en', ...words });
   await tools.call(TOOL_NAMES.plan, { topic: 'The bike share', language: 'en' });
   const changed = await tools.call(TOOL_NAMES.editPlan, { plan_id: 'plan_1', instruction: 'A better title' });
-  assert.equal(changed.output.next, NEXT);
+  assert.equal(changed.output.next, `${NEXT} ${IN_THEIR_LANGUAGE}`);
+  assert.deepEqual(changed.issues?.map((issue) => issue.code), ['slide-set-small', 'slide-set-small']);
 });
 
 test('edit_presentation_plan keeps the mark of parts a change asked for, and shows the model none of it', async () => {
@@ -810,9 +837,18 @@ test('edit_presentation says a cut before writing', async () => {
   assert.deepEqual(stopped.output, {
     note: 'Nothing was changed: slide 1 would hold about 725 of its 1500 words (text at 9 pt). Ask for more slides or a shorter text, or accept that the rest is cut.',
     next:
-      'Nothing was written. Tell the user what the note says. If they accept that the rest is cut, call edit_presentation again with the same instruction and accept_cut: true; ' +
-      'otherwise change the request (more slides, a shorter text).',
+      'Nothing was written. Tell the user what the note says, and ask them, in their language, whether they accept that the rest is cut. ' +
+      `If they accept, call edit_presentation again with the same instruction and accept_cut: true; otherwise change the request (more slides, a shorter text). ${IN_THEIR_LANGUAGE}`,
   });
+  // The app is given the cut slide by slide, from the error's fits, to show in the person's language.
+  assert.deepEqual(stopped.issues, [
+    {
+      severity: 'warning',
+      message: 'slide 1 would hold about 725 of its 1500 words (text at 9 pt), so the change was not made',
+      code: 'change-would-cut',
+      values: { slide: 1, words: 1500, holdsWords: 725, size: 9, freeOff: false },
+    },
+  ]);
   assert.equal(requests.length, 1, 'the plan call alone');
   assert.deepEqual(store.keys(), [storeKeys.deck('deck_0')], 'nothing is stored');
 
@@ -825,6 +861,12 @@ test('edit_presentation says a cut before writing', async () => {
     (accepted.output.warnings as string[]).filter((warning) => /words were asked/.test(warning)),
     ['slide 1: 1500 words were asked for this slide, and it holds about 725 even with its text set small, at 9 pt: the rest is cut. Ask for the text over more slides, or for a shorter one'],
   );
+  // Each line is an issue the app can show in the person's language, and the chat model is told to speak theirs.
+  assert.deepEqual(accepted.issues?.map((issue) => formatIssue(issue, 'en', { deck: accepted.deck })), accepted.output.warnings);
+  assert.ok(
+    accepted.issues?.some((issue) => formatIssue(issue, 'he', { deck: accepted.deck }) === "שקף 1: לשקף הזה התבקשו 1500 מילים, והוא מכיל כ-725 מהן גם בגופן קטן של 9 נק': יתר הטקסט נחתך. אפשר לבקש את הטקסט על פני יותר שקפים, או טקסט קצר יותר"),
+  );
+  assert.equal(accepted.output.next, IN_THEIR_LANGUAGE);
 });
 
 test("own-text.md's lines for the chat's system prompt agree with what the tools say", () => {

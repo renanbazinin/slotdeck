@@ -6,6 +6,8 @@ import type { DeckColors, DeckSpec, FreeBlockKind } from './deck/spec.ts';
 import type { Issue, LayoutMode } from './deck/validate.ts';
 import { describeBlocks } from './free/blocks.ts';
 import type { ImageProvider, JsonSchema, LlmProvider } from './llm/provider.ts';
+import { said } from './messages/en.ts';
+import { formatIssue } from './messages/format.ts';
 import { resolveAssets } from './plan/assets.ts';
 import type { ResolveOptions } from './plan/assets.ts';
 import { planPattern } from './plan/catalog.ts';
@@ -14,7 +16,7 @@ import { MOST_DOCUMENT_CHARS, documentChars, documentKept, documentPassages, pas
 import type { DocumentPassage } from './plan/document.ts';
 import { TextCutError, planEdit, recolorDeck } from './plan/edit.ts';
 import type { EditOptions, EditResult } from './plan/edit.ts';
-import { entryBlocks, freeOnOffer, isFreeEntry, partLabel, severalOnOneSlide } from './plan/free.ts';
+import { entryBlocks, freeOnOffer, isFreeEntry, severalOnOneSlide } from './plan/free.ts';
 import { readWords, setSmall } from './plan/length.ts';
 import { editPlan, freeSlidesOff, patternIds, planOutline, planTextFit, withSettings, writeDeck } from './plan/plan.ts';
 import type { Brief, DeckPlan, OutlineEntry, PlanOptions, PlanSettings, SlideTextFit } from './plan/plan.ts';
@@ -122,6 +124,14 @@ export interface ToolCallContext {
 export interface ToolResult {
   /** What to hand back to the chat model: small, and free of binary data. */
   output: Record<string, unknown>;
+  /**
+   * What the result tells a person, for the app to show in the person's language with
+   * `formatIssue(issue, language, { deck })`: every line of `output.warnings`, in its order, and a
+   * note for each slide that the `note` of a plan or of a change that stops before a cut speaks
+   * of, and for each text of `output.not_on_slides`. Present only when there is any. Not in
+   * `output`, so that it costs the chat model nothing.
+   */
+  issues?: Issue[];
   /** The same result for the app itself, to draw a preview or offer a download. */
   plan?: DeckPlan;
   deck?: DeckSpec;
@@ -218,10 +228,23 @@ const UNLISTED_TEXT = " A text of the user's for the slides that the app does no
 const ACCEPT_CUT =
   "Only after the user accepted that a slide's text is cut, when an earlier call with this instruction answered with a note saying so. " +
   "Left out, a change that would cut a slide's text is not made, and the answer's note says why.";
+/**
+ * Said to the chat model in `next` of every result that has something for the person (a `note`,
+ * `warnings`, `not_on_slides`): the tools speak English, and the person may not.
+ */
+const IN_THEIR_LANGUAGE = 'Tell the user what this result says in the language they write in, in your own words and with the same slide numbers and figures; never paste its sentences as they are.';
 /** What the chat model is told to do when a change to a presentation would cut a slide's text: nothing was written. */
 const CUT_NEXT =
-  `Nothing was written. Tell the user what the note says. If they accept that the rest is cut, call ${TOOL_NAMES.edit} again with the same instruction and accept_cut: true; ` +
-  'otherwise change the request (more slides, a shorter text).';
+  'Nothing was written. Tell the user what the note says, and ask them, in their language, whether they accept that the rest is cut. ' +
+  `If they accept, call ${TOOL_NAMES.edit} again with the same instruction and accept_cut: true; otherwise change the request (more slides, a shorter text). ${IN_THEIR_LANGUAGE}`;
+
+/** Adds {@link IN_THEIR_LANGUAGE} to `next` of an output that has something for the person, once. */
+function inTheirLanguage(output: Record<string, unknown>): Record<string, unknown> {
+  if (output.note === undefined && output.warnings === undefined && output.not_on_slides === undefined) return output;
+  const next = typeof output.next === 'string' ? output.next : '';
+  if (!next.endsWith(IN_THEIR_LANGUAGE)) output.next = next ? `${next} ${IN_THEIR_LANGUAGE}` : IN_THEIR_LANGUAGE;
+  return output;
+}
 
 /** The most texts `describeDocuments` lists. Any number may be named: their characters are what is limited. */
 const MOST_DOCUMENTS = 10;
@@ -389,7 +412,7 @@ function toolDefinitions(layouts: Array<Pick<PatternDef, 'id' | 'description'>>,
         AS_ASKED +
         (smaller ? AS_ASKED_SMALLER : AS_ASKED_HOLDS) +
         (documents ? NAME_DOCUMENTS : '') +
-        'Show the plan to the user and get their approval or changes before creating the presentation.',
+        'Show the plan to the user in the language they write in, and get their approval or changes before creating the presentation.',
       parameters: { type: 'object', properties: planProperties, required: ['topic'] },
     },
     {
@@ -503,6 +526,23 @@ function fitNote(fits: readonly SlideTextFit[], freeOff = false): string {
     );
   }
   return said.join(' ');
+}
+
+/**
+ * The same as a note for each slide, for a person (`slide-holds-less`, then `slide-set-small`): the
+ * slides the note names, in its order, each with the size the note says it is set at. A slide set
+ * dense needs no word on free slides being off: its text was set smaller.
+ */
+function fitIssues(fits: readonly SlideTextFit[], freeOff = false): Issue[] {
+  const cut = fits.filter((fit) => fit.holds < fit.words);
+  const whole = fits.filter((fit) => fit.holds >= fit.words && smallSize(fit) !== undefined);
+  return [
+    ...cut.map((fit): Issue => ({
+      severity: 'warning',
+      ...said('slide-holds-less', { slide: fit.slide, words: fit.words, holdsWords: fit.holds, size: smallSize(fit), freeOff: freeOff && fit.dense !== true }),
+    })),
+    ...whole.map((fit): Issue => ({ severity: 'warning', ...said('slide-set-small', { slide: fit.slide, size: fit.size as number, templateSize: fit.templateSize as number }) })),
+  ];
 }
 
 /**
@@ -805,9 +845,9 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
    * slide, the passages it carries, a size well below the template's and the words it keeps where
    * it is cut, and in `note` what to tell the person. `countGiven` is false when the plan tool was
    * called without `slide_count`: the chat model is then asked to plan again with the number the
-   * person named, if they named one.
+   * person named, if they named one. `issues` are the note for a person, slide by slide.
    */
-  const describePlan = (id: string, plan: DeckPlan, countGiven = true): Record<string, unknown> => {
+  const describePlan = (id: string, plan: DeckPlan, countGiven = true): { output: Record<string, unknown>; issues: Issue[] } => {
     const fits = textFits(plan);
     const fitOf = new Map(fits.map((fit) => [fit.slide, fit]));
     const passages = passagesOf(plan);
@@ -865,7 +905,8 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
     if (placed) output.document = placed;
     // A cut is said with what keeps its text from being set smaller, where a setting does.
     const cut = fits.some((fit) => fit.holds < fit.words);
-    const note = fitNote(fits, cut && freeOffFor(plan));
+    const freeOff = cut && freeOffFor(plan);
+    const note = fitNote(fits, freeOff);
     if (note) output.note = note;
     // Without a number the planner chose one, and the words asked for a slide never make it more:
     // where the person named a number the chat model left out, it is to plan again with it.
@@ -873,7 +914,7 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
     output.next =
       (chosen ? `No slide_count was given, so the planner chose ${plan.slides.length} ${plan.slides.length === 1 ? 'slide' : 'slides'}. If the user named a number of slides, plan again with slide_count. ` : '') +
       `Show this plan to the user. Use ${TOOL_NAMES.editPlan} for changes and ${TOOL_NAMES.create} once they approve.`;
-    return output;
+    return { output, issues: note ? fitIssues(fits, freeOff) : [] };
   };
 
   /** Gathers the deck's pictures (stored ones first), renders it, and saves everything under a new id. */
@@ -927,12 +968,9 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
     if (kept) output.document = kept;
     if (told.length > 0) {
       // A warning about the deck as a whole has no slide to name: it is its message alone. One about
-      // a part of a free slide names the part, since the name of its slot (b7Text) says nothing to a person.
-      output.warnings = told.map((issue) => {
-        if (issue.slide === undefined) return issue.message;
-        const part = partLabel(deck.slides[issue.slide - 1]?.blocks, issue.slot);
-        return part ? `slide ${issue.slide}, ${part}: ${issue.message}` : `slide ${issue.slide}${issue.slot ? ` ${issue.slot}` : ''}: ${issue.message}`;
-      });
+      // a part of a free slide names the part, since the name of its slot (b7Text) says nothing to a
+      // person. The line is the one an app makes of the issue with formatIssue in English.
+      output.warnings = told.map((issue) => formatIssue(issue, 'en', { deck }));
     }
 
     // Pictures of the slides are an extra: the presentation stands when they cannot be made.
@@ -949,7 +987,7 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
         output.preview_error = error instanceof Error ? error.message : String(error);
       }
     }
-    return { id, output, pptx, previews };
+    return { id, output, pptx, previews, issues: told };
   };
 
   const text = (args: Record<string, unknown>, name: string): string => {
@@ -1063,7 +1101,7 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
       }
       const id = newId('plan');
       await writeJson(store, storeKeys.plan(id), plan);
-      const output = describePlan(id, plan, brief.slideCount !== undefined);
+      const { output, issues } = describePlan(id, plan, brief.slideCount !== undefined);
       if (request) {
         const one = given.names.length === 1;
         output.next =
@@ -1077,8 +1115,9 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
         output.next =
           `The topic retells ${which}, and the slides will not carry ${given.retold.length === 1 ? 'that text' : 'those texts'} word for word. ` +
           `If the user wanted their text on the slides, plan again and name it in documents. ${String(output.next)}`;
+        issues.push(...given.retold.map((name): Issue => ({ severity: 'warning', ...said('text-retold', { name }) })));
       }
-      return { output, plan };
+      return withIssues({ output: inTheirLanguage(output), plan }, issues);
     },
 
     async [TOOL_NAMES.editPlan](args, signal) {
@@ -1112,7 +1151,8 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
       }
       const id = newId('plan');
       await writeJson(store, storeKeys.plan(id), plan);
-      return { output: { ...describePlan(id, plan), summary: told.filter(Boolean).join(' '), previous_plan_id: planId }, plan };
+      const described = describePlan(id, plan);
+      return withIssues({ output: inTheirLanguage({ ...described.output, summary: told.filter(Boolean).join(' '), previous_plan_id: planId }), plan }, described.issues);
     },
 
     async [TOOL_NAMES.create](args, signal) {
@@ -1121,8 +1161,8 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
       if (!plan) throw new ToolInputError(`There is no plan with id "${planId}"`);
       if (!plannable(plan)) return { output: { error: PLAN_UNREADABLE } };
       const written = await writeDeck(template, plan, planOptions(TOOL_NAMES.create, signal));
-      const { output, pptx, previews } = await finish(TOOL_NAMES.create, written.deck, written.warnings, signal);
-      return withPreviews({ output: { ...output, plan_id: planId }, deck: written.deck, pptx }, previews);
+      const { output, pptx, previews, issues } = await finish(TOOL_NAMES.create, written.deck, written.warnings, signal);
+      return withIssues(withPreviews({ output: inTheirLanguage({ ...output, plan_id: planId }), deck: written.deck, pptx }, previews), issues);
     },
 
     async [TOOL_NAMES.edit](args, signal) {
@@ -1160,7 +1200,7 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
         try {
           result = await planEdit(template, deck, instruction, editOptions);
         } catch (error) {
-          if (error instanceof TextCutError) return { output: { note: error.message, next: CUT_NEXT } };
+          if (error instanceof TextCutError) return withIssues({ output: { note: error.message, next: CUT_NEXT } }, error.issues);
           throw error;
         }
         edited = result;
@@ -1184,14 +1224,17 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
         edited = { deck: next, summary: told.join(' '), rewritten: [], warnings: [] };
       }
 
-      const { output, pptx, previews } = await finish(TOOL_NAMES.edit, edited.deck, edited.warnings, signal);
-      return withPreviews(
-        {
-          output: { ...output, summary: edited.summary, rewritten_slides: edited.rewritten, previous_presentation_id: deckId },
-          deck: edited.deck,
-          pptx,
-        },
-        previews,
+      const { output, pptx, previews, issues } = await finish(TOOL_NAMES.edit, edited.deck, edited.warnings, signal);
+      return withIssues(
+        withPreviews(
+          {
+            output: inTheirLanguage({ ...output, summary: edited.summary, rewritten_slides: edited.rewritten, previous_presentation_id: deckId }),
+            deck: edited.deck,
+            pptx,
+          },
+          previews,
+        ),
+        issues,
       );
     },
   };
@@ -1243,6 +1286,12 @@ const limitSummary = (layouts: string[]): string =>
 
 function withPreviews(result: ToolResult, previews: SlidePreview[] | undefined): ToolResult {
   if (previews) result.previews = previews;
+  return result;
+}
+
+/** A result with what it tells a person, where it tells anything. */
+function withIssues(result: ToolResult, issues: Issue[]): ToolResult {
+  if (issues.length > 0) result.issues = issues;
   return result;
 }
 

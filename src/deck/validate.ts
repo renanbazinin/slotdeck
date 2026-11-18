@@ -1,11 +1,14 @@
 import { bodyTextScale, effectiveSlots, itemRange, slotSources, tableAtScale, templateScaleProblem, textBudget } from '../template/manifest.ts';
 import type { PatternDef, SlotDef, TemplateManifest, TextSlotDef } from '../template/manifest.ts';
 import type { FitOptions, TextFit, TextMeasurer } from '../text/measure.ts';
-import { readColors } from '../color/palette.ts';
+import { readColors, readColorsTold } from '../color/palette.ts';
 import { freeSlotDefs, freeSlots, isFreeBlockKind } from '../free/blocks.ts';
 import { freeFor } from '../free/resolve.ts';
 import type { FreeResolved } from '../free/resolve.ts';
 import type { Template } from '../render/render.ts';
+import type { IssueCode } from '../messages/codes.ts';
+import { said } from '../messages/en.ts';
+import type { Told } from '../messages/en.ts';
 import { DesignError, withLayouts } from '../template/compose.ts';
 import { measurerFor } from '../text/measure.ts';
 import { FREE_BLOCK_KINDS, FREE_PATTERN, isChartValue, isFreeSlide, isImageRef, isTableValue, isTextValue, plainText, toParagraphs } from './spec.ts';
@@ -18,7 +21,15 @@ export interface Issue {
   /** 1-based slide number in the deck; absent for deck-level issues. */
   slide?: number;
   slot?: string;
+  /** The English sentence. */
   message: string;
+  /**
+   * What the issue is, as a code that is never renamed: every warning has one, and so does every
+   * note the chat tools give a person. `formatIssue` makes the sentence in another language from it.
+   */
+  code?: IssueCode;
+  /** The numbers and labels the sentence states, by name (see `IssueValues`). Present with `code`. */
+  values?: Record<string, string | number | boolean>;
 }
 
 export class DeckValidationError extends Error {
@@ -144,14 +155,16 @@ export function freeTextFloor(free: FreeResolved | undefined, slot: TextSlotDef,
  * which includes fitting once it is set smaller within the manifest's `shrinkText`.
  */
 export function overflowMessage(fit: TextFit): string | undefined {
+  return overflowTold(fit)?.message;
+}
+
+/** The same warning with its code and values. */
+export function overflowTold(fit: TextFit): Told | undefined {
   if (fit.fits) return undefined;
-  const about = fit.approximate ? 'about ' : '';
-  const size = `${fit.scale < 1 ? 'even at ' : 'at '}${fit.size} pt`;
-  const hint = `Text of about ${fit.fitsChars === 1 ? '1 character' : `${fit.fitsChars} characters`} fits.`;
-  if (fit.overflow === 0) {
-    return `text is ${about}${Math.round((fit.widthRatio - 1) * 100)}% wider than its box ${size}, and the box does not wrap. ${hint}`;
-  }
-  return `text takes ${about}${fit.lines === 1 ? '1 line' : `${fit.lines} lines`} ${size}; the box holds ${fit.capacity} (${fit.overflow} ${fit.overflow === 1 ? 'line' : 'lines'} too many). ${hint}`;
+  const approximate = fit.approximate === true;
+  const shrunk = fit.scale < 1;
+  if (fit.overflow === 0) return said('text-too-wide', { approximate, percent: Math.round((fit.widthRatio - 1) * 100), shrunk, size: fit.size, fitsChars: fit.fitsChars });
+  return said('text-overflow', { approximate, lines: fit.lines, shrunk, size: fit.size, capacity: fit.capacity, over: fit.overflow, fitsChars: fit.fitsChars });
 }
 
 /**
@@ -274,12 +287,12 @@ export function checkDeck(manifest: TemplateManifest, deck: DeckSpec, options: V
 
   // A colour that is not a colour is left out and said so. It never stops a deck, and it is told
   // without a slide number, so that a planner does not send the slide back to be written again.
-  for (const problem of readColors(deck.colors).problems) issues.push({ severity: 'warning', message: problem });
+  for (const problem of readColorsTold(deck.colors).told) issues.push({ severity: 'warning', ...problem });
   deck.slides.forEach((slide, index) => {
-    for (const problem of readColors(slide.colors).problems) issues.push({ severity: 'warning', message: `slide ${index + 1}: ${problem}` });
+    for (const problem of readColorsTold(slide.colors, index + 1).told) issues.push({ severity: 'warning', ...problem });
   });
   if (manifest.colors === false && (readColors(deck.colors).colors || deck.slides.some((slide) => readColors(slide.colors).colors))) {
-    issues.push({ severity: 'warning', message: 'the template keeps its own colours in every deck; the colours the deck asks for are left out' });
+    issues.push({ severity: 'warning', ...said('colors-kept-by-template', {}) });
   }
 
   deck.slides.forEach((slide, index) => {
@@ -309,7 +322,7 @@ export function checkDeck(manifest: TemplateManifest, deck: DeckSpec, options: V
       parts = new Set(['title', ...freeSlots(kinds).map((entry) => entry.name)]);
       const columns = slide.arrange?.columns;
       if (columns !== undefined && !(Number.isInteger(columns) && columns >= 1)) {
-        issues.push({ severity: 'warning', message: `slide ${number}: the number of blocks side by side must be a whole number of 1 or more, not ${JSON.stringify(columns)}; it is ignored` });
+        issues.push({ severity: 'warning', ...said('columns-not-whole', { slide: number, given: String(JSON.stringify(columns)) }) });
       }
       if (free) {
         const resolved = free(slide);
@@ -319,42 +332,39 @@ export function checkDeck(manifest: TemplateManifest, deck: DeckSpec, options: V
         }
         laid = resolved;
         pattern = resolved.plan.pattern;
-        const holds = `slide ${number} holds ${kinds.length === 1 ? '1 block' : `${kinds.length} blocks`}, as asked`;
+        // The slide and its number of blocks, which the notes on a free slide begin with.
+        const holds = { slide: number, blocks: kinds.length };
         // A number of blocks side by side that would have left some block under its smallest size was not followed.
         const relaxed = resolved.plan.layout.relaxed;
         if (relaxed) {
-          issues.push({ severity: 'warning', message: `slide ${number}: ${relaxed.asked === 1 ? '1 side by side was' : `${relaxed.asked} side by side were`} asked for; the slide holds ${relaxed.columns}` });
+          issues.push({ severity: 'warning', ...said('columns-relaxed', { slide: number, asked: relaxed.asked, columns: relaxed.columns }) });
         }
         // Told without a slide number: no rewriting of text changes how many blocks a slide was asked to hold.
         if (resolved.plan.smallest < resolved.plan.comfortable) {
           // Sizes are worked out in fractions of a point; the file and the reader get half points.
-          issues.push({ severity: 'warning', message: `${holds}; its smallest text is set at ${Math.round(resolved.plan.smallest * 2) / 2} pt` });
+          issues.push({ severity: 'warning', ...said('free-text-small', { ...holds, size: Math.round(resolved.plan.smallest * 2) / 2 }) });
         }
         // A deck's larger text is never bought with smaller text: a slide on which some text would
         // come out smaller than it is without the wish takes half of it, or none, and that is said,
         // not done in silence. Text that is no smaller and no longer fits its box at the larger size
         // is another matter: the slide keeps the larger text, and that text is reported on its slot.
         if (resolved.enlarged) {
-          issues.push({ severity: 'warning', message: `${holds}; the deck asks for larger text, and this slide has ${resolved.enlarged === 'half' ? 'room for half of that' : 'no room for it'}` });
+          issues.push({ severity: 'warning', ...said('free-larger-text', { ...holds, half: resolved.enlarged === 'half' }) });
         }
         const bare = resolved.plan.pattern.slots.filter((slot) => slot.kind === 'chart' && slot.detail === 'spark').length;
         if (bare > 0) {
-          issues.push({ severity: 'warning', message: `${holds}; ${bare === 1 ? 'one chart is' : `${bare} charts are`} drawn small, without axes, legend or labels` });
+          issues.push({ severity: 'warning', ...said('free-charts-bare', { ...holds, charts: bare }) });
         }
         // Nothing is laid out below the room a slide has. Should a block get there all the same, the deck is told.
         const low = resolved.plan.layout.blocks.filter((block) => block.box.y + block.box.h > resolved.kit.dense.bottom + 0.002).length;
         if (low > 0) {
-          issues.push({ severity: 'warning', message: `${holds}; ${low === 1 ? 'one of them reaches' : `${low} of them reach`} below the room the slide has, and may be cut off at its edge` });
+          issues.push({ severity: 'warning', ...said('free-blocks-low', { ...holds, count: low }) });
         }
         if (slide.base !== undefined && resolved.kit.base !== slide.base) {
           // The layout is gone, or it is there and cannot be a frame: then the reason is said.
           const why = resolved.refused;
-          issues.push({
-            severity: 'warning',
-            message: why
-              ? `slide ${number} was planned on the frame of the layout "${slide.base}", which cannot carry a free slide (${why}); it stands on "${resolved.kit.base}"`
-              : `slide ${number} was planned on the frame of the layout "${slide.base}", which the template no longer offers; it stands on "${resolved.kit.base}"`,
-          });
+          const frame = { slide: number, base: String(slide.base), stands: resolved.kit.base };
+          issues.push({ severity: 'warning', ...(why ? said('free-base-refused', { ...frame, why }) : said('free-base-gone', frame)) });
         }
       } else {
         pattern = { id: FREE_PATTERN, sourceSlide: 0, description: '', slots: freeSlotDefs(kinds) };
@@ -373,7 +383,7 @@ export function checkDeck(manifest: TemplateManifest, deck: DeckSpec, options: V
 
     const range = itemRange(pattern);
     if (slide.items !== undefined && !range) {
-      issues.push({ severity: 'warning', slide: number, message: `pattern "${pattern.id}" has a fixed number of items; "items" is ignored` });
+      issues.push({ severity: 'warning', slide: number, ...said('items-ignored', { pattern: pattern.id }) });
     }
     if (range && slide.items !== undefined && (!Number.isInteger(slide.items) || slide.items < range.min || slide.items > range.max)) {
       issues.push({
@@ -387,7 +397,7 @@ export function checkDeck(manifest: TemplateManifest, deck: DeckSpec, options: V
     const known = new Set(slots.map((slot) => slot.name));
     for (const name of Object.keys(slide.slots ?? {})) {
       if (!known.has(name) && !parts?.has(name)) {
-        issues.push({ severity: 'warning', slide: number, slot: name, message: `pattern "${pattern.id}" has no such slot; ignored` });
+        issues.push({ severity: 'warning', slide: number, slot: name, ...said('slot-unknown', { pattern: pattern.id }) });
       }
     }
 
@@ -409,48 +419,37 @@ export function checkDeck(manifest: TemplateManifest, deck: DeckSpec, options: V
         // With fonts the text is measured as it will be set, and the character budget steps aside.
         const fit = options.measure?.fit(pattern, slot, action.paragraphs, fitOptions(manifest, deck, slide, freeTextFloor(laid, slot, action.paragraphs, manifest, slide, options.measure)));
         if (fit) {
-          const message = overflowMessage(fit);
-          if (message) issues.push({ severity: 'warning', slide: number, slot: source, message });
+          const over = overflowTold(fit);
+          if (over) issues.push({ severity: 'warning', slide: number, slot: source, ...over });
         } else if (budget.maxChars !== undefined && chars > budget.maxChars) {
-          issues.push({
-            severity: 'warning',
-            slide: number,
-            slot: source,
-            message: `text is ${chars} characters; the slot fits about ${budget.maxChars}`,
-          });
+          issues.push({ severity: 'warning', slide: number, slot: source, ...said('slot-over-chars', { chars, most: budget.maxChars }) });
         }
         if (budget.maxParagraphs !== undefined && action.paragraphs.length > budget.maxParagraphs) {
-          issues.push({
-            severity: 'warning',
-            slide: number,
-            slot: source,
-            message: `text has ${action.paragraphs.length} paragraphs; the slot fits ${budget.maxParagraphs}`,
-          });
+          issues.push({ severity: 'warning', slide: number, slot: source, ...said('slot-over-paragraphs', { paragraphs: action.paragraphs.length, most: budget.maxParagraphs }) });
         }
       }
+      const warn = (told: Told) => issues.push({ severity: 'warning', slide: number, slot: source, ...told });
       if (action.type === 'table' && slot.kind === 'table') {
         const { header, rows } = action.table;
-        const warn = (message: string) => issues.push({ severity: 'warning', slide: number, slot: source, message });
-        if (slot.maxColumns !== undefined && header.length > slot.maxColumns) warn(`the table has ${header.length} columns; the slot fits ${slot.maxColumns}`);
-        if (slot.maxRows !== undefined && rows.length > slot.maxRows) warn(`the table has ${rows.length === 1 ? '1 row' : `${rows.length} rows`}; the slot fits ${slot.maxRows}`);
+        if (slot.maxColumns !== undefined && header.length > slot.maxColumns) warn(said('table-over-columns', { columns: header.length, most: slot.maxColumns }));
+        if (slot.maxRows !== undefined && rows.length > slot.maxRows) warn(said('table-over-rows', { rows: rows.length, most: slot.maxRows }));
         // Counted in a loop: a table of a hundred thousand cells is reported like any other, and is not more arguments than a call takes.
         let longest = 0;
         for (const row of [header, ...rows]) for (const cell of row) if (cell.length > longest) longest = cell.length;
         // Enlarged table text leaves less room in a cell.
         const cellChars = tableAtScale(slot, bodyTextScale(manifest, deck.textScale)).maxCellChars;
-        if (cellChars !== undefined && longest > cellChars) warn(`a cell is ${longest} characters; cells fit about ${cellChars}`);
+        if (cellChars !== undefined && longest > cellChars) warn(said('table-cell-long', { chars: longest, most: cellChars }));
       }
       if (action.type === 'chart' && slot.kind === 'chart') {
         const { categories, series } = action.chart;
-        const warn = (message: string) => issues.push({ severity: 'warning', slide: number, slot: source, message });
         if (slot.maxCategories !== undefined && categories.length > slot.maxCategories) {
-          warn(`the chart has ${categories.length} categories; the slot fits ${slot.maxCategories}`);
+          warn(said('chart-over-categories', { categories: categories.length, most: slot.maxCategories }));
         }
-        if (slot.maxSeries !== undefined && series.length > slot.maxSeries) warn(`the chart has ${series.length} series; the slot fits ${slot.maxSeries}`);
+        if (slot.maxSeries !== undefined && series.length > slot.maxSeries) warn(said('chart-over-series', { series: series.length, most: slot.maxSeries }));
         // A format the renderer does not know is shown as plain numbers, which is worth saying.
         const format = (slide.slots[source] as { format?: unknown } | null | undefined)?.format;
         if (format !== undefined && format !== 'number' && format !== 'percent') {
-          warn(`chart format ${JSON.stringify(format)} is not known and is ignored; use "number" or "percent"`);
+          warn(said('chart-format-unknown', { format: String(JSON.stringify(format)) }));
         }
       }
       if (action.type === 'image' && assets && !assets.has(action.image.asset)) {

@@ -3,6 +3,60 @@
 What changed in each version, newest first, with what to do when upgrading. The version you have installed is
 in `node_modules/slotdeck/package.json`.
 
+## 0.6.4
+
+Warnings and notes can reach a person in their own language. A chat app showed people who write in Hebrew
+slotdeck's English: a box of warnings such as `the text from the document for this slide (p1-p14) is 3727
+characters, and the slide holds about 2480 even with its text set small, at 7 pt: it is cut to fit`, and a
+chat model that answered a request in Hebrew with the English of a note. Plans, decks, files and model
+requests are as in 0.6.3.
+
+### Added
+
+- **A code on every warning.** `Issue.code` says what it is (`text-cut-dense`), and `Issue.values` holds the
+  numbers and labels its sentence states (`{ label: "p1-p14", chars: 3727, holds: 2480, size: 7 }`). A code is
+  never renamed. The English `message` is as it was. The 56 codes are listed in "Warnings in a person's
+  language" in [api-reference.md](api-reference.md), and `ISSUE_CODES` lists them.
+- **`formatIssue(issue, language, { deck })`** gives the line in English or in Hebrew. With the deck it is the
+  whole line, as the chat tools write it: in English exactly their line, in Hebrew `שקף 1: הטקסט מהמסמך לשקף
+  הזה (קטעים p1-p14) באורך 3727 תווים, והשקף מכיל כ-2480 תווים גם בגופן קטן של 7 נק': הטקסט נחתך כדי שייכנס. ...`
+  (the label `p1-p14` stands between the invisible marks U+2068 and U+2069, left out here). Any other
+  language gets the English.
+- **`ToolResult.issues`:** every line of `output.warnings`, in its order, and a note for each slide the `note`
+  of a plan or of a change that stops before a cut speaks of (`slide-holds-less`, `slide-set-small`,
+  `change-would-cut`), and for each text of `not_on_slides` (`text-retold`). It is not in `output`, so the chat
+  model's tokens do not grow. `TextCutError` has the same notes in `issues`, and `freeOff`.
+
+### Changed
+
+- **The chat model is told to speak the user's language.** A result with `note`, `warnings` or
+  `not_on_slides` ends `next` with `Tell the user what this result says in the language they write in, in your
+  own words and with the same slide numbers and figures; never paste its sentences as they are.`
+  `create_presentation` and `edit_presentation` then have a `next`. A change that stops before a cut asks the
+  chat model to ask the person, in their language, whether they accept it. The plan tool's description says
+  to show the plan in the language the user writes in: 6 words more in the declarations, about 7 tokens.
+
+### Upgrading from 0.6.3
+
+Nothing to change in code. To show warnings and notes in the person's language, show
+`(result.issues ?? []).map((issue) => formatIssue(issue, uiLanguage, { deck: result.deck }))` in place of
+`output.warnings` and the `note`, and add the language line to the chat's system prompt
+([own-text.md](prompts/own-text.md)). [warnings-in-language.md](prompts/warnings-in-language.md) is the prompt
+for a coding agent. A test that compares whole `Issue` objects now sees `code` and `values`; one that matches
+`output.next` sees the language line where a result has something to tell.
+
+### Known limits
+
+- English and Hebrew only.
+- What is not slotdeck's own text stays as it was inside a Hebrew line: a review model's sentence
+  (`seen-in-picture`), values from the deck, and the names of slots other than the title, the subtitle, the
+  body and the headings and texts of columns, cards and points. The reason a layout cannot be a free slide's
+  frame (`free-base-refused`) is said in Hebrew where it is about the layout itself, and stays English
+  otherwise.
+- Errors (`output.error`) and the `summary` of a change of colour or layouts are still English, and get no
+  language line. The chat model retells them as it did.
+- The template check (`checkManifest`) gives no codes: it speaks to template authors.
+
 ## 0.6.3
 
 A slide that carries a person's text holds what one rule says it holds. Planned, set by code, or written as

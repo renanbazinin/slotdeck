@@ -7,7 +7,8 @@ import { toParagraphs } from '../deck/spec.ts';
 import type { DeckSpec, SlotValue } from '../deck/spec.ts';
 import type { Issue } from '../deck/validate.ts';
 import type { JsonSchema } from '../llm/provider.ts';
-import { FREE_OFF, charsOfWords, readWords } from './length.ts';
+import { said } from '../messages/en.ts';
+import { charsOfWords, readWords } from './length.ts';
 
 /** The most characters of a document a deck is made from: about 1,800 words, which one writing call carries. */
 export const MOST_DOCUMENT_CHARS = 12000;
@@ -1146,7 +1147,7 @@ export function keptIssues(doc: DocumentPlan, checks: readonly KeptCheck[], deck
         severity: 'warning',
         slide: check.slide,
         slot: check.slot,
-        message: `keeps ${Math.round(100 * share)}% of the words of its text from the document (${check.label}), and the slide has room for nearly all of it: write that text in its own words and order, shortened only where a limit makes you`,
+        ...said('words-kept-low-retry', { percent: Math.round(100 * share), label: check.label }),
       },
     ];
   });
@@ -1157,7 +1158,7 @@ export function keptWarnings(doc: DocumentPlan, checks: readonly KeptCheck[], de
   return checks.flatMap((check): Issue[] => {
     const share = keptPercent(doc, check, deck);
     if (share === undefined || share >= KEPT_REPAIR) return [];
-    return [{ severity: 'warning', slide: check.slide, message: `the slide keeps ${Math.round(100 * share)}% of the words of its text from the document (${check.label}), though it has room for nearly all of it` }];
+    return [{ severity: 'warning', slide: check.slide, ...said('words-kept-low', { percent: Math.round(100 * share), label: check.label }) }];
   });
 }
 
@@ -1184,11 +1185,11 @@ export function documentKept(deck: Pick<DeckSpec, 'document' | 'slides' | 'langu
   return { words, ...(translated ? { translated: true as const } : { kept_words: kept }), ...(missing.length > 0 ? { left_out: passageLabel(missing) } : {}) };
 }
 
-/** Said of a slide that holds less of its text from the document than it carries. `freeOff` adds {@link FREE_OFF}. */
+/** Said of a slide that holds less of its text from the document than it carries. `freeOff` adds that free slides are off. */
 export const textCut = (slide: number, label: string, need: number, room: number, freeOff = false): Issue => ({
   severity: 'warning',
   slide,
-  message: `the text from the document for this slide (${label}) is ${need} characters, and the slide holds about ${room}: it is cut to fit. Ask for more slides to keep it whole${freeOff ? FREE_OFF : ''}`,
+  ...said('text-cut', { label, chars: need, holds: room, freeOff }),
 });
 
 /**
@@ -1198,14 +1199,14 @@ export const textCut = (slide: number, label: string, need: number, room: number
 export const linesJoined = (slide: number, label: string, paragraphs: number, told: number): Issue => ({
   severity: 'warning',
   slide,
-  message: `the text from the document for this slide (${label}) has ${paragraphs} paragraphs, and the slide holds it only as ${told}: its paragraphs are joined. Ask for more slides to keep them apart`,
+  ...said('paragraphs-joined', { label, paragraphs, holdsParagraphs: told }),
 });
 
 /** The same of a slide whose text is set small to hold it (`FreeArrange.dense`), and still holds less. */
 export const textCutDense = (slide: number, label: string, need: number, room: number, size: number): Issue => ({
   severity: 'warning',
   slide,
-  message: `the text from the document for this slide (${label}) is ${need} characters, and the slide holds about ${room} even with its text set small, at ${size} pt: it is cut to fit. Ask for more slides to keep it whole`,
+  ...said('text-cut-dense', { label, chars: need, holds: room, size }),
 });
 
 // --- what the writer is told ---

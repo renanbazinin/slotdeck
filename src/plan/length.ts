@@ -12,6 +12,7 @@ import { toParagraphs } from '../deck/spec.ts';
 import type { DeckSpec, FreeArrange, FreeBlockKind } from '../deck/spec.ts';
 import type { Issue } from '../deck/validate.ts';
 import { freeSlotName } from '../free/blocks.ts';
+import { said } from '../messages/en.ts';
 import { scalesWithText, textBudget } from '../template/manifest.ts';
 import type { TextSlotDef } from '../template/manifest.ts';
 import { budgetScale } from './catalog.ts';
@@ -401,14 +402,14 @@ export const writtenLength = (under: ToldLength & { chars: number }): Issue => (
   severity: 'warning',
   slide: under.slide,
   slot: under.slot,
-  message: `is ${under.chars} characters, and ${under.words} words were asked for this slide: write ${under.least} to ${under.most} characters, as was asked`,
+  ...said('written-under-retry', { chars: under.chars, words: under.words, least: under.least, most: under.most }),
 });
 
 /** Said of a slide whose text is still well short of the length asked for it once the writer has been asked again. */
 export const writtenShort = (under: ToldLength & { chars: number }, language?: string): Issue => ({
   severity: 'warning',
   slide: under.slide,
-  message: `${under.words} words were asked for this slide, and it has about ${wordsOfChars(under.chars, language)}: ask for it again to have them all`,
+  ...said('written-under', { words: under.words, hasWords: wordsOfChars(under.chars, language) }),
 });
 
 /** The names of the running slots of a pattern, in its order: those that hold running text, or those named among them. */
@@ -432,24 +433,22 @@ export function runningSize(pattern: UsablePattern, names?: ReadonlySet<string>)
 export const setSmall = (size: number, templateSize: number): boolean => size < Math.round(0.8 * templateSize * 2) / 2 - 0.01;
 
 /**
- * Said at the end of what a slide that is cut is told, where free slides are not on offer (the
- * option, the template's manifest, or a list of patterns that does not name them): no slide's
- * text is then set smaller. What comes before it is said as it always was.
+ * Said of a slide that holds less text than was asked for it: what was asked, and what it holds.
+ * `freeOff` adds at its end that free slides are not on offer (the option, the template's
+ * manifest, or a list of patterns that does not name them), so that no slide's text is set
+ * smaller. What comes before it is said as it always was.
  */
-export const FREE_OFF = '; free slides are off, so its text is not set smaller';
-
-/** Said of a slide that holds less text than was asked for it: what was asked, and what it holds. `freeOff` adds {@link FREE_OFF}. */
 export const shortOfWords = (slide: number, words: number, room: number, language?: string, freeOff = false): Issue => ({
   severity: 'warning',
   slide,
-  message: `${words} words were asked for this slide, and it holds about ${wordsOfChars(room, language)}: ask for the text over more slides, or for a shorter one${freeOff ? FREE_OFF : ''}`,
+  ...said('words-cut', { words, holdsWords: wordsOfChars(room, language), freeOff }),
 });
 
 /** The same of a slide whose text is set small to hold what was asked (`FreeArrange.dense`), and still holds less. */
 export const shortOfWordsDense = (slide: number, words: number, room: number, size: number, language?: string): Issue => ({
   severity: 'warning',
   slide,
-  message: `${words} words were asked for this slide, and it holds about ${wordsOfChars(room, language)} even with its text set small, at ${size} pt: the rest is cut. Ask for the text over more slides, or for a shorter one`,
+  ...said('words-cut-dense', { words, holdsWords: wordsOfChars(room, language), size }),
 });
 
 /**
@@ -460,7 +459,7 @@ export const shortOfWordsDense = (slide: number, words: number, room: number, si
 export const photoLeftOut = (slide: number, words: number, asked = true): Issue => ({
   severity: 'warning',
   slide,
-  message: `the photo of this slide is left out to make room for ${asked ? `the ${words} words asked for it` : `its text of about ${words} words`}`,
+  ...said('photo-left-out', { words, asked }),
 });
 
 /** Where the text of a slide goes: a layout of the template, with its number of items, or a free slide of these parts. */

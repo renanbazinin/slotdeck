@@ -35,6 +35,7 @@ import {
 import { charsOfWords, documentRoom, withPassages } from '../src/plan/length.ts';
 import { systemPrompt } from '../src/plan/write.ts';
 import { buildFixturePptx, fixtureManifest } from './fixture.ts';
+import { withoutCodes } from './issues.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const demoManifest = JSON.parse(readFileSync(join(root, 'templates', 'demo.manifest.json'), 'utf8')) as TemplateManifest;
@@ -1124,7 +1125,7 @@ test('with free slides off a slide of a document moves to the layout of plain te
   const body = (schemaOf(writer.requests[0]).properties.s1 as Schema).properties.body?.description ?? '';
   assert.ok(body.startsWith("The slide's text from the document (p1-p2) shortened to 260 to 290 characters, the most this slide holds"), body);
   assert.deepEqual(
-    written.warnings.filter((issue) => /cut to fit/.test(issue.message)),
+    withoutCodes(written.warnings.filter((issue) => /cut to fit/.test(issue.message))),
     [
       {
         severity: 'warning',
@@ -1587,7 +1588,7 @@ test('a slide that sums up its text is sent back once', async () => {
     String(summing.requests[1]?.prompt.slice(-700)),
   );
   assert.deepEqual(
-    summed.warnings.filter((issue) => /keeps \d+%/.test(issue.message)),
+    withoutCodes(summed.warnings.filter((issue) => /keeps \d+%/.test(issue.message))),
     [{ severity: 'warning', slide: 1, message: 'the slide keeps 70% of the words of its text from the document (p1-p2), though it has room for nearly all of it' }],
   );
   // 36 of 40 words: no repair.

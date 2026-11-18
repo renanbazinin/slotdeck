@@ -23,6 +23,7 @@ import type { ChartValue, DeckSpec, JsonRequest, LlmProvider, SlideSpec, Templat
 import { placeholderPhoto } from '../examples/placeholder.ts';
 import { buildFixturePptx, cardsManifest, fixtureManifest, fixtureWithSlide, gridManifest, tableManifest } from './fixture.ts';
 import { openFonts } from './fonts.ts';
+import { withoutCodes } from './issues.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const manifest = JSON.parse(readFileSync(join(root, 'templates', 'demo.manifest.json'), 'utf8')) as TemplateManifest;
@@ -420,7 +421,7 @@ test('a layout whose title sits low is no frame: the usual choice passes it over
     const why = `the layout "${base}" has its title low on the slide: blocks would get ${share}% of the slide's height, and a frame leaves them 45% or more`;
     assert.equal(freeKit(template, base)?.base, 'list-with-photo', base);
     // The slide stands on the usual frame, and the deck is told why, as a note on the deck.
-    assert.deepEqual(validateDeck(template, deckOf([{ ...threeCards, base }])), [{ severity: 'warning', message: `slide 1 was planned on the frame of the layout "${base}", which cannot carry a free slide (${why}); it stands on "list-with-photo"` }]);
+    assert.deepEqual(withoutCodes(validateDeck(template, deckOf([{ ...threeCards, base }]))), [{ severity: 'warning', message: `slide 1 was planned on the frame of the layout "${base}", which cannot carry a free slide (${why}); it stands on "list-with-photo"` }]);
     // A studio that names it is refused with the reason, and a manifest written by hand is told when it is checked.
     assert.equal(changeManifest(template, [{ op: 'setManifest', free: { base } }]).rejected[0]?.reason, `a free slide cannot stand on "${base}": ${why}; name a layout with a title that leaves room under it and has no row of items, such as "list-with-photo"`);
     const named = { pkg: template.pkg, manifest: { ...manifest, free: { base } } };
@@ -441,7 +442,7 @@ test('a layout whose title sits low is no frame: the usual choice passes it over
   // that is named and passed over is compared with the one the slides stand on.
   const low = 'the layout "closing" has its title low on the slide: blocks would get 28% of the slide\'s height, and "section" leaves them 37%';
   const planned = (base: string) => validateDeck(titles, deckOf([{ ...threeCards, base }])).filter((issue) => /was planned/.test(issue.message));
-  assert.deepEqual(planned('closing'), [{ severity: 'warning', message: `slide 1 was planned on the frame of the layout "closing", which cannot carry a free slide (${low}); it stands on "section"` }]);
+  assert.deepEqual(withoutCodes(planned('closing')), [{ severity: 'warning', message: `slide 1 was planned on the frame of the layout "closing", which cannot carry a free slide (${low}); it stands on "section"` }]);
   assert.equal(changeManifest(titles, [{ op: 'setManifest', free: { base: 'closing' } }]).rejected[0]?.reason, `a free slide cannot stand on "closing": ${low}; name a layout with a title that leaves room under it and has no row of items, such as "section"`);
   const closing = { pkg: titles.pkg, manifest: { ...titles.manifest, free: { base: 'closing' } } };
   assert.deepEqual(checkManifest(closing).filter((issue) => /free\.base/.test(issue.message)), [{ severity: 'warning', message: `free.base names the pattern "closing", which cannot be the frame of free slides: ${low}; they stand on "section"` }]);
@@ -566,7 +567,7 @@ test('two hundred charts on one slide: every one is a chart of its own, drawn ba
   const ids = namesOf(slideXml(pptx, 1)).map((shape) => shape.id);
   assert.equal(new Set(ids).size, ids.length, 'every shape has its own id');
   // The deck is told what became of them, as a note on the deck: no rewriting of text changes it.
-  assert.deepEqual(issues, [{ severity: 'warning', message: 'slide 1 holds 200 blocks, as asked; 200 charts are drawn small, without axes, legend or labels' }]);
+  assert.deepEqual(withoutCodes(issues), [{ severity: 'warning', message: 'slide 1 holds 200 blocks, as asked; 200 charts are drawn small, without axes, legend or labels' }]);
 });
 
 test('a chart is drawn in as much detail as its box reads at', () => {
@@ -710,7 +711,7 @@ test('a table that its box cannot hold at the smallest size is told on its slot'
   for (const length of [31, 60]) {
     // At 7.5 pt the table's text is under what reads on a projected slide: the deck is told that too, in a note of its own.
     const small = length === 60 ? [{ severity: 'warning', message: 'slide 1 holds 2 blocks, as asked; its smallest text is set at 7.5 pt' }] : [];
-    assert.deepEqual(validateDeck(template, deckOf([over(length)])), [...small, { severity: 'warning', slide: 1, slot: 'b1Table', message: `a cell is ${length} characters; cells fit about 24` }]);
+    assert.deepEqual(withoutCodes(validateDeck(template, deckOf([over(length)]))), [...small, { severity: 'warning', slide: 1, slot: 'b1Table', message: `a cell is ${length} characters; cells fit about 24` }]);
     const plan = planOf(over(length));
     assert.ok(plan.shape('Block 1 table').box.y + plan.shape('Block 1 table').box.h <= (plan.plan.layout.blocks[1]?.box.y ?? 0) + 0.0001, 'the table still ends above the note');
   }
@@ -931,7 +932,7 @@ test('a figure longer than a figure may be is told on its slot, and does not tak
   // budget is that of a figure at four fifths of the usual size, and the labels keep to that size too.
   const long = planOf(figures('2.4 million rides'));
   assert.deepEqual([long.shape('Block 1 value').size, long.shape('Block 3 value').size, long.shape('Block 1 label').size, (long.slot('b3Value') as FreeTextSlot).maxChars], [22.5, 22.5, 17, 8]);
-  assert.deepEqual(validateDeck(template, deckOf([figures('2.4 million rides')])), [{ severity: 'warning', slide: 1, slot: 'b3Value', message: 'text is 17 characters; the slot fits about 8' }]);
+  assert.deepEqual(withoutCodes(validateDeck(template, deckOf([figures('2.4 million rides')]))), [{ severity: 'warning', slide: 1, slot: 'b3Value', message: 'text is 17 characters; the slot fits about 8' }]);
 });
 
 test('larger text for a deck never makes a text of a free slide smaller', () => {
@@ -1003,13 +1004,13 @@ test('a slide does not lose a deck\'s larger text for half a point, and one that
   assert.equal(kept.enlarged, 'none');
   assert.deepEqual(kept.plan.shapes.map((shape) => shape.size), planOf(filled('Bikes unlock')).plan.shapes.map((shape) => shape.size));
   const said = (slide: SlideSpec, textScale: number) => validateDeck(template, deckOf([slide], { textScale })).filter((issue) => /larger text/.test(issue.message));
-  assert.deepEqual(said(filled('Bikes unlock'), 1.5), [{ severity: 'warning', message: 'slide 1 holds 3 blocks, as asked; the deck asks for larger text, and this slide has no room for it' }]);
+  assert.deepEqual(withoutCodes(said(filled('Bikes unlock'), 1.5)), [{ severity: 'warning', message: 'slide 1 holds 3 blocks, as asked; the deck asks for larger text, and this slide has no room for it' }]);
   // With a heading of two lines over a text of 160 characters there is room for half of what a deck asks at
   // 1.5: the heading is larger, the text as it was.
   const lesser = freeSlide({ title: 'Ways in', blocks: Array.from({ length: 3 }, () => card('Bikes unlock from five in', full.slice(0, 160))) });
   const halved = planOf(lesser, { textScale: 1.5 });
   assert.deepEqual([halved.enlarged, halved.shape('Block 1 heading').size, planOf(lesser).shape('Block 1 heading').size, halved.shape('Block 1 text').size, planOf(lesser).shape('Block 1 text').size], ['half', 24, 19, 18, 18]);
-  assert.deepEqual(said(lesser, 1.5), [{ severity: 'warning', message: 'slide 1 holds 3 blocks, as asked; the deck asks for larger text, and this slide has room for half of that' }]);
+  assert.deepEqual(withoutCodes(said(lesser, 1.5)), [{ severity: 'warning', message: 'slide 1 holds 3 blocks, as asked; the deck asks for larger text, and this slide has room for half of that' }]);
   // Three cards have the room, and nothing is said.
   assert.equal(planOf(threeCards, { textScale: 1.5 }).enlarged, undefined);
   assert.deepEqual(validateDeck(template, deckOf([threeCards], { textScale: 1.5 })), []);
@@ -1150,7 +1151,7 @@ test('many notes on a slide are set smaller with their bands, and the deck is to
   // Two long notes still have the template's own size; twelve are small, and the deck is told so.
   const withNotes = (count: number) => freeSlide({ title: 'What we learned', blocks: [...cards, ...Array.from({ length: count }, () => ({ note: long }))] });
   assert.deepEqual([2, 4, 6, 9, 12].map((count) => planOf(withNotes(count)).shape('Block 4 note').size), [17, 13, 12, 8.5, 6.5]);
-  assert.deepEqual(validateDeck(template, deckOf([withNotes(12)])), [{ severity: 'warning', message: 'slide 1 holds 15 blocks, as asked; its smallest text is set at 6.5 pt' }]);
+  assert.deepEqual(withoutCodes(validateDeck(template, deckOf([withNotes(12)]))), [{ severity: 'warning', message: 'slide 1 holds 15 blocks, as asked; its smallest text is set at 6.5 pt' }]);
   // Twelve notes and nothing else share the whole room.
   const alone = planOf(freeSlide({ title: 'What we learned', blocks: Array.from({ length: 12 }, () => ({ note: 'Rides grew at every station.' })) }));
   assert.ok(Math.max(...alone.plan.layout.blocks.map((block) => block.box.y + block.box.h)) <= alone.kit.dense.bottom + 0.0006);
@@ -1199,14 +1200,14 @@ test('a block that ends below the room of its slide is told, as a note on the de
     const blocks = resolved.plan.layout.blocks.map((block) => (block.index === 1 ? block : { ...block, box: { ...block.box, y: 0.9 } }));
     return { ...resolved, plan: { ...resolved.plan, layout: { ...resolved.plan.layout, blocks } } };
   };
-  assert.deepEqual(checkDeck(manifest, deck, {}, lowered), [{ severity: 'warning', message: 'slide 1 holds 3 blocks, as asked; 2 of them reach below the room the slide has, and may be cut off at its edge' }]);
+  assert.deepEqual(withoutCodes(checkDeck(manifest, deck, {}, lowered)), [{ severity: 'warning', message: 'slide 1 holds 3 blocks, as asked; 2 of them reach below the room the slide has, and may be cut off at its edge' }]);
   assert.deepEqual(validateDeck(template, deck), []);
 });
 
 test('the notes on a crowded slide give sizes in half points and count one block as one', () => {
   const rows = (count: number) => ({ header: ['Station', 'Docks'], rows: Array.from({ length: count }, (_, row) => [`Station ${row + 1}`, '24']) });
   // The demo slide is 959.98 pt wide, so a size that follows the width is no round number before it is written.
-  assert.deepEqual(validateDeck(template, deckOf([freeSlide({ title: 'Stations', blocks: [{ table: rows(30) }] })])), [{ severity: 'warning', message: 'slide 1 holds 1 block, as asked; its smallest text is set at 6 pt' }]);
+  assert.deepEqual(withoutCodes(validateDeck(template, deckOf([freeSlide({ title: 'Stations', blocks: [{ table: rows(30) }] })]))), [{ severity: 'warning', message: 'slide 1 holds 1 block, as asked; its smallest text is set at 6 pt' }]);
   const charts = freeSlide({ title: 'Stations', blocks: Array.from({ length: 200 }, (_, index) => ({ chart, caption: `Station ${index + 1}` })) });
   assert.deepEqual(validateDeck(template, deckOf([charts])).map((issue) => issue.message), ['slide 1 holds 200 blocks, as asked; its smallest text is set at 5 pt', 'slide 1 holds 200 blocks, as asked; 200 charts are drawn small, without axes, legend or labels']);
   const single = freeSlide({ blocks: Array.from({ length: 1 }, () => ({ chart })), columns: 1 });
@@ -1563,7 +1564,7 @@ test('a chart of a free slide states how many categories and series read at its 
   // With content the slot states the same, and a chart over it is drawn and told on its slot, like a chart of any layout.
   const many: ChartValue = { type: 'column', categories: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'], series: ['a', 'b', 'c', 'd'].map((name) => ({ name, values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] })) };
   const deck = deckOf([freeSlide({ title: 'Rides', blocks: [{ chart: many }] })]);
-  assert.deepEqual(validateDeck(template, deck), [
+  assert.deepEqual(withoutCodes(validateDeck(template, deck)), [
     { severity: 'warning', slide: 1, slot: 'b1Chart', message: 'the chart has 10 categories; the slot fits 8' },
     { severity: 'warning', slide: 1, slot: 'b1Chart', message: 'the chart has 4 series; the slot fits 3' },
   ]);
@@ -1722,8 +1723,8 @@ test('a wish for more blocks side by side than the room holds is relaxed to the 
   }
   // The deck is told in a note of its own, without a slide number: no rewriting of text changes how a slide is set out.
   const deck = (count: number, columns: number) => deckOf([freeSlide({ title: 'Ways in', blocks: Array.from({ length: count }, (_, index) => card(`Point ${index + 1}`, 'Bikes unlock from five.')), columns })]);
-  assert.deepEqual(validateDeck(template, deck(12, 12)), [{ severity: 'warning', message: 'slide 1: 12 side by side were asked for; the slide holds 5' }]);
-  assert.deepEqual(validateDeck(template, deck(8, 1)), [{ severity: 'warning', message: 'slide 1: 1 side by side was asked for; the slide holds 2' }]);
+  assert.deepEqual(withoutCodes(validateDeck(template, deck(12, 12))), [{ severity: 'warning', message: 'slide 1: 12 side by side were asked for; the slide holds 5' }]);
+  assert.deepEqual(withoutCodes(validateDeck(template, deck(8, 1))), [{ severity: 'warning', message: 'slide 1: 1 side by side was asked for; the slide holds 2' }]);
   assert.deepEqual(validateDeck(template, deck(5, 5)), []);
   // The slide is rendered as it was checked.
   const xml = slideXml(renderDeck(template, deck(12, 12)).pptx, 1);
@@ -1916,7 +1917,7 @@ test('a slide whose smallest text is under 9 pt is told so', () => {
   const notes = (count: number) => freeSlide({ title: 'Rides', blocks: [{ chart }, ...Array.from({ length: count }, (_, index) => ({ note: index % 2 ? words : words.slice(0, 55) }))] });
   const six = planOf(notes(6));
   assert.deepEqual([six.plan.smallest, six.plan.comfortable], [8, 9]);
-  assert.deepEqual(validateDeck(template, deckOf([notes(6)])), [{ severity: 'warning', message: 'slide 1 holds 7 blocks, as asked; its smallest text is set at 8 pt' }]);
+  assert.deepEqual(withoutCodes(validateDeck(template, deckOf([notes(6)]))), [{ severity: 'warning', message: 'slide 1 holds 7 blocks, as asked; its smallest text is set at 8 pt' }]);
   // Text at 9 pt and over says nothing: three notes under a chart are set at 12.5 pt.
   assert.ok(planOf(notes(3)).plan.smallest >= 9);
   assert.deepEqual(validateDeck(template, deckOf([notes(3)])), []);

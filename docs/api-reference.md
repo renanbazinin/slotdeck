@@ -99,7 +99,15 @@ interface RenderResult {
 
 type LayoutMode = 'strict' | 'adaptive';
 interface ValidateOptions { layout?: LayoutMode; assets?: Iterable<string>; measure?: TextMeasurer }
-interface Issue { severity: 'error' | 'warning'; slide?: number; slot?: string; message: string }
+interface Issue {
+  severity: 'error' | 'warning';
+  slide?: number;                                   // from 1; absent for an issue about the deck as a whole,
+                                                    // and for one whose sentence names its slide (values.slide)
+  slot?: string;
+  message: string;                                  // the English sentence
+  code?: IssueCode;                                 // from 0.6.4, on every warning: what it is (see below)
+  values?: Record<string, string | number | boolean>; // with code: the numbers and labels its sentence states
+}
 
 interface DeckSpec {
   version: 1;
@@ -142,6 +150,127 @@ interface ChartValue {
   format?: 'number' | 'percent';
 }
 ```
+
+## Warnings in a person's language
+
+From 0.6.4 every warning has a `code` and `values`: what it is, and the numbers and labels its sentence
+states. So does every note the chat tools give a person (`ToolResult.issues`). The English `message` is as
+it was. An app shows the issue in its own language with `formatIssue`.
+
+### `formatIssue`
+
+```ts
+function formatIssue(issue: Issue, language: string, options?: FormatIssueOptions): string;
+
+interface FormatIssueOptions { deck?: Pick<DeckSpec, 'slides'> }
+```
+
+The issue as a person reads it. `language` is a BCP 47 tag: `en` gives the English sentence and `he` (or
+`he-IL`) the Hebrew one. Any other language, an issue without a code, and an issue whose values cannot make
+the sentence give the English `message`.
+
+With `options.deck` it is the whole line, as the chat tools write it in `output.warnings`: an issue with a
+slide begins with it and its slot (`slide 4 body: `), or with the part of a free slide
+(`slide 3, part 7 (note): `); one without a slide is its sentence alone. In English that line is exactly the
+tool's. In Hebrew the slide, the part and the slot are named in Hebrew, each after a comma
+(`שקף 3, חלק 7 (הערה): `, `שקף 1, כותרת: `, `שקף 2, כותרת של כרטיס 1: `). A slot has a Hebrew name where most
+templates name it alike: `title`, `subtitle`, `body`, and the `Heading` and `Text` of `column`, `col`, `card` and
+`point` with a number (`card1Heading`). Any other slot keeps its name. Without `deck` it gives the sentence
+alone.
+
+A Hebrew sentence begins with a Hebrew word, so a line set to the direction of its first letter
+(`dir="auto"`) reads from the right. A label, a name or a value from the deck stands in an isolate of its own
+(U+2068 and U+2069, invisible), so that `p1-p14`, `3-cards` or `-5, 12.5` reads as written. Strip them only if
+you also give the text a direction of its own. A Hebrew sentence states the numbers of the English one in
+digits, but for a count of one, which it says with the word after the noun, as Hebrew does (`שורה אחת`).
+
+```ts
+const lines = (result.issues ?? []).map((issue) => formatIssue(issue, uiLanguage, { deck: result.deck }));
+```
+
+### `ISSUE_CODES`
+
+```ts
+const ISSUE_CODES: readonly IssueCode[];
+```
+
+Every code, in the order of the table below.
+
+### Types
+
+```ts
+type IssueCode = keyof IssueValues; // 'text-cut' | 'words-cut' | ... : the codes below
+interface IssueValues { 'text-cut': { label: string; chars: number; holds: number; freeOff: boolean }; /* ... one entry for each code */ }
+```
+
+A code is never renamed once it has shipped. A new version may add codes; treat one you do not know as its
+`message`. `slide` in the values is the slide a sentence names itself, where the issue's own `slide` is left
+out on purpose (no slide is sent back to its writer for it); `formatIssue` then adds no prefix. `freeOff` says
+the sentence ends that free slides are off, `size` (points) that the text is set small, `label` names the
+passages of a document (`p3-p5`). Text in `given`, `format`, `from`, `to` and `word` is as the deck gave it,
+in JSON.
+
+| Code | Values | Said when |
+| --- | --- | --- |
+| `text-too-wide` | `approximate`, `percent`, `shrunk`, `size`, `fitsChars` | A one-line box's text is wider than the box (with fonts). |
+| `text-overflow` | `approximate`, `lines`, `shrunk`, `size`, `capacity`, `over`, `fitsChars` | Measured text runs over its box by `over` lines (with fonts). |
+| `colors-not-object` | `slide?` | `colors` is no object. |
+| `color-not-hex` | `slide?`, `name`, `given` | A colour is not six hex digits. |
+| `colors-replace-not-map` | `slide?` | `replace` is no map of colours. |
+| `colors-replace-not-pair` | `slide?`, `from`, `to` | A replacement is not a pair of colours. |
+| `colors-unknown-setting` | `slide?`, `name` | `colors` has a setting it does not know. |
+| `colors-kept-by-template` | none | The manifest says `"colors": false`, and the deck asks for colours. |
+| `columns-not-whole` | `slide`, `given` | A free slide's `arrange.columns` is no whole number of 1 or more. |
+| `columns-relaxed` | `slide`, `asked`, `columns` | A free slide holds fewer or more side by side than asked. |
+| `free-text-small` | `slide`, `blocks`, `size` | A free slide's smallest text is under 9 pt. |
+| `free-larger-text` | `slide`, `blocks`, `half` | A free slide has room for half of the deck's larger text, or none. |
+| `free-charts-bare` | `slide`, `blocks`, `charts` | Charts of a free slide are drawn without axes, legend or labels. |
+| `free-blocks-low` | `slide`, `blocks`, `count` | Blocks of a free slide reach below its room. |
+| `free-base-refused` | `slide`, `base`, `why`, `stands` | A free slide's `base` cannot be a frame; `why` is the reason in English (the Hebrew says the usual ones in Hebrew). |
+| `free-base-gone` | `slide`, `base`, `stands` | A free slide's `base` is no longer in the template. |
+| `items-ignored` | `pattern` | `items` on a pattern with a fixed number of items. |
+| `slot-unknown` | `pattern` | A slot the pattern does not have. |
+| `slot-over-chars` | `chars`, `most` | Text over the slot's characters. |
+| `slot-over-paragraphs` | `paragraphs`, `most` | Text over the slot's paragraphs. |
+| `table-over-columns` | `columns`, `most` | A table over the slot's columns. |
+| `table-over-rows` | `rows`, `most` | A table over the slot's rows. |
+| `table-cell-long` | `chars`, `most` | A table cell over what a cell holds. |
+| `chart-over-categories` | `categories`, `most` | A chart over the slot's categories. |
+| `chart-over-series` | `series`, `most` | A chart over the slot's series. |
+| `chart-format-unknown` | `format` | A chart format that is not `number` or `percent`. |
+| `chart-values-unstated` | `numbers`, `count` | Chart values the brief does not state (planner only). |
+| `text-orphan` | `lines`, `word`, `chars` | A heading ends with one word on its last line (`checkDesign`). |
+| `text-empty` | `lines`, `sampleLines?` or `capacity?`, `chars` | Text leaves its box almost empty (`checkDesign`). |
+| `row-uneven` | `lines`, `beside`, `besideLines`, `chars` | A card holds far less than the one beside it (`checkDesign`). |
+| `seen-in-picture` | `problem` | A review model saw it in a picture of the slide; `problem` is its own sentence. |
+| `accent2-missing` | `slide?` | A second colour asked of a template that has none (`renderDeck`). |
+| `color-near-page` | `hex` | A colour close to the page it lands on (`renderDeck`). |
+| `part-unwritten` | none | Sent to the writer only: a part came back empty. |
+| `photos-over` | `most` | Sent to the writer only: more photos described than are made for a slide. |
+| `parts-left-out-empty` | `slide`, `count` | Parts of a free slide had no content and were left out. |
+| `parts-left-out-unusable` | `slide`, `count` | Parts of a free slide could not be shown and were left out. |
+| `photos-left-out` | `slide`, `count`, `most` | Photos over the most made for one slide were left out. |
+| `parts-unchanged` | `slide`, `count` | What a change wrote for parts could not be shown; they stay as they were. |
+| `parts-unwritten` | `slide`, `count` | A change wrote nothing for parts; they stay as they were. |
+| `written-under-retry` | `chars`, `words`, `least`, `most` | Sent to the writer only: a text well short of the words asked. |
+| `written-under` | `words`, `hasWords` | A slide is still well short of the words asked. |
+| `words-cut` | `words`, `holdsWords`, `freeOff` | A slide holds fewer words than were asked. |
+| `words-cut-dense` | `words`, `holdsWords`, `size` | The same, with its text set small. |
+| `photo-left-out` | `words`, `asked` | A photo gave way to a text (edits only). |
+| `words-kept-low-retry` | `percent`, `label` | Sent to the writer only: a slide keeps too few words of its passages. |
+| `words-kept-low` | `percent`, `label` | A slide still keeps too few words of its passages. |
+| `text-cut` | `label`, `chars`, `holds`, `freeOff` | A slide holds less of its document's text than it carries. |
+| `paragraphs-joined` | `label`, `paragraphs`, `holdsParagraphs` | A slide holds its document's text only with its paragraphs joined. |
+| `text-cut-dense` | `label`, `chars`, `holds`, `size` | A slide holds less of its document's text even set small. |
+| `nothing-changed` | `slide` | A change named no part of a free slide to write again. |
+| `recolor-slide-removed` | `slide` | A change removed a slide that was to be recoloured. |
+| `change-would-cut` | `slide`, `words`, `holdsWords`, `size?`, `freeOff` | Note of `edit_presentation` that stops before a cut, one for each slide (`TextCutError.issues`). |
+| `slide-holds-less` | `slide`, `words`, `holdsWords`, `size?`, `freeOff` | Note of a plan: a slide whose text is cut. |
+| `slide-set-small` | `slide`, `size`, `templateSize` | Note of a plan: a slide that holds all its text, in type well below the template's. |
+| `text-retold` | `name` | Note of a plan: the topic retells a listed text, which no slide carries word for word. |
+
+The sentences of every code, in English and in Hebrew, are in `dist/messages/en.js` and `dist/messages/he.js`
+of the package. "Deck warnings" in [troubleshooting.md](troubleshooting.md) lists the warnings with what to do.
 
 ## Generating and editing
 
@@ -360,6 +489,8 @@ number of items the pattern does not take, a free slide of more than 400 parts).
 ```ts
 class TextCutError extends PlanError {
   readonly fits: SlideTextFit[]; // the slides that would hold less than they carry, numbered as after the change
+  readonly freeOff: boolean;     // from 0.6.4: free slides are off, so no text is set smaller
+  readonly issues: Issue[];      // from 0.6.4: a note for each slide (`change-would-cut`), for formatIssue
 }
 ```
 
@@ -625,6 +756,13 @@ conversation. The app passes those texts with every call, as `call(name, args, {
 the slides carry the texts the chat model names word for word. See "Texts the person gave" in
 [chat-tools.md](chat-tools.md).
 
+From 0.6.4 a result that tells a person something has `issues`: every line of `output.warnings`, in its
+order, and a note for each slide the `note` of a plan, or of a change that stops before a cut, speaks of, and
+for each text of `not_on_slides`. `formatIssue(issue, language, { deck: result.deck })` gives each line in the
+person's language; in English it is the line of `output.warnings`. Such a result's `output.next` also tells
+the chat model to say it in the language the user writes in. See "Warnings and notes in the person's
+language" in [chat-tools.md](chat-tools.md).
+
 ### `describeDocuments`
 
 ```ts
@@ -714,7 +852,14 @@ interface ChatDocument {
   text: string; // the text as the person gave it
 }
 interface ToolDefinition { name: string; description: string; parameters: JsonSchema }
-interface ToolResult { output: Record<string, unknown>; plan?: DeckPlan; deck?: DeckSpec; pptx?: Uint8Array; previews?: SlidePreview[] }
+interface ToolResult {
+  output: Record<string, unknown>;
+  issues?: Issue[]; // from 0.6.4: what the result tells a person, to show with formatIssue; not in output
+  plan?: DeckPlan;
+  deck?: DeckSpec;
+  pptx?: Uint8Array;
+  previews?: SlidePreview[];
+}
 ```
 
 ## Providers

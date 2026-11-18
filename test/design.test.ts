@@ -24,6 +24,7 @@ import {
 import type { DeckSpec, FontFiles, FontMetrics, Issue, JsonRequest, PreviewProvider, TemplateManifest } from '../src/index.ts';
 import { readPresentation } from '../src/pptx/presentation.ts';
 import { officeFonts, openFonts } from './fonts.ts';
+import { withoutCodes } from './issues.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const pptx = readFileSync(join(root, 'templates', 'demo.pptx'));
@@ -257,7 +258,7 @@ test('the vision review shows the model a picture of each slide with its text, a
   assert.deepEqual((request?.schema as { properties: { problems: { items: { properties: { slide: { enum: number[] } } } } } }).properties.problems.items.properties.slide.enum, [1, 2, 3]);
 
   // A slot the slide does not have is dropped from the problem; a slide not shown, and an empty report, are dropped whole.
-  assert.deepEqual(issues, [
+  assert.deepEqual(withoutCodes(issues), [
     { severity: 'warning', slide: 2, slot: 'body', message: 'seen in the picture of the slide: The text runs under the bottom edge; shorten it by a third.' },
     { severity: 'warning', slide: 1, message: 'seen in the picture of the slide: The slide is mostly empty.' },
   ] satisfies Issue[]);

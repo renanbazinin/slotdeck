@@ -25,6 +25,7 @@ import {
 import type { Brief, DeckPlan, DeckSpec, JsonRequest, LlmProvider, PlanSettings, PresentationToolsOptions, SlideSpec, TemplateManifest } from '../src/index.ts';
 import { readPresentation } from '../src/pptx/presentation.ts';
 import { buildFixturePptx, cardsManifest } from './fixture.ts';
+import { withoutCodes } from './issues.ts';
 
 const pptx = buildFixturePptx();
 // Three patterns: `content` (with a photo), `closing` (its text is a deck field) and `cards`.
@@ -615,7 +616,7 @@ test('colours for some slides go to those slides alone: none to a slide the edit
   assert.ok(!('colors' in dropped.deck));
   assert.deepEqual(dropped.deck.slides.map((slide) => slide.colors), [undefined, undefined]);
   assert.deepEqual(dropped.recolored, []);
-  assert.deepEqual(dropped.warnings, [{ severity: 'warning', message: 'the change removed slide 2, which was to be recoloured' }]);
+  assert.deepEqual(withoutCodes(dropped.warnings), [{ severity: 'warning', message: 'the change removed slide 2, which was to be recoloured' }]);
   assert.doesNotMatch(dropped.warnings[0]?.message ?? '', /characters|paragraphs|lines/, 'not a message a rewrite would be started for');
 
   // An edit that sets no colours for slides has no such key in its result.

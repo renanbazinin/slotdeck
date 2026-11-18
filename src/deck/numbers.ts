@@ -3,6 +3,7 @@ import { freeSlots, isFreeBlockKind } from '../free/blocks.ts';
 import { isChartValue, isFreeSlide } from './spec.ts';
 import type { DeckSpec } from './spec.ts';
 import type { Issue } from './validate.ts';
+import { said } from '../messages/en.ts';
 
 /**
  * The numbers a text states. "3K" counts as both 3 and 3000, "1,200" as 1200, "45%" as 45.
@@ -44,7 +45,7 @@ export function unstatedChartValues(manifest: TemplateManifest, deck: DeckSpec):
           severity: 'warning',
           slide: index + 1,
           slot: slot.name,
-          message: `chart values not stated in the brief: ${unknown.join(', ')}. Check them before using the deck.`,
+          ...said('chart-values-unstated', { numbers: unknown.join(', '), count: unknown.length }),
         });
       }
     }

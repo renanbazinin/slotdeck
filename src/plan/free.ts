@@ -363,10 +363,19 @@ export function kindsUsed(slides: ReadonlyArray<{ blocks?: unknown }>, also: rea
  * the slot is the part itself (`part 3 (chart)`). `undefined` for a slot that is no part: the title.
  */
 export function partLabel(blocks: readonly FreeBlockKind[] | undefined, slot: string | undefined): string | undefined {
+  const part = slotPart(blocks, slot);
+  return part ? `part ${part.number} (${part.kind})${part.name !== undefined ? ` ${part.name}` : ''}` : undefined;
+}
+
+/**
+ * The part of a free slide a slot is, as {@link partLabel} says it: its number on the slide, its
+ * kind, and the name of the slot within it in lower case, left out where the label leaves it out.
+ */
+export function slotPart(blocks: readonly FreeBlockKind[] | undefined, slot: string | undefined): { number: string; kind: FreeBlockKind; name?: string } | undefined {
   const match = /^b(\d+)([A-Z][A-Za-z]*)$/.exec(slot ?? '');
   const kind = match ? blocks?.[Number(match[1]) - 1] : undefined;
   if (!match || !kind || !FREE_PARTS[kind]) return undefined;
   const name = (match[2] as string).toLowerCase();
   const whole = name === kind || FREE_PARTS[kind].length === 1 || (kind === 'list' && name === 'items');
-  return `part ${match[1]} (${kind})${whole ? '' : ` ${name}`}`;
+  return whole ? { number: match[1] as string, kind } : { number: match[1] as string, kind, name };
 }

@@ -2,6 +2,8 @@
 // a second colour, the dark colour of the text, and the greys. Read from how often each colour is
 // used; no model. A deck that asks for another colour has the whole family follow.
 import type { DeckColors } from '../deck/spec.ts';
+import { said } from '../messages/en.ts';
+import type { Told } from '../messages/en.ts';
 import { hexToOklch, hueDistance, hueOffset, oklchToHex, parseHex } from './space.ts';
 import type { Oklch } from './space.ts';
 
@@ -142,35 +144,46 @@ export function buildPalette(uses: ColorUse[], pinned: { accent?: string; accent
  * `undefined` colours when nothing usable is left.
  */
 export function readColors(value: unknown): { colors?: DeckColors; problems: string[] } {
-  const problems: string[] = [];
-  if (value === undefined || value === null) return { problems };
-  if (typeof value !== 'object' || Array.isArray(value)) return { problems: ['"colors" must be an object such as { "accent": "1565C0" }; it is ignored'] };
+  const { colors, told } = readColorsTold(value);
+  const problems = told.map((problem) => problem.message);
+  return colors ? { colors, problems } : { problems };
+}
+
+/**
+ * The same, with each problem as a warning's message, code and values. `slide` is the number of
+ * the slide whose colours they are: the message then begins with it, and the values carry it.
+ */
+export function readColorsTold(value: unknown, slide?: number): { colors?: DeckColors; told: Told[] } {
+  const told: Told[] = [];
+  const at = slide !== undefined ? { slide } : {};
+  if (value === undefined || value === null) return { told };
+  if (typeof value !== 'object' || Array.isArray(value)) return { told: [said('colors-not-object', at)] };
   const given = value as Record<string, unknown>;
   const colors: DeckColors = {};
   for (const name of ['accent', 'accent2'] as const) {
     if (given[name] === undefined || given[name] === null || given[name] === '') continue;
     const hex = parseHex(given[name]);
     if (hex) colors[name] = hex;
-    else problems.push(`the colour "${name}" is ${JSON.stringify(given[name])}, which is not six hex digits such as "1565C0"; it is ignored`);
+    else told.push(said('color-not-hex', { ...at, name, given: String(JSON.stringify(given[name])) }));
   }
   if (given.replace !== undefined && given.replace !== null) {
     if (typeof given.replace !== 'object' || Array.isArray(given.replace)) {
-      problems.push('"replace" must map colours to colours, such as { "0E7C7B": "1565C0" }; it is ignored');
+      told.push(said('colors-replace-not-map', at));
     } else {
       const replace: Record<string, string> = {};
       for (const [from, to] of Object.entries(given.replace as Record<string, unknown>)) {
         const source = parseHex(from);
         const target = parseHex(to);
         if (source && target) replace[source] = target;
-        else problems.push(`the replacement ${JSON.stringify(from)}: ${JSON.stringify(to)} is not a pair of colours of six hex digits; it is ignored`);
+        else told.push(said('colors-replace-not-pair', { ...at, from: JSON.stringify(from), to: String(JSON.stringify(to)) }));
       }
       if (Object.keys(replace).length > 0) colors.replace = replace;
     }
   }
   for (const name of Object.keys(given)) {
-    if (name !== 'accent' && name !== 'accent2' && name !== 'replace') problems.push(`"colors" has no setting called "${name}"; it is ignored`);
+    if (name !== 'accent' && name !== 'accent2' && name !== 'replace') told.push(said('colors-unknown-setting', { ...at, name }));
   }
-  return Object.keys(colors).length > 0 ? { colors, problems } : { problems };
+  return Object.keys(colors).length > 0 ? { colors, told } : { told };
 }
 
 /** A function from a template colour to the colour a deck shows in its place. */

@@ -251,7 +251,13 @@ Where free slides are off (`free: false`, `"free": false` in the manifest, or a 
 set smaller.` So does the `note` of a change that stops before writing (see `edit_presentation`).
 
 Where a slide has words and the call had no `slide_count`, `next` begins: `No slide_count was given, so the
-planner chose 6 slides. If the user named a number of slides, plan again with slide_count.`
+planner chose 6 slides. If the user named a number of slides, plan again with slide_count.` A plan with a
+`note` or `not_on_slides` has `next` end with the language line (from 0.6.4; see "Warnings and notes in the
+person's language"):
+
+```
+Tell the user what this result says in the language they write in, in your own words and with the same slide numbers and figures; never paste its sentences as they are.
+```
 
 ### `edit_presentation_plan`
 
@@ -283,11 +289,14 @@ Output:
   "file": "pptx/deck_851fbb9677.pptx",
   "slides": [{ "number": 1, "layout": "cover", "title": "Welcome Home Guide" }],
   "plan_id": "plan_7e890671a8",
-  "warnings": ["slide 4 body: text is 230 characters; the slot fits about 211"]
+  "warnings": ["slide 4 body: text is 230 characters; the slot fits about 211"],
+  "next": "Tell the user what this result says in the language they write in, in your own words and with the same slide numbers and figures; never paste its sentences as they are."
 }
 ```
 
-`file` is the store key of the rendered pptx. `warnings` is present only when there are any.
+`file` is the store key of the rendered pptx. `warnings` is present only when there are any, and so is `next`,
+which then tells the chat model to say them in the user's language (from 0.6.4; see "Warnings and notes in the
+person's language").
 
 A presentation made from a text the person gave has `"document": { "words": 491, "kept_words": 488 }`, with
 `"left_out"` naming the parts no slide carries. A slide that holds its part of the text has it set word for word
@@ -345,7 +354,7 @@ nothing is stored. The output is then:
 ```json
 {
   "note": "Nothing was changed: slide 2 would hold about 725 of its 1500 words (text at 9 pt). Ask for more slides or a shorter text, or accept that the rest is cut.",
-  "next": "Nothing was written. Tell the user what the note says. If they accept that the rest is cut, call edit_presentation again with the same instruction and accept_cut: true; otherwise change the request (more slides, a shorter text)."
+  "next": "Nothing was written. Tell the user what the note says, and ask them, in their language, whether they accept that the rest is cut. If they accept, call edit_presentation again with the same instruction and accept_cut: true; otherwise change the request (more slides, a shorter text). Tell the user what this result says in the language they write in, in your own words and with the same slide numbers and figures; never paste its sentences as they are."
 }
 ```
 
@@ -414,6 +423,48 @@ these instead:
 The same is said when the software fails this way for another reason, such as a template or an option that is
 not what `presentationTools` takes. The error itself is not in the result: to see it, run the step outside the
 tools (`writeDeck` with the stored plan, `planEdit` with the stored deck).
+
+## Warnings and notes in the person's language
+
+What the tools say is English: the `note`, the `warnings` and `not_on_slides`. A person who writes in another
+language gets it in theirs in two ways, from 0.6.4.
+
+**The app shows them.** A result that tells a person something has `issues` beside `output`: every line of
+`output.warnings`, in its order, and a note for each slide the `note` speaks of (a cut slide
+`slide-holds-less`, a slide in small type `slide-set-small`, a slide a change would cut `change-would-cut`)
+and for each text of `not_on_slides` (`text-retold`). Each has a `code` and its `values`. `issues` is not in
+`output`, so it costs the chat model nothing. Show them with `formatIssue`:
+
+```ts
+const result = await tools.call(call.name, call.arguments);
+const lines = (result.issues ?? []).map((issue) => formatIssue(issue, uiLanguage, { deck: result.deck }));
+```
+
+In English a line is exactly the line of `output.warnings`. In Hebrew the line of a slide cut to fit is:
+
+```
+שקף 1: הטקסט מהמסמך לשקף הזה (קטעים p1-p14) באורך 3727 תווים, והשקף מכיל כ-2480 תווים גם בגופן קטן של 7 נק': הטקסט נחתך כדי שייכנס. אפשר לבקש יותר שקפים כדי שהטקסט יישאר שלם
+```
+
+The label `p1-p14` stands between the invisible marks U+2068 and U+2069 (see
+[api-reference.md](api-reference.md)); they are left out here.
+
+Show a Hebrew line right to left (`dir="rtl"`, or `dir="auto"`: it begins with a Hebrew word). Any other
+language gets the English. The codes and their values are in "Warnings in a person's language" in
+[api-reference.md](api-reference.md).
+
+**The chat model says them.** A result with `note`, `warnings` or `not_on_slides` ends its `next` with one
+sentence, and has a `next` of that sentence alone where it had none (`create_presentation`,
+`edit_presentation`):
+
+```
+Tell the user what this result says in the language they write in, in your own words and with the same slide numbers and figures; never paste its sentences as they are.
+```
+
+The `next` of a change that stops before a cut asks the chat model to ask the person, in their language,
+whether they accept it. The plan tool's description says to show the plan in the language the user writes in.
+A result with nothing to tell has `next` as before. The English `note`, `warnings` and their order are as in
+0.6.3.
 
 ## The store
 
@@ -522,6 +573,10 @@ The tool descriptions already tell the model the order to work in. It helps to a
   sets long text smaller.
 - When a tool's result has `note`, `not_on_slides` or `warnings`, the chat model tells the person before it goes
   on. It sets `accept_cut` only after the person accepted the cut.
+- The chat model speaks the language the person writes in. What the tools say is English: it retells it in its
+  own words, in the person's language, with the same slide numbers and figures, and never pastes it as it is.
+  The results say so in `next` (from 0.6.4); a line in the system prompt makes it hold for the whole
+  conversation.
 - Pass wishes about the kind of slides on, in the person's words ("no tables", "only cards"), in `topic` or
   `instructions`. For a presentation of text only, set `text_only: true`: "no pictures" alone
   (`image_density: "none"`) still allows cards, tables and charts.

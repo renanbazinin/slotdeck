@@ -9,6 +9,7 @@ import type { DeckSpec } from '../deck/spec.ts';
 import { DeckValidationError } from '../deck/validate.ts';
 import type { Issue, LayoutMode } from '../deck/validate.ts';
 import type { JsonRequest, JsonSchema, LlmProvider } from '../llm/provider.ts';
+import { said } from '../messages/en.ts';
 import type { PreviewProvider, SlidePreview } from '../preview/provider.ts';
 import { renderDeck } from '../render/render.ts';
 import type { Template } from '../render/render.ts';
@@ -160,7 +161,7 @@ export function visionReview(options: VisionReviewOptions): DeckReview {
         const slide = Number(raw?.slide);
         const problem = String(raw?.problem ?? '').replace(/\s+/g, ' ').trim();
         if (!batch.includes(slide) || problem === '') continue;
-        const issue: Issue = { severity: 'warning', slide, message: `seen in the picture of the slide: ${problem}` };
+        const issue: Issue = { severity: 'warning', slide, ...said('seen-in-picture', { problem }) };
         const slot = String(raw?.slot ?? '').trim();
         if (slotsOf.get(slide)?.includes(slot)) issue.slot = slot;
         issues.push(issue);
