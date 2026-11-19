@@ -317,6 +317,7 @@ Options:
 | `textScale` | The factor on body text the deck is rendered with: the manifest's `textScale` times the deck's. Defaults to `1`. |
 | `shrink` | `{ to, minSize? }`: allow the text to be set smaller, as `shrinkText` does. |
 | `items` | For a slot of a row of items: how many items the slide has. In a row with `widen`, fewer items are wider, and the text is measured in the wider box. |
+| `direction` | The direction the deck reads (`'ltr'` or `'rtl'`). It decides the direction and language a paragraph that mixes scripts is written in, and so how it is measured. Defaults to the template's direction, which is what the renderer uses for a deck that states none. The checks pass the deck's. |
 
 `measure.missingFonts()` returns the typefaces the template's text slots need that were not supplied.
 
@@ -349,9 +350,10 @@ the presentation's defaults, and finally the theme's fonts.
 **Which typeface a character is set in.** A run names up to three typefaces: Latin, complex script (Hebrew,
 Arabic, Thai and others) and East Asian. Hebrew letters are set in the complex-script typeface, not the Latin
 one. When the template names none, the theme decides, and a theme often sends Hebrew to Arial or Times New
-Roman whatever the Latin font is. In a paragraph that starts with a right-to-left letter, digits are set in
-the complex-script typeface too, and a space or punctuation mark in the typeface of the character before it.
-In other paragraphs digits, spaces and punctuation are set in the Latin typeface.
+Roman whatever the Latin font is. In a run marked with a right-to-left language (the language the renderer
+writes, see "Why runs are marked with a language" in [languages.md](languages.md)), digits are set in the
+complex-script typeface too, and a space or punctuation mark in the typeface of the character before it. In
+other runs digits, spaces and punctuation are set in the Latin typeface.
 
 **Width.** The sum of the glyph widths from the font file, after the font's own shaping (Arabic joining,
 ligatures), with each glyph rounded to an eighth of a point. PowerPoint lays text out on that grid, and at
@@ -361,8 +363,7 @@ capitals.
 
 **Kerning.** Hebrew and other complex-script letters are always kerned with each other, at any size, and
 never with the punctuation, digits or spaces next to them. Latin text is kerned when the template turns
-kerning on for its size (commonly from 12 pt up), but not inside a paragraph that starts with a right-to-left
-letter.
+kerning on for its size (commonly from 12 pt up), but not in a run marked with a right-to-left language.
 
 **Line breaks.** Words go on a line while they fit. A line may break at a space and after a hyphen or a dash;
 not at a slash, a full stop, a colon or a Hebrew maqaf. A word longer than a whole line is cut where the line

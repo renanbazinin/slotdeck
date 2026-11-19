@@ -179,7 +179,7 @@ test('Hebrew paragraphs are marked right to left, so a browser puts their punctu
         slots: {
           title: 'כותרת בעברית',
           subtitle: 'An English line',
-          body: ['שאלות: hello@example.org.', '2025 היה שנה טובה.'],
+          body: ['שאלות: hello@example.org.', '2025 היה שנה טובה.', 'AI בשירות הלקוחות.'],
         },
       },
     ],
@@ -191,6 +191,8 @@ test('Hebrew paragraphs are marked right to left, so a browser puts their punctu
   assert.ok(direction('שאלות: hello@example\\.org\\.'), 'Hebrew followed by an address');
   // A paragraph that starts with a number takes its direction from its first letter.
   assert.ok(direction('2025 '), 'a paragraph that starts with digits');
+  // In a deck that reads right to left, a Hebrew line that starts with a Latin word reads right to left, as in the pptx.
+  assert.ok(direction('AI בשירות'), 'a Hebrew line that starts with a Latin word');
   assert.match(svg, /<p (?!dir=)[^>]*>(?:<[^>]+>)*An English line/);
 });
 

@@ -96,7 +96,8 @@ export function visionReview(options: VisionReviewOptions): DeckReview {
       if (error instanceof DeckValidationError) return [];
       throw error;
     }
-    const pictures = await preview.renderSlides(signal ? { pptx, signal } : { pptx });
+    const direction = deck.direction ?? template.manifest.direction;
+    const pictures = await preview.renderSlides(signal ? { pptx, direction, signal } : { pptx, direction });
     const unreadable = pictures.find((picture) => !BITMAP.test(picture.mimeType));
     if (unreadable) throw new Error(`visionReview needs bitmap pictures such as PNG, and the preview provider gave ${unreadable.mimeType}`);
     const bySlide = new Map<number, SlidePreview>(pictures.map((picture) => [picture.slide, picture]));

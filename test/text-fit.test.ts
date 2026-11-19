@@ -511,3 +511,36 @@ test('Hebrew letters are always kerned with each other; Latin text only where th
   // A Hebrew word in an English paragraph is.
   assert.equal(width(normal, 'body', 'abc אבג'), 4 * 0.375 * 18 + 3 * 0.375 * 18);
 });
+
+test('text is measured in the language and direction the renderer writes it in', () => {
+  // A font in which kerning takes an eighth of an em off every glyph: Latin text in a run marked
+  // right to left is not kerned, so the width says which language a run was measured in.
+  const kerned: FontMetrics = { face: () => ({ has: () => true, advances: (text, kerning) => [...text].map(() => (kerning ? 0.375 : 0.5)) }) };
+  const files = unzipSync(pptx);
+  const slide = strFromU8(files['ppt/slides/slide2.xml'] as Uint8Array);
+  const at = slide.indexOf('<p:cNvPr id="7"');
+  const end = slide.indexOf('</p:sp>', at);
+  const withBody = (change: (shape: string) => string) => {
+    const copy = { ...files, 'ppt/slides/slide2.xml': strToU8(slide.slice(0, at) + change(slide.slice(at, end)) + slide.slice(end)) };
+    return textMeasurer(loadTemplate(zipSync(copy), manifest), kerned);
+  };
+  const width = (measurer: ReturnType<typeof textMeasurer>, text: string, options?: Parameters<ReturnType<typeof textMeasurer>['fit']>[3]) =>
+    measurer.fit('text-and-photo', 'body', text, options)?.widths[0]?.[0];
+
+  // The body's runs state he-IL: English is written there as en-US, and measured so, kerned at 18 pt.
+  const stated = withBody((shape) => shape.replaceAll('<a:rPr sz="1800"', '<a:rPr lang="he-IL" sz="1800"'));
+  assert.equal(width(stated, 'abc, def'), 8 * 0.375 * 18);
+  // The runs state no language and inherit he-IL: the renderer leaves them so, and they are measured right to left.
+  const inherited = withBody((shape) => shape.replace('<a:lstStyle/>', '<a:lstStyle><a:lvl1pPr><a:defRPr lang="he-IL"/></a:lvl1pPr></a:lstStyle>'));
+  assert.equal(width(inherited, 'abc, def'), 8 * 0.5 * 18);
+  // A Latin-led Hebrew line: left to right in a deck that reads left to right, right to left in one that reads right to left.
+  const normal = textMeasurer(loadTemplate(pptx, manifest), kerned);
+  assert.equal(width(normal, 'abc אבג'), 7 * 0.375 * 18);
+  assert.equal(width(normal, 'abc אבג', { direction: 'rtl' }), 4 * 0.5 * 18 + 3 * 0.375 * 18);
+  // On a template that reads right to left, a measurer asked without a direction takes the template's.
+  const turned = textMeasurer(loadTemplate(pptx, { ...manifest, direction: 'rtl' }), kerned);
+  assert.equal(width(turned, 'abc אבג'), 4 * 0.5 * 18 + 3 * 0.375 * 18);
+  // The checks pass the direction the deck reads, and the template's when the deck states none.
+  assert.equal(fitOptions(manifest, {}, {}).direction, 'ltr');
+  assert.equal(fitOptions(manifest, { direction: 'rtl' }, {}).direction, 'rtl');
+});

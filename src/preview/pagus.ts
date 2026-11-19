@@ -1,6 +1,7 @@
 // Slide pictures from the Pagus library (`@pagus-kit/core` and `@pagus-kit/renderer`). slotdeck
 // does not depend on it: the developer installs it and passes the two modules in.
-import { detectDirection } from '../render/text.ts';
+import { paragraphDirection } from '../render/text.ts';
+import type { Direction } from '../template/manifest.ts';
 import type { PreviewProvider, SlidePreview } from './provider.ts';
 
 /** The part of `@pagus-kit/core` this adapter uses: `import * as core from '@pagus-kit/core'`. */
@@ -28,13 +29,14 @@ const encoder = new TextEncoder();
  * Pagus writes a paragraph's text as HTML and leaves its direction to the browser, which takes
  * a paragraph to run left to right unless told otherwise. A Hebrew or Arabic sentence then gets
  * its full stop on the wrong side, and a line that mixes Hebrew with an address or a number is
- * put in the wrong order. A paragraph that starts with a right-to-left letter is therefore
- * marked as running right to left, which is how slotdeck's renderer marks it in the pptx.
+ * put in the wrong order. A paragraph is therefore marked as running right to left by the rule
+ * slotdeck's renderer writes it by (see `paragraphDirection`): one that starts with a
+ * right-to-left letter, and in a deck that reads right to left, one with any right-to-left letter.
  */
-function markDirection(svg: string): string {
+function markDirection(svg: string, direction: Direction | undefined): string {
   return svg.replace(/<p ([^>]*)>([\s\S]*?)<\/p>/g, (whole, attributes: string, inner: string) => {
     if (/(^|\s)dir=/.test(attributes)) return whole;
-    return detectDirection(inner.replace(/<[^>]+>/g, '')) === 'rtl' ? `<p dir="rtl" ${attributes}>${inner}</p>` : whole;
+    return paragraphDirection(inner.replace(/<[^>]+>/g, ''), direction) === 'rtl' ? `<p dir="rtl" ${attributes}>${inner}</p>` : whole;
   });
 }
 
@@ -46,7 +48,7 @@ function markDirection(svg: string): string {
 export function pagusPreviews(core: PagusCore, renderer: PagusRenderer, options: PagusOptions = {}): PreviewProvider {
   const render = renderer.renderSlide as (slide: unknown, slideSize: unknown, options?: unknown) => { svg: string; width: number; height: number };
   return {
-    async renderSlides({ pptx, slides, signal }) {
+    async renderSlides({ pptx, slides, direction, signal }) {
       signal?.throwIfAborted();
       // The parser takes an ArrayBuffer of exactly the file, which a view into a larger buffer is not.
       const buffer = pptx.buffer.slice(pptx.byteOffset, pptx.byteOffset + pptx.byteLength) as ArrayBuffer;
@@ -57,7 +59,7 @@ export function pagusPreviews(core: PagusCore, renderer: PagusRenderer, options:
       presentation.slides.forEach((slide, index) => {
         if (wanted && !wanted.has(index + 1)) return;
         const drawn = render(slide, presentation.slideSize, options);
-        pictures.push({ slide: index + 1, mimeType: 'image/svg+xml', data: encoder.encode(markDirection(drawn.svg)), width: drawn.width, height: drawn.height });
+        pictures.push({ slide: index + 1, mimeType: 'image/svg+xml', data: encoder.encode(markDirection(drawn.svg, direction)), width: drawn.width, height: drawn.height });
       });
       return pictures;
     },

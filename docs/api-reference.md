@@ -1377,6 +1377,7 @@ interface PreviewProvider {
 interface PreviewRequest {
   pptx: Uint8Array;
   slides?: number[]; // 1-based; every slide when left out
+  direction?: Direction; // the direction the deck reads, for a renderer that sets paragraph direction itself; slotdeck's own calls fill it
   signal?: AbortSignal;
 }
 interface SlidePreview {
@@ -1467,6 +1468,7 @@ interface FitOptions {
   textScale?: number;   // the factor on body text the deck is rendered with; default 1
   shrink?: ShrinkLimit; // allow the text to be set smaller when it does not fit
   items?: number;       // for a slot of a row of items: how many items the slide has
+  direction?: Direction; // the direction the deck reads; decides how a paragraph that mixes scripts is written and measured; the template's when left out
 }
 interface ShrinkLimit { to: number; minSize?: number } // the shape of the manifest's shrinkText
 interface TextFit {

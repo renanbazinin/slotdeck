@@ -58,6 +58,8 @@ export interface RunStyle {
   caps: boolean;
   /** The language the run is marked with, e.g. `he-IL`; `''` when nothing states one. */
   lang: string;
+  /** The language the run states itself, not by inheritance; `''` when it states none. */
+  ownLang: string;
 }
 
 /** A length in points, or a share of the line height. */
@@ -531,6 +533,7 @@ function readParagraph(paragraph: Element, styleRun: 'first' | 'last', lists: El
       spacing: Number(runAttr('spc') ?? 0) / 100,
       caps: runAttr('cap') === 'all',
       lang: runAttr('lang') ?? lists.map((list) => path(list, [NS.a, 'defPPr'], [NS.a, 'defRPr'])?.getAttribute('lang')).find(Boolean) ?? '',
+      ownLang: ownRun?.getAttribute('lang') ?? '',
     },
   };
 }

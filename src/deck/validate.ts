@@ -1,5 +1,5 @@
 import { bodyTextScale, effectiveSlots, itemRange, slotSources, tableAtScale, templateScaleProblem, textBudget } from '../template/manifest.ts';
-import type { PatternDef, SlotDef, TemplateManifest, TextSlotDef } from '../template/manifest.ts';
+import type { Direction, PatternDef, SlotDef, TemplateManifest, TextSlotDef } from '../template/manifest.ts';
 import type { FitOptions, TextFit, TextMeasurer } from '../text/measure.ts';
 import { readColors, readColorsTold } from '../color/palette.ts';
 import { freeSlotDefs, freeSlots, isFreeBlockKind } from '../free/blocks.ts';
@@ -124,8 +124,11 @@ export interface ValidateOptions {
  * allows, in a row of as many items as the slide has. Validation, the renderer and the design
  * checks all measure with these, so they cannot disagree.
  */
-export function fitOptions(manifest: TemplateManifest, deck: Pick<DeckSpec, 'textScale'>, slide: Pick<SlideSpec, 'items'>, least?: number): FitOptions {
+export function fitOptions(manifest: TemplateManifest, deck: Pick<DeckSpec, 'textScale' | 'direction'>, slide: Pick<SlideSpec, 'items'>, least?: number): FitOptions {
   const options: FitOptions = { textScale: bodyTextScale(manifest, deck.textScale) };
+  // Paragraphs that mix scripts are written, and so measured, by the direction the deck reads.
+  const direction = deck.direction ?? manifest.direction;
+  if (direction) options.direction = direction;
   // `least` is a size in points under which this text is not set, whatever the manifest allows (see `freeTextFloor`).
   if (manifest.shrinkText) options.shrink = least === undefined ? manifest.shrinkText : { ...manifest.shrinkText, minSize: Math.max(manifest.shrinkText.minSize ?? 0, least) };
   if (slide.items !== undefined) options.items = slide.items;
@@ -141,12 +144,12 @@ export function fitOptions(manifest: TemplateManifest, deck: Pick<DeckSpec, 'tex
  * still does not fit. `undefined` when there is nothing to hold: another slide, a deck without
  * the wish, a template that does not shrink text or was loaded without fonts.
  */
-export function freeTextFloor(free: FreeResolved | undefined, slot: TextSlotDef, paragraphs: string[], manifest: TemplateManifest, slide: Pick<SlideSpec, 'items'>, measure: TextMeasurer | undefined): number | undefined {
+export function freeTextFloor(free: FreeResolved | undefined, slot: TextSlotDef, paragraphs: string[], manifest: TemplateManifest, slide: Pick<SlideSpec, 'items'>, measure: TextMeasurer | undefined, direction?: Direction): number | undefined {
   if (!free?.plain || !measure || !manifest.shrinkText) return undefined;
   // The title and the deck's own texts are the template's shapes: they follow the deck's text size as on any slide.
   const was = free.plain.pattern.slots.find((entry) => entry.name === slot.name);
   if (!was || was.kind !== 'text' || !('styleOf' in was) || was.fontSize === undefined) return undefined;
-  const fit = measure.fit(free.plain.pattern, was, paragraphs, fitOptions(manifest, { textScale: 1 }, slide));
+  const fit = measure.fit(free.plain.pattern, was, paragraphs, fitOptions(manifest, direction ? { textScale: 1, direction } : { textScale: 1 }, slide));
   return fit ? Math.min(fit.size, was.fontSize) : was.fontSize;
 }
 
@@ -417,7 +420,7 @@ export function checkDeck(manifest: TemplateManifest, deck: DeckSpec, options: V
         const budget = textBudget(slot, scale);
         const chars = action.paragraphs.reduce((sum, paragraph) => sum + paragraph.length, 0);
         // With fonts the text is measured as it will be set, and the character budget steps aside.
-        const fit = options.measure?.fit(pattern, slot, action.paragraphs, fitOptions(manifest, deck, slide, freeTextFloor(laid, slot, action.paragraphs, manifest, slide, options.measure)));
+        const fit = options.measure?.fit(pattern, slot, action.paragraphs, fitOptions(manifest, deck, slide, freeTextFloor(laid, slot, action.paragraphs, manifest, slide, options.measure, deck.direction)));
         if (fit) {
           const over = overflowTold(fit);
           if (over) issues.push({ severity: 'warning', slide: number, slot: source, ...over });

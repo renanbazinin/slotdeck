@@ -1,6 +1,7 @@
 import { NS, childElement, childElements, removeNode } from '../pptx/xml.ts';
 import type { Element } from '../pptx/xml.ts';
 import type { Direction, TableTextStyle } from '../template/manifest.ts';
+import { isRtlLanguage, leftToRightTag } from '../util/language.ts';
 
 export interface TextOptions {
   /** Swap left and right alignment (the deck reads the other way from the template). */
@@ -11,7 +12,26 @@ export interface TextOptions {
   align?: 'l' | 'r' | 'ctr';
   /** Formatting to put on the text, for places where the template defines none. */
   style?: TableTextStyle;
+  /**
+   * The direction the deck reads. In a right-to-left deck a paragraph with any right-to-left
+   * letter reads right to left and is marked with a right-to-left language (see
+   * {@link paragraphDirection}). Without it, a paragraph's first letter decides.
+   */
+  direction?: Direction;
+  /** The deck's language, which names the language of left-to-right text (see {@link filledLanguage}). */
+  language?: string;
+  /**
+   * The direction the template reads. In a deck that reads left to right on a template that reads
+   * right to left, figures without letters ("+12%", "4.6 / 5") are set left to right.
+   */
+  templateDirection?: Direction;
 }
+
+/** What decides the language and direction a filled text is written in. */
+export type WritingOptions = Pick<TextOptions, 'direction' | 'language' | 'templateDirection'>;
+
+/** A figure with no letters: "+12%", "-3.5%", "4.6 / 5", "2027 – 2029". */
+const FIGURE = (text: string): boolean => /\p{Nd}/u.test(text) && !/\p{L}/u.test(text);
 
 const RTL_LETTER = /[\p{Script=Hebrew}\p{Script=Arabic}\p{Script=Syriac}\p{Script=Thaana}]/u;
 
@@ -25,10 +45,13 @@ export function detectDirection(text: string): Direction | undefined {
 /**
  * Whether the run holding a text is marked with a right-to-left language: when the text starts
  * with a right-to-left letter, or when most of its letters are right to left, as in
- * "AI בשירות הלקוחות". PowerPoint checks the spelling of a run in its language, so Hebrew words
- * in a run marked English are all underlined as misspelled.
+ * "AI בשירות הלקוחות". In a deck that reads right to left, any right-to-left letter does: a Hebrew
+ * sentence that opens with a brand, "Microsoft Teams ככלי עבודה", is a Hebrew sentence. PowerPoint
+ * checks the spelling of a run in its language, so Hebrew words in a run marked English are all
+ * underlined as misspelled.
  */
-export function marksRightToLeft(text: string): boolean {
+export function marksRightToLeft(text: string, direction?: Direction): boolean {
+  if (direction === 'rtl' && RTL_LETTER.test(text)) return true;
   if (detectDirection(text) === 'rtl') return true;
   let rtl = 0;
   let other = 0;
@@ -37,6 +60,45 @@ export function marksRightToLeft(text: string): boolean {
     else other++;
   }
   return rtl > other;
+}
+
+/**
+ * The direction a filled paragraph is written in: in a deck that reads right to left, right to
+ * left when it holds any right-to-left letter; otherwise the direction of its first letter.
+ * `undefined` for text without letters ("78%"), which keeps the direction the template gave it.
+ */
+export function paragraphDirection(text: string, direction?: Direction): Direction | undefined {
+  if (direction === 'rtl' && RTL_LETTER.test(text)) return 'rtl';
+  return detectDirection(text);
+}
+
+/**
+ * The language a filled run states, from the language its template run states (`stated`, `''`
+ * when it states none and inherits one). The renderer writes it, and the measurer picks the
+ * typefaces of digits and punctuation by it, so the two agree.
+ *
+ * - A text that {@link marksRightToLeft} keeps a right-to-left language, or gets one from its
+ *   letters (`he-IL` for Hebrew).
+ * - A text with letters that is not marked right to left, in a run that states a right-to-left
+ *   language, gets the left-to-right language of the deck ({@link leftToRightTag}). PowerPoint
+ *   orders the words of a run by its language: English left in a run marked Hebrew reads
+ *   "reached landing just ,74% 75% shy of our ambitioustarget".
+ * - So does a figure without letters ("+12%", "4.6 / 5") in a deck that reads left to right: a
+ *   run marked Hebrew puts the sign of "+12%" on its right.
+ * - Anything else keeps what it states: other text without letters ("—"), and any figure in a
+ *   deck that reads right to left, is set as the template sets it, and a run that states nothing
+ *   keeps the language it inherits.
+ */
+export function filledLanguage(text: string, stated: string, options: WritingOptions = {}): string {
+  if (marksRightToLeft(text, options.direction)) return isRtlLanguage(stated) ? stated : rightToLeftTag(text);
+  if (isRtlLanguage(stated) && (/\p{L}/u.test(text) || (options.direction === 'ltr' && FIGURE(text)))) return leftToRightTag(options.language);
+  return stated;
+}
+
+/** The language tag of the first right-to-left letter of a text. */
+function rightToLeftTag(text: string): string {
+  const letter = RTL_LETTER.exec(text)?.[0] ?? '';
+  return /\p{Script=Hebrew}/u.test(letter) ? 'he-IL' : /\p{Script=Arabic}/u.test(letter) ? 'ar-SA' : /\p{Script=Syriac}/u.test(letter) ? 'syr-SY' : 'dv-MV';
 }
 
 /**
@@ -218,10 +280,17 @@ function applyStyle(run: Element, style: TableTextStyle, prefix: string): void {
 }
 
 function applyDirection(paragraph: Element, text: string, options: TextOptions, prefix: string): void {
-  const direction = detectDirection(text);
   let props = childElement(paragraph, NS.a, 'pPr');
+  // A figure without letters keeps the template's direction, except in a deck that reads left to
+  // right where the template, or this paragraph, reads right to left: a right-to-left paragraph
+  // shows "+12%" as "12%+" and "4.6 / 5" as "5 / 4.6".
+  const turned = options.direction === 'ltr' && (options.templateDirection === 'rtl' || props?.getAttribute('rtl') === '1');
+  const direction = paragraphDirection(text, options.direction) ?? (turned && FIGURE(text) ? 'ltr' : undefined);
   if (!props) {
-    if (!direction && !options.flipAlign && !options.align) return;
+    if (!direction && !options.flipAlign && !options.align) {
+      writeLanguage(paragraph, text, options, prefix);
+      return;
+    }
     const doc = paragraph.ownerDocument;
     if (!doc) return;
     props = doc.createElementNS(NS.a, `${prefix}pPr`);
@@ -236,29 +305,32 @@ function applyDirection(paragraph: Element, text: string, options: TextOptions, 
     if (align === 'r') props.setAttribute('algn', 'l');
     else if (align === 'l') props.setAttribute('algn', 'r');
   }
-  if (marksRightToLeft(text)) markRightToLeftLanguage(paragraph, text, prefix);
+  writeLanguage(paragraph, text, options, prefix);
 }
 
-const RTL_LANGUAGE = /^(he|iw|yi|ar|fa|ur|ps|ug|sd|ckb|syr|dv)\b/i;
-
 /**
- * PowerPoint places punctuation and spaces by the language of their run, not only by the
- * paragraph's direction: in a run marked English, "contact: name@example.org" after Hebrew words
- * puts the colon on the far side of the address. PowerPoint also checks spelling in the run's
- * language. A right-to-left text (see {@link marksRightToLeft}) therefore gets a right-to-left
- * language on its run, unless the template already gave it one.
+ * Writes the language of the paragraph's runs (see {@link filledLanguage}). PowerPoint places
+ * punctuation and spaces by the language of their run, not only by the paragraph's direction:
+ * in a run marked English, "contact: name@example.org" after Hebrew words puts the colon on the
+ * far side of the address, and in a run marked Hebrew, English text has its figures moved. It
+ * also checks spelling in the run's language. The end of the paragraph is given a left-to-right
+ * language too when it states a right-to-left one, as text typed at its end takes that language.
  */
-function markRightToLeftLanguage(paragraph: Element, text: string, prefix: string): void {
+function writeLanguage(paragraph: Element, text: string, options: WritingOptions, prefix: string): void {
   const doc = paragraph.ownerDocument;
   if (!doc) return;
-  const letter = RTL_LETTER.exec(text)?.[0] ?? '';
-  const language = /\p{Script=Hebrew}/u.test(letter) ? 'he-IL' : /\p{Script=Arabic}/u.test(letter) ? 'ar-SA' : /\p{Script=Syriac}/u.test(letter) ? 'syr-SY' : 'dv-MV';
   for (const run of childElements(paragraph, NS.a, 'r')) {
     let runProps = childElement(run, NS.a, 'rPr');
+    const stated = runProps?.getAttribute('lang') ?? '';
+    const language = filledLanguage(text, stated, options);
+    if (language === stated) continue;
     if (!runProps) {
       runProps = doc.createElementNS(NS.a, `${prefix}rPr`);
       run.insertBefore(runProps, run.firstChild);
     }
-    if (!RTL_LANGUAGE.test(runProps.getAttribute('lang') ?? '')) runProps.setAttribute('lang', language);
+    runProps.setAttribute('lang', language);
   }
+  const end = childElement(paragraph, NS.a, 'endParaRPr');
+  const ended = end?.getAttribute('lang') ?? '';
+  if (end && isRtlLanguage(ended) && !isRtlLanguage(filledLanguage(text, ended, options))) end.setAttribute('lang', leftToRightTag(options.language));
 }

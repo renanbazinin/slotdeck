@@ -3,6 +3,66 @@
 What changed in each version, newest first, with what to do when upgrading. The version you have installed is
 in `node_modules/slotdeck/package.json`.
 
+## 0.6.5
+
+English and mixed text on a right-to-left template reads as it was written. An English deck made from a Hebrew
+template showed `The digital transaction share reached landing just ,74% 75% shy of our ambitioustarget` for
+`The digital transaction share reached 74%, landing just shy of our ambitious 75% target`, `a minute login-40
+outage` for `a 40-minute login outage`, and `12%+` for `+12%` in a table: the English sat in runs the template
+marks Hebrew, and PowerPoint orders the words of a run by its language. Plans, model requests and Hebrew decks
+are as in 0.6.4.
+
+### Fixed
+
+- **English text in a run marked Hebrew.** A text with letters that is not right to left, written into a run
+  the template marks with a right-to-left language (`he-IL`), is marked with a left-to-right one: the deck's
+  language when it reads left to right (`en` gives `en-US`, `en-GB` stays `en-GB`), and `en-US` otherwise. The
+  end of its paragraph is marked the same when it states a right-to-left language. PowerPoint then shows the
+  words and figures in their order, and checks their spelling in English.
+- **Figures in an English deck on a right-to-left template.** A figure without letters (`+12%`, `-3.5%`,
+  `4.6 / 5`, `2027 – 2029`) in a deck that reads left to right is set left to right, in a left-to-right
+  language. In a right-to-left paragraph they showed as `12%+`, `3.5%-`, `5 / 4.6` and `2029 – 2027`. In a deck
+  that reads right to left, figures keep what the template gives them.
+- **A Hebrew line that starts with a Latin word, in a right-to-left deck.** `AI בשירות הלקוחות` was set left
+  to right, from its first letter: its bullet went to the left and `AI` to the end of the line. In a deck that
+  reads right to left, a paragraph with any right-to-left letter now reads right to left and is marked with a
+  right-to-left language. In a deck that reads left to right the rules are as before.
+- The same rules hold for every text slotdeck writes: slots, deck fields, table cells, the labels of a free
+  slide (a shared legend) and the sample text of a composed layout.
+- `directionOf` knows `iw` (Hebrew's old tag), `ckb` (Central Kurdish) and `syr` (Syriac) as right to left, as
+  the renderer already did. One list of right-to-left languages serves the planner, the renderer and the
+  measurer.
+
+### Changed
+
+- **The measurer follows the renderer.** With fonts, text is measured in the language and direction it is
+  written in. `FitOptions.direction` says which way the deck reads, and defaults to the template's direction;
+  slotdeck's own checks pass the deck's.
+- **Previews follow the pptx.** `PreviewRequest.direction` tells a renderer which way the deck reads.
+  `previewDeck`, `patternPreviews`, the chat tools and `visionReview` fill it, and the Pagus adapter marks a
+  paragraph right to left by the renderer's rule.
+
+### Upgrading from 0.6.4
+
+Nothing to change in code. A stored deck renders as before, byte for byte, unless it has, in a run the template
+marks right to left, text with letters and no right-to-left letter, or a figure in a deck that reads left to
+right; or, in a deck that reads right to left, a paragraph that starts with a Latin word and holds a
+right-to-left letter. Those paragraphs change as above. On a right-to-left test template, 12 Hebrew decks
+rendered byte for byte as in 0.6.4, and 2 English ones changed in 85 English paragraphs, one language tag
+each. Re-render stored English decks made from a right-to-left template to correct them. A test that compares
+the rendered bytes of such decks sees the new tags. A `PreviewProvider` of your own may read
+`request.direction`, or leave it.
+
+### Known limits
+
+- A run that states no language of its own and inherits a right-to-left one from the template's styles keeps
+  it: English written there is still ordered as Hebrew. Templates saved by PowerPoint state the language on
+  every run.
+- An English-only line in a Hebrew deck ("KPI" in a list) reads left to right, as before, so its bullet stands
+  on its left.
+- Chart text keeps its language and direction as before.
+- Spelling underlines of the changed runs were checked on a computer without Hebrew proofing only.
+
 ## 0.6.4
 
 Warnings and notes can reach a person in their own language. A chat app showed people who write in Hebrew

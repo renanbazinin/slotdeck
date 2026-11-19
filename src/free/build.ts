@@ -9,6 +9,7 @@ import { pictureFrameXml } from '../render/picture.ts';
 import { keepCorners } from '../render/repeat.ts';
 import { tableFrameXml } from '../render/table.ts';
 import { setShapeText } from '../render/text.ts';
+import type { WritingOptions } from '../render/text.ts';
 import type { SlideBox } from '../template/manifest.ts';
 import type { FreeKit } from './kit.ts';
 import type { FreePlan, MadeShape } from './plan.ts';
@@ -20,7 +21,8 @@ const P = 'http://schemas.openxmlformats.org/presentationml/2006/main';
 const A = 'http://schemas.openxmlformats.org/drawingml/2006/main';
 
 /** Takes everything off a copy of the base slide that is not its frame, and puts the planned shapes on. */
-export function buildFreeSlide(doc: Document, root: Element, kit: FreeKit, plan: FreePlan, source: ShapeSource, rtl: boolean): void {
+export function buildFreeSlide(doc: Document, root: Element, kit: FreeKit, plan: FreePlan, source: ShapeSource, writing: WritingOptions): void {
+  const rtl = writing.direction === 'rtl';
   const tree = path(root, [NS.p, 'cSld'], [NS.p, 'spTree']);
   if (!tree) throw new Error('the base slide of a free slide has no shapes to stand on');
   const stays = new Set(kit.stays);
@@ -65,7 +67,7 @@ export function buildFreeSlide(doc: Document, root: Element, kit: FreeKit, plan:
       rename(made, shape);
       if (shape.kind === 'text') {
         place(made, at);
-        prepareText(made, shape, kit, rtl);
+        prepareText(made, shape, kit, writing);
       } else if (shape.kind === 'rule') {
         const extent = path(made, [NS.p, 'spPr'], [NS.a, 'xfrm'], [NS.a, 'ext']);
         const thick = Math.min(Number(extent?.getAttribute('cx') ?? 0), Number(extent?.getAttribute('cy') ?? 0));
@@ -168,7 +170,8 @@ function capCorners(copy: Element): void {
  * weight, its alignment and its direction; a box that keeps the size it was given and does not
  * shrink or grow with its text; the insets the plan counted with.
  */
-function prepareText(copy: Element, shape: MadeShape, kit: FreeKit, rtl: boolean): void {
+function prepareText(copy: Element, shape: MadeShape, kit: FreeKit, writing: WritingOptions): void {
+  const rtl = writing.direction === 'rtl';
   const doc = copy.ownerDocument;
   const body = childElement(copy, NS.p, 'txBody');
   if (!doc || !body) throw new Error(`a free slide copies shape #${shape.from?.shapeId} of template slide ${shape.from?.slide} as a text, and it holds none`);
@@ -321,5 +324,6 @@ function prepareText(copy: Element, shape: MadeShape, kit: FreeKit, rtl: boolean
   const warp = childElement(box, NS.a, 'prstTxWarp');
   box.insertBefore(create('noAutofit'), warp ? warp.nextSibling : box.firstChild);
 
-  if (shape.text !== undefined) setShapeText(copy, [shape.text], { flipAlign: false });
+  // A label of the slide (a legend's series name) is written as the deck's own text is.
+  if (shape.text !== undefined) setShapeText(copy, [shape.text], { flipAlign: false, ...writing });
 }

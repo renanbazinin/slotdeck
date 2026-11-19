@@ -977,7 +977,8 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
     let previews: SlidePreview[] | undefined;
     if (options.preview) {
       try {
-        previews = await options.preview.renderSlides(signal ? { pptx, signal } : { pptx });
+        const direction = deck.direction ?? template.manifest.direction;
+        previews = await options.preview.renderSlides(signal ? { pptx, direction, signal } : { pptx, direction });
         const keys = previews.map((picture) => storeKeys.preview(id, picture.slide, previewExtension(picture)));
         await Promise.all(previews.map((picture, index) => store.set(keys[index] as string, picture.data)));
         output.previews = keys;

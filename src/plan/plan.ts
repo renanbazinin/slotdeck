@@ -93,6 +93,7 @@ import type { ComposeLayoutsResult } from './layouts.ts';
 import type { DeckReview } from './review.ts';
 import { cleanText, describeParts, suppliesText, systemPrompt, writeSlides, writtenApart } from './write.ts';
 import type { WriteJob } from './write.ts';
+import { isRtlLanguage } from '../util/language.ts';
 
 /** What the person asked for. */
 export interface Brief {
@@ -256,10 +257,8 @@ export class PlanError extends Error {
   }
 }
 
-const RTL_LANGUAGES = new Set(['ar', 'dv', 'fa', 'he', 'ps', 'sd', 'ug', 'ur', 'yi']);
-
 export function directionOf(language: string): Direction {
-  return RTL_LANGUAGES.has(language.toLowerCase().split('-')[0] ?? '') ? 'rtl' : 'ltr';
+  return isRtlLanguage(language) ? 'rtl' : 'ltr';
 }
 
 /** Whether a text contains any digit, in any script. */

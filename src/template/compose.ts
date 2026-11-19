@@ -13,6 +13,7 @@ import { keepCorners } from '../render/repeat.ts';
 import { indexShapes, loadTemplate, renderDeck } from '../render/render.ts';
 import type { Template } from '../render/render.ts';
 import { setShapeText } from '../render/text.ts';
+import type { TextOptions } from '../render/text.ts';
 import { TextStyles } from '../text/styles.ts';
 import { changeWith } from './change.ts';
 import type { ManifestChange } from './change.ts';
@@ -839,6 +840,9 @@ export function withLayouts(template: Template, layouts: readonly PatternDesign[
 
 function assemble(template: Template, design: PatternDesign, parts: KitParts, placed: Placed[], soft: string[]): ComposedPattern {
   const { base, slide, stays, info } = parts;
+  // A sample is written in the template's own language and direction.
+  const { language, direction } = template.manifest;
+  const writing: TextOptions = { flipAlign: false, direction, templateDirection: direction, ...(language ? { language } : {}) };
   const pkg = template.pkg.clone();
   const pres = readPresentation(pkg);
   const baseRef = pres.slides[slide.number - 1];
@@ -878,7 +882,7 @@ function assemble(template: Template, design: PatternDesign, parts: KitParts, pl
     props.removeAttribute('descr');
     for (const ext of childElements(props, NS.a, 'extLst')) removeNode(ext);
     placeCopy(copy, part, info);
-    if (part.element.role !== 'decoration') setShapeText(copy, part.element.sample.split('\n').map((line) => line.trim()).filter(Boolean), { flipAlign: false });
+    if (part.element.role !== 'decoration') setShapeText(copy, part.element.sample.split('\n').map((line) => line.trim()).filter(Boolean), writing);
     tree.appendChild(copy);
     made.push({ part, id });
   }

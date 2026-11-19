@@ -2,13 +2,14 @@
 // size, and whether they fit the box. Works from font files, with no PowerPoint and no browser.
 import type { PptxPackage } from '../pptx/package.ts';
 import type { Template } from '../render/render.ts';
-import { detectDirection, marksRightToLeft } from '../render/text.ts';
+import { detectDirection, filledLanguage, paragraphDirection } from '../render/text.ts';
+import { isRtlLanguage } from '../util/language.ts';
 import type { FreeDrawn } from '../free/plan.ts';
 import { inspectTemplate } from '../template/inspect.ts';
 import type { ShapeInfo, TemplateInfo } from '../template/inspect.ts';
 import { rowTextIds } from '../render/repeat.ts';
 import { COPY_ID_STEP, effectiveSlots, itemCount, scalesWithText, widenFactor } from '../template/manifest.ts';
-import type { PatternDef, TextSlotDef } from '../template/manifest.ts';
+import type { Direction, PatternDef, TextSlotDef } from '../template/manifest.ts';
 import { scriptClass, textWidth, themeScript } from './fonts.ts';
 import type { FontFace, FontMetrics, FontStyle, ScriptClass } from './fonts.ts';
 import { breakLines } from './layout.ts';
@@ -30,6 +31,12 @@ export interface FitOptions {
   shrink?: ShrinkLimit;
   /** For a slot of a row of items: how many items the slide has, which can decide how wide an item is. */
   items?: number;
+  /**
+   * The direction the deck reads, which decides the direction and language of a paragraph that
+   * mixes scripts, as the renderer writes them. Defaults to the template's direction, which is
+   * what the renderer uses for a deck that states none.
+   */
+  direction?: Direction;
 }
 
 /** How a text sits in a slot. */
@@ -135,7 +142,6 @@ function typefaceName(run: RunStyle, cls: ScriptClass, char: string): string {
   return (script && face.scripts?.get(script)) || run.latin.name;
 }
 
-const RTL_LANGUAGE = /^(he|iw|yi|ar|fa|ur|ps|ug|sd|ckb|syr|dv)(-|$)/i;
 const DIGIT = /\p{Nd}/u;
 const LAST_LETTER = /(\p{L})[^\p{L}]*$/u;
 
@@ -297,18 +303,22 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
     return styles.frame(pattern.sourceSlide, shape.id, slot.styleRun ?? 'first', size);
   };
 
-  /** Lays text out in a frame. `size` gives the font size of a paragraph style; `gap` overrides the space after paragraphs. */
-  const lay = (frame: TextFrame, paragraphs: string[], size: (style: ParagraphStyle) => number, gap: number | undefined, flags: { approximate: boolean }, spare = 0): Laid => {
+  /**
+   * Lays text out in a frame. `size` gives the font size of a paragraph style; `gap` overrides the
+   * space after paragraphs; `deckDirection` is the direction the deck reads (see FitOptions).
+   */
+  const lay = (frame: TextFrame, paragraphs: string[], size: (style: ParagraphStyle) => number, gap: number | undefined, flags: { approximate: boolean }, spare = 0, deckDirection?: Direction): Laid => {
     const inner = (frame.vertical ? frame.height - frame.insets.top - frame.insets.bottom : frame.width - frame.insets.left - frame.insets.right) / frame.columns - spare;
     const laid: Laid = { lines: [], widths: [], lineRoom: [], height: 0, gaps: 0, lastPitch: 0, widest: 0, firstSize: 0 };
     paragraphs.forEach((text, index) => {
       const style = frame.paragraphs[Math.min(index, frame.paragraphs.length - 1)] as ParagraphStyle;
       const points = size(style) * frame.fontScale;
       if (index === 0) laid.firstSize = points;
-      // The renderer marks a paragraph that starts with a right-to-left letter, or is mostly
-      // right-to-left letters, with such a language.
-      const direction = detectDirection(text);
-      const measure = runMeasure(metrics, style.run, points, marksRightToLeft(text) || RTL_LANGUAGE.test(style.run.lang), flags);
+      // The language and direction the renderer writes the paragraph in (see filledLanguage):
+      // a run left to state none keeps the language it inherits.
+      const direction = paragraphDirection(text, deckDirection);
+      const language = filledLanguage(text, style.run.ownLang, deckDirection ? { direction: deckDirection } : {}) || style.run.lang;
+      const measure = runMeasure(metrics, style.run, points, isRtlLanguage(language), flags);
       const rest = inner - style.marginStart - style.marginEnd;
       const first = rest - (style.bullet && style.indent < 0 ? 0 : style.indent);
       // The space after a line hangs outside it, unless it sits inside text that runs against the paragraph.
@@ -389,10 +399,10 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
           try {
             // An item that widens keeps its height, so the room below the first line, and how
             // full the designer drew the box, are those of the box as drawn.
-            const laid = lay(drawn, sample, (style) => style.run.size, undefined, { approximate: false });
+            const laid = lay(drawn, sample, (style) => style.run.size, undefined, { approximate: false }, 0, manifest.direction);
             room = Math.max(room, laid.height);
             sampleLines = laid.lines.reduce((sum, entry) => sum + entry.length, 0);
-            const wide = frame === drawn ? laid : lay(frame, sample, (style) => style.run.size, undefined, { approximate: false });
+            const wide = frame === drawn ? laid : lay(frame, sample, (style) => style.run.size, undefined, { approximate: false }, 0, manifest.direction);
             roomWidth = Math.max(roomWidth, wide.widest);
           } catch (error) {
             note(error);
@@ -403,7 +413,7 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
       const measured = (shrink: number): TextFit => {
         // A size chosen because the text just fits at it sits on the edge by construction, so a
         // shrunk text is asked to fit with a little width to spare.
-        const laid = lay(frame, paragraphs, sizeAt(shrink), chosen.paragraphGap, flags, shrink === 1 ? 0 : SPARE);
+        const laid = lay(frame, paragraphs, sizeAt(shrink), chosen.paragraphGap, flags, shrink === 1 ? 0 : SPARE, options.direction ?? manifest.direction);
         const lines = laid.lines.reduce((sum, entry) => sum + entry.length, 0);
         const slack = SLACK * laid.lastPitch;
         const over = laid.height - room - slack;

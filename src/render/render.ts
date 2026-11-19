@@ -38,6 +38,7 @@ import { applyRepeat, moveShape, placeShape, rowTextIds } from './repeat.ts';
 import type { FontMetrics } from '../text/fonts.ts';
 import { measurerFor } from '../text/measure.ts';
 import { adjustText, setShapeText, setTextSizes } from './text.ts';
+import type { TextOptions, WritingOptions } from './text.ts';
 
 const SLIDE_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.slide+xml';
 const IMAGE_REL_TYPE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image';
@@ -122,6 +123,9 @@ export function renderDeck(template: Template, deck: DeckSpec, options: RenderOp
   const types = ContentTypes.read(source);
   const patterns = new Map<string, PatternDef>(manifest.patterns.map((pattern) => [pattern.id, pattern]));
   const directionChanged = (deck.direction ?? manifest.direction) !== manifest.direction;
+  // The direction and language filled text is written in: see filledLanguage in text.ts.
+  const language = deck.language ?? manifest.language;
+  const writing: WritingOptions = { direction: deck.direction ?? manifest.direction, templateDirection: manifest.direction, ...(language ? { language } : {}) };
 
   const firstSlide = pres.slides[0];
   if (!firstSlide) throw new Error('The template has no slides');
@@ -224,7 +228,7 @@ ${colors?.key}` : assetId;
     usedSlideParts.add(sourceSlide.part);
     const doc = parseXml(source.readText(sourceSlide.part));
     const root = rootElement(doc);
-    if (free) buildFreeSlide(doc, root, free.kit, free.plan, shapeFrom, (deck.direction ?? manifest.direction) === 'rtl');
+    if (free) buildFreeSlide(doc, root, free.kit, free.plan, shapeFrom, writing);
     // Notes belong to the template's sample content, so they are not carried over.
     let rels = readRels(source, sourceSlide.part).filter((rel) => !isRelType(rel, 'notesSlide'));
     const part = `${slideDir}/slide${number}.xml`;
@@ -260,7 +264,7 @@ ${colors?.key}` : assetId;
         if ((slot.kind === 'text' || slot.kind === 'image') && slot.box) moveShape(shape, slot.box, pres.slideWidth, pres.slideHeight);
       } else if (action.type === 'text' && slot.kind === 'text') {
         const align = slot.alignOnDirectionChange ?? manifest.alignOnDirectionChange ?? 'flip';
-        const text = { flipAlign: directionChanged && align === 'flip' };
+        const text: TextOptions = { flipAlign: directionChanged && align === 'flip', ...writing };
         setShapeText(shape, action.paragraphs, slot.styleRun ? { ...text, styleRun: slot.styleRun } : text);
         if (slot.box) placeShape(shape, slot.box, pres.slideWidth, pres.slideHeight);
         const change: Parameters<typeof adjustText>[1] = {};
@@ -271,7 +275,7 @@ ${colors?.key}` : assetId;
         // Text that does not fit is set smaller, as far as the manifest allows; the measurer says how far.
         if (measure && manifest.shrinkText) {
           // On a free slide of a deck that asks for larger text, no further than the size the text has without that wish.
-          const fit = measure.fit(pattern, slot, action.paragraphs, fitOptions(manifest, deck, slide, freeTextFloor(free, slot, action.paragraphs, manifest, slide, measure)));
+          const fit = measure.fit(pattern, slot, action.paragraphs, fitOptions(manifest, deck, slide, freeTextFloor(free, slot, action.paragraphs, manifest, slide, measure, deck.direction)));
           if (fit && fit.scale < 1) {
             setTextSizes(shape, fit.sizes);
             shrunk.push({ slide: number, slot: sources.get(slot.name) ?? slot.name, size: fit.size, scale: Math.round(fit.scale * 1000) / 1000 });
@@ -303,7 +307,7 @@ ${colors?.key}` : assetId;
         const box = (slot as { box?: SlideBox }).box;
         // A table of a free slide states its sizes itself and takes the box it was given.
         const planned = slot as { rowHeights?: number[]; columnWidths?: number[]; columnAligns?: Array<'l' | 'r' | undefined> };
-        setTable(shape, action.table, tableAtScale(slot, textScale), deck.direction ?? manifest.direction, box ? planned.columnAligns : undefined);
+        setTable(shape, action.table, tableAtScale(slot, textScale), deck.direction ?? manifest.direction, box ? planned.columnAligns : undefined, writing.language);
         // Rows whose cells take more lines than their neighbours' are higher, and columns are as wide as what is written in them asks, as the plan worked out.
         if (box) fitTable(shape, { x: box.x * pres.slideWidth, y: box.y * pres.slideHeight, cx: box.w * pres.slideWidth, cy: box.h * pres.slideHeight }, planned.rowHeights, planned.columnWidths);
       } else if (action.type === 'chart' && slot.kind === 'chart') {

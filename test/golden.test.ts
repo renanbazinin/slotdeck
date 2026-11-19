@@ -126,15 +126,31 @@ const decks: Record<string, () => RenderResult> = {
     renderDeck(loadTemplate(fixture, tableManifest), { version: 1, slides: [{ pattern: 'table', slots: { title: 'T', table: { header: ['A', 'B'], rows: [['1', '2'], ['3', '4']] } } }] }),
 };
 
+/**
+ * Decks whose file was changed on purpose since 0.5.2: the version, what changed, and the hash
+ * the deck has since. Each is a decision written in docs/changelog.md, and the 0.5.2 hash stays
+ * in the fixture as the record of what was there before.
+ */
+const changedSince: Record<string, { version: string; change: string; parts: string }> = {
+  // The English title "First" is written into the template's run marked he-IL. One attribute
+  // changes, lang="he-IL" to lang="en-US"; the rest of the file is as 0.5.2 wrote it.
+  'fixture rtl': { version: '0.6.5', change: 'English text in a run the template marks Hebrew is marked English', parts: 'cd85de46fd310f5c' },
+  'fixture ltr': { version: '0.6.5', change: 'English text in a run the template marks Hebrew is marked English', parts: '87d825a0520d2578' },
+};
+
 test('the fixture holds the decks rendered here, and no other', () => {
   assert.deepEqual(Object.keys(decks).sort(), Object.keys(golden).sort());
+  for (const [name, changed] of Object.entries(changedSince)) assert.notEqual(changed.parts, golden[name]?.parts, `"${name}" is listed as changed but has its 0.5.2 hash`);
 });
 
 for (const [name, render] of Object.entries(decks)) {
   test(`renders as 0.5.2 did: ${name}`, () => {
     const { pptx: file, warnings } = render();
     const said = warnings.map((issue) => issue.message).join('; ');
-    assert.deepEqual({ parts: partsHash(file), warnings: warnings.length }, golden[name], `"${name}" is not what 0.5.2 rendered${said ? `; it warns: ${said}` : ''}`);
+    const changed = changedSince[name];
+    const expected = changed ? { parts: changed.parts, warnings: golden[name]?.warnings } : golden[name];
+    const what = changed ? `what ${changed.version} renders (${changed.change})` : 'what 0.5.2 rendered';
+    assert.deepEqual({ parts: partsHash(file), warnings: warnings.length }, expected, `"${name}" is not ${what}${said ? `; it warns: ${said}` : ''}`);
   });
 }
 
