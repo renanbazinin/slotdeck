@@ -3,9 +3,11 @@ import { unstatedChartValues } from '../deck/numbers.ts';
 import { DeckValidationError } from '../deck/validate.ts';
 import type { Issue, LayoutMode } from '../deck/validate.ts';
 import { FREE_PATTERN } from '../deck/spec.ts';
-import type { DeckColors, DeckSpec, FreeArrange, FreeBlockKind } from '../deck/spec.ts';
+import type { DeckColors, DeckSpec, FreeArrange, FreeBlockKind, SlotValue } from '../deck/spec.ts';
 import { describeBlocks } from '../free/blocks.ts';
 import { freeKit } from '../free/kit.ts';
+import type { FreeKit } from '../free/kit.ts';
+import { freeTitleLines } from '../free/plan.ts';
 import { blockRuns, freeTextRoom } from '../free/offer.ts';
 import { freeBodySize } from '../free/plan.ts';
 import type { FreeOffer } from '../free/offer.ts';
@@ -44,6 +46,7 @@ import {
   linesJoined,
   minMax,
   needOf,
+  openingSection,
   packPassages,
   passageText,
   purposeOf,
@@ -51,6 +54,7 @@ import {
   readDocument,
   readLanguageTag,
   readPassageNumbers,
+  settleDocumentSlide,
   settlePassages,
   shapeOf,
   slideDocument,
@@ -1436,6 +1440,25 @@ export function filledText(doc: DocumentPlan, carry: SlideDocument, pattern: Usa
 }
 
 /**
+ * The title code sets on a slide whose running text code sets from its passages (`filledText`):
+ * the heading its first passage stands under, word for word, where the slide's title holds it,
+ * and on a free slide in one line (`kit`), the line its plan keeps for a title. Its text then does
+ * not say the heading again (`fillParagraphs` leaves out the slide's first heading), and the
+ * writer is not asked for a title. `undefined` for a slide whose text opens under no heading, or
+ * whose title would not hold it: the writer titles it.
+ */
+export function headingTitle(doc: DocumentPlan, carry: SlideDocument, pattern: UsablePattern, context: CatalogContext, kit?: FreeKit): string | undefined {
+  const heading = openingSection(doc.passages, carry.own)?.trim();
+  if (!doc.same || !heading) return undefined;
+  const planned = pattern.slots.find((one) => one.slot.name === 'title');
+  if (!planned || planned.slot.kind !== 'text') return undefined;
+  const chars = [...heading].length;
+  const most = textBudget(planned.slot, budgetScale(context)).maxChars;
+  if ((most !== undefined && chars > most) || (kit && freeTitleLines(kit, chars) > 1)) return undefined;
+  return heading;
+}
+
+/**
  * What an outline may choose from. A text-only deck is offered the plain text patterns and nothing
  * else, so the wish cannot be missed. A deck limited to a list of patterns is offered that list:
  * it names the patterns outright, so it comes before the wish for text only.
@@ -1859,8 +1882,10 @@ export async function writeDeck(loaded: Template, plan: DeckPlan, options: PlanO
       if ('reason' in written) throw new PlanError(`Slide ${number}: the free slide ${written.reason}`);
       // A text that holds its passages is set by code, and is not the writer's to write.
       let fill = carry && doc ? filledText(doc, carry, written.pattern, context, names) : undefined;
+      // Its title then is the heading its text opens under, where the title holds it.
+      const titled = fill && carry && doc ? headingTitle(doc, carry, written.pattern, context, freeKit(loaded, written.base)) : undefined;
       if (fill) {
-        const rest = freeWritePattern(loaded, { direction, textScale: context.textScale }, set, context, new Set([fill.slot]));
+        const rest = freeWritePattern(loaded, { direction, textScale: context.textScale }, set, context, new Set(titled ? [fill.slot, 'title'] : [fill.slot]));
         if ('pattern' in rest) written = rest;
         else fill = undefined;
       }
@@ -1868,7 +1893,7 @@ export async function writeDeck(loaded: Template, plan: DeckPlan, options: PlanO
       const pattern = fill ? written.pattern : asked(written.pattern, names);
       const job: WriteJob = { number, pattern, purpose: entry.purpose, free: { blocks, ...(entry.arrange ? { arrange: entry.arrange } : {}), base: written.base }, ...passage };
       if (fill) {
-        job.carried = { [fill.slot]: fill.value };
+        job.carried = titled ? { [fill.slot]: fill.value, title: titled } : { [fill.slot]: fill.value };
         job.filled = fill.slot;
       }
       // What the slide can say should all its parts come back empty and its purpose be empty too:
@@ -1893,7 +1918,13 @@ export async function writeDeck(loaded: Template, plan: DeckPlan, options: PlanO
     const pattern = sized && 'pattern' in sized ? sized.pattern : usable;
     // A text that holds its passages is set by code, and is not the writer's to write.
     const fill = carry && doc ? filledText(doc, carry, pattern, context) : undefined;
-    if (fill) return { number, pattern: { ...pattern, slots: pattern.slots.filter((planned) => planned.slot.name !== fill.slot) }, purpose: entry.purpose, ...passage, carried: { [fill.slot]: fill.value }, filled: fill.slot };
+    if (fill) {
+      // Its title then is the heading its text opens under, where the title holds it.
+      const titled = carry && doc ? headingTitle(doc, carry, pattern, context) : undefined;
+      const set = new Set(titled ? [fill.slot, 'title'] : [fill.slot]);
+      const carried: Record<string, SlotValue> = titled ? { [fill.slot]: fill.value, title: titled } : { [fill.slot]: fill.value };
+      return { number, pattern: { ...pattern, slots: pattern.slots.filter((planned) => !set.has(planned.slot.name)) }, purpose: entry.purpose, ...passage, carried, filled: fill.slot };
+    }
     return { number, pattern: asked(pattern), purpose: entry.purpose, ...passage };
   });
   const system = systemPrompt(language, 'brief', doc !== undefined);
@@ -1927,7 +1958,8 @@ export async function writeDeck(loaded: Template, plan: DeckPlan, options: PlanO
         slides: items.map((item) => {
           const slide = written.get(item.number) ?? { pattern: item.pattern.def.id, slots: {} };
           const own = carries.get(item.number);
-          return own ? { ...slide, passages: own } : slide;
+          // Its document's headings in its text are marked, a heading in brackets is set plain, and a text does not open with its title.
+          return own ? (doc ? settleDocumentSlide({ ...slide, passages: own }, doc.passages, own, { translated: !doc.same }) : { ...slide, passages: own }) : slide;
         }),
       };
       if (context.textScale !== 1) deck.textScale = context.textScale;

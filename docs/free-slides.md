@@ -444,6 +444,11 @@ what its box holds at the size that ends on.
 
 ### A long text a person asked for
 
+From 0.6.6 the headings of a person's document in such a text are set in bold, each at the head of the
+paragraph under it, an em space between them (`SlideSpec.headings`, see [deck-format.md](deck-format.md)). A heading
+set so shares a line with its text, so no heading ends a column with its text in the next, and the text takes
+no more lines than the length count planned for it. The heading a slide's text opens under is its title.
+
 A person may ask for an amount of text ("500 words on each slide") or give their own text for the slides. From
 0.6.2 such a text stays on the slide it was asked for, set smaller where it must. The switch is
 `arrange.dense`: a free slide of one text, with or without a heading, that carries a text someone asked to

@@ -1,5 +1,6 @@
 // Slide pictures from the Pagus library (`@pagus-kit/core` and `@pagus-kit/renderer`). slotdeck
 // does not depend on it: the developer installs it and passes the two modules in.
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { paragraphDirection } from '../render/text.ts';
 import type { Direction } from '../template/manifest.ts';
 import type { PreviewProvider, SlidePreview } from './provider.ts';
@@ -41,6 +42,27 @@ function markDirection(svg: string, direction: Direction | undefined): string {
 }
 
 /**
+ * The file with the spaces at the ends of its runs kept. Pagus trims the text of each run, and a
+ * space a run starts or ends with is then lost: a heading set run in (`SlideSpec.headings`) is
+ * followed by an em space that opens the run after it, and without it the preview shows the heading
+ * glued to its text. A word joiner (U+2060), which draws nothing and no trimming takes, stands
+ * beside such a space. A file whose runs have none comes back as it is.
+ */
+function keepSpaces(pptx: Uint8Array): Uint8Array {
+  const parts = unzipSync(pptx);
+  let changed = false;
+  for (const [name, data] of Object.entries(parts)) {
+    if (!/^ppt\/slides\/slide\d+\.xml$/.test(name)) continue;
+    const xml = strFromU8(data);
+    const kept = xml.replace(/<a:t>(\s+)/g, '<a:t>\u2060$1').replace(/(\s+)<\/a:t>/g, '$1\u2060</a:t>');
+    if (kept === xml) continue;
+    parts[name] = strToU8(kept);
+    changed = true;
+  }
+  return changed ? zipSync(parts) : pptx;
+}
+
+/**
  * A {@link PreviewProvider} that draws slides with Pagus: one SVG for each slide, with the text
  * as real text, so a browser draws it with its own fonts and line breaking. The pictures are for
  * showing in a web page. They are close to PowerPoint and not identical: see docs/preview.md.
@@ -51,7 +73,8 @@ export function pagusPreviews(core: PagusCore, renderer: PagusRenderer, options:
     async renderSlides({ pptx, slides, direction, signal }) {
       signal?.throwIfAborted();
       // The parser takes an ArrayBuffer of exactly the file, which a view into a larger buffer is not.
-      const buffer = pptx.buffer.slice(pptx.byteOffset, pptx.byteOffset + pptx.byteLength) as ArrayBuffer;
+      const file = keepSpaces(pptx);
+      const buffer = file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer;
       const presentation = await core.parse(buffer);
       signal?.throwIfAborted();
       const wanted = slides ? new Set(slides) : undefined;

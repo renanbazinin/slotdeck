@@ -1,4 +1,5 @@
 import { bodyTextScale, effectiveSlots, itemRange, slotSources, tableAtScale, templateScaleProblem, textBudget } from '../template/manifest.ts';
+import { headingPlaces } from './headings.ts';
 import type { Direction, PatternDef, SlotDef, TemplateManifest, TextSlotDef } from '../template/manifest.ts';
 import type { FitOptions, TextFit, TextMeasurer } from '../text/measure.ts';
 import { readColors, readColorsTold } from '../color/palette.ts';
@@ -124,8 +125,11 @@ export interface ValidateOptions {
  * allows, in a row of as many items as the slide has. Validation, the renderer and the design
  * checks all measure with these, so they cannot disagree.
  */
-export function fitOptions(manifest: TemplateManifest, deck: Pick<DeckSpec, 'textScale' | 'direction'>, slide: Pick<SlideSpec, 'items'>, least?: number): FitOptions {
+export function fitOptions(manifest: TemplateManifest, deck: Pick<DeckSpec, 'textScale' | 'direction'>, slide: Pick<SlideSpec, 'items' | 'headings'>, least?: number, paragraphs?: readonly string[]): FitOptions {
   const options: FitOptions = { textScale: bodyTextScale(manifest, deck.textScale) };
+  // The headings of a document in the text are measured in bold, as they are drawn.
+  const bold = paragraphs ? headingPlaces(paragraphs, slide.headings) : [];
+  if (bold.length > 0) options.bold = bold;
   // Paragraphs that mix scripts are written, and so measured, by the direction the deck reads.
   const direction = deck.direction ?? manifest.direction;
   if (direction) options.direction = direction;
@@ -420,7 +424,7 @@ export function checkDeck(manifest: TemplateManifest, deck: DeckSpec, options: V
         const budget = textBudget(slot, scale);
         const chars = action.paragraphs.reduce((sum, paragraph) => sum + paragraph.length, 0);
         // With fonts the text is measured as it will be set, and the character budget steps aside.
-        const fit = options.measure?.fit(pattern, slot, action.paragraphs, fitOptions(manifest, deck, slide, freeTextFloor(laid, slot, action.paragraphs, manifest, slide, options.measure, deck.direction)));
+        const fit = options.measure?.fit(pattern, slot, action.paragraphs, fitOptions(manifest, deck, slide, freeTextFloor(laid, slot, action.paragraphs, manifest, slide, options.measure, deck.direction), action.paragraphs));
         if (fit) {
           const over = overflowTold(fit);
           if (over) issues.push({ severity: 'warning', slide: number, slot: source, ...over });

@@ -597,6 +597,15 @@ const target = (most: number): string | undefined => {
 const say = (...sentences: Array<string | undefined>): string | undefined => sentences.filter((sentence) => sentence !== undefined && sentence !== '').join('. ') || undefined;
 
 /**
+ * The lines a free slide's title of so many characters takes, as the plan counts them: at half
+ * its size a character, the width a title's heavy face has, one to three.
+ */
+export function freeTitleLines(kit: FreeKit, chars: number): number {
+  if (!kit.title) return 1;
+  return clamp(Math.ceil((chars * 0.5 * kit.title.size) / (kit.title.box.w * (kit.slideWidth / 12700))), 1, 3);
+}
+
+/**
  * The least size running text is set at to read well, in points, on a slide this wide (EMU): 9 pt
  * on a slide 13.33 inches wide, and less on a narrower one, by its width; never under 5. A slide
  * whose smallest text is under it is told (`FreePlan.comfortable`), and a long text a person asked
@@ -792,7 +801,7 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
   // lines are counted at half its size a character, the width a title's heavy face has. A title
   // that is set from its foot upwards only gets more room than it needs: erring low is harmless.
   const titleChars = planning || !kit.title ? 0 : paragraphsOf(slots.title).reduce((sum, paragraph) => sum + paragraph.length, 0);
-  const titleLines = kit.title ? clamp(Math.ceil((titleChars * 0.5 * kit.title.size) / (kit.title.box.w * Wpt)), 1, 3) : 1;
+  const titleLines = freeTitleLines(kit, titleChars);
   const underTitle = kit.title && titleLines > 1 ? kit.title.box.y + (titleLines * LINE * kit.title.size + 0.5 * kit.gap * Wpt) / Hpt : 0;
   // Under a title of two lines the blocks keep the distance they have from a title of one: the
   // room starts lower by the lines the title has more. Otherwise the blocks would hang from its last line.

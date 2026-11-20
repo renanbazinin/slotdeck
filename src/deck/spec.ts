@@ -128,6 +128,14 @@ export interface SlideSpec {
    * `documentPassages` numbers them. Rendering does not read it.
    */
   passages?: number[];
+  /**
+   * In a deck made from a document: the headings of the document that stand in this slide's text as
+   * paragraphs of their own, word for word, in the order of the text. Each is set in bold at the
+   * head of the paragraph under it (run in), or on a line of its own over a list item or a table
+   * row. Set by code; a paragraph that no entry names is plain text, and so is any value that is
+   * not a list of strings.
+   */
+  headings?: string[];
 }
 
 /** Whether a slide is one the software lays out itself: it lists its `blocks`. */

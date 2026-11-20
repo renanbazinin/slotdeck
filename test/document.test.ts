@@ -62,7 +62,8 @@ function scripted(...answers: unknown[]): { llm: LlmProvider; requests: JsonRequ
 }
 
 type Schema = { properties: Record<string, Schema>; required?: string[]; description?: string; maxItems?: number; type?: string };
-const schemaOf = (request: JsonRequest | undefined): Schema => request?.schema as unknown as Schema;
+/** The schema a writer was asked with; one that asks for nothing where it was not asked, its every slot set by code. */
+const schemaOf = (request: JsonRequest | undefined): Schema => (request?.schema as unknown as Schema | undefined) ?? { properties: {} };
 /** A writer that gives every slide it is asked for a title and what else it must have, and nothing of its text. */
 const titles = (request: JsonRequest): unknown =>
   Object.fromEntries(
@@ -734,10 +735,15 @@ test("a fixed count's slide of several texts that would be cut is one text set d
     written.deck.slides.map((slide) => slide.slots.b1Text),
     [fillParagraphs(doc.passages, [1, 2, 3, 4, 5]), fillParagraphs(doc.passages, [6, 7, 8, 9])],
   );
+  // Each is titled with the heading its text opens under, by code: the writer has nothing to write.
   assert.deepEqual(
-    Object.values(schemaOf(writer.requests[0]).properties).map((slide) => Object.keys(slide.properties)),
-    [['title'], ['title']],
+    written.deck.slides.map((slide) => [slide.slots.title, slide.headings]),
+    [
+      ['רקע', ['תוכנית']],
+      ['תוכנית', ['סיכונים']],
+    ],
   );
+  assert.equal(writer.requests.length, 0);
   assert.deepEqual(written.warnings, []);
 });
 
@@ -1184,7 +1190,9 @@ test('a text of more paragraphs than a layout takes is set by code on a free sli
   assert.deepEqual(plan.slides.map((slide) => [slide.pattern, slide.blocks]), [['free', ['text']]]);
   const writer = scripted(titles);
   const written = await writeDeck(demo, plan, { llm: writer.llm, ...options });
-  assert.equal(writer.requests.length, 1);
+  // Its title is the heading the text opens under, so code sets all of it and no writer is asked.
+  assert.equal(writer.requests.length, 0);
+  assert.equal(written.deck.slides[0]?.slots.title, 'Notes');
   assert.equal((written.deck.slides[0]?.slots.b1Text as string[]).length, 6);
 });
 
@@ -1452,7 +1460,13 @@ test('a slide that holds its passages is filled by code', async () => {
   assert.equal('b1Text' in (schema.properties.s2?.properties ?? {}), false);
   const prompt = writer.requests[0]?.prompt ?? '';
   assert.ok(prompt.includes('s1: text-only. Background\nText of s1 from the document (p1):\n[Background]\n'));
-  assert.ok(prompt.includes('A slide whose running text the software sets from the document asks you only for its title and short slots: take them from that text.'));
+  assert.ok(prompt.includes('A slide whose running text the software sets from the document asks you only for what the software does not set, such as its title and its short slots: take them from that text.'));
+  // Each slide's title is the heading its text opens under, set by code with its text.
+  assert.deepEqual(
+    written.deck.slides.map((slide) => slide.slots.title),
+    ['Background', 'Riders'],
+  );
+  assert.equal('title' in (schema.properties.s1?.properties ?? {}), false);
   assert.deepEqual(documentKept(written.deck), { words: doc.words, kept_words: doc.words });
   assert.deepEqual(written.warnings, []);
 
@@ -1960,11 +1974,15 @@ test('planEdit: named passages move, inherited ones stay, and a slide that loses
     [null, [1, 2, 3, 4], [5, 6], null],
   );
   assert.deepEqual(edited.rewritten, [2, 3]);
-  // Slide 3 lost p4: it is written from its text, which code sets as it is, and so is the text of slide 2.
-  assert.ok((model.requests[1]?.prompt ?? '').includes('s3 (free: b1: a text). Change: Write the slide from its text from the document.\nText of s3 from the document (p5-p6):\n[Costs]\n'));
+  // Slide 3 lost p4: its text is set by code as it is, titled with the heading it opens under; the
+  // text of slide 2 is set by code too, and its change, in words, leaves its title to the writer,
+  // offered the heading, which it keeps.
   assert.deepEqual(edited.deck.slides[1]?.slots.b1Text, fillParagraphs(doc.passages, [1, 2, 3, 4]));
   assert.deepEqual(edited.deck.slides[2]?.slots.b1Text, fillParagraphs(doc.passages, [5, 6]));
-  assert.ok((model.requests[1]?.prompt ?? '').includes('A slide whose running text the software sets from the document asks you only for its title and short slots'));
+  assert.deepEqual([edited.deck.slides[1]?.slots.title, edited.deck.slides[2]?.slots.title], ['Background', 'Costs']);
+  assert.deepEqual([edited.deck.slides[1]?.headings, edited.deck.slides[2]?.headings], [['Riders'], undefined]);
+  assert.deepEqual(Object.keys(schemaOf(model.requests[1]).properties), ['s2']);
+  assert.deepEqual(Object.keys(schemaOf(model.requests[1]).properties.s2?.properties ?? {}), ['title']);
   assert.deepEqual([edited.deck.slides[0], edited.deck.slides[3]], [deck.slides[0], deck.slides[3]]);
   assert.equal(edited.deck.document, REPORT);
   assert.equal(edited.deck.documentLanguage, 'en');
@@ -1986,8 +2004,10 @@ test('planEdit never adds slides for a longer slide', async () => {
   assert.deepEqual(edited.rewritten, [2]);
   assert.deepEqual(edited.warnings, []);
   assert.equal(documentKept(edited.deck)?.left_out, 'p9');
-  // Its text is set by code: the writer is asked for the rest of the slide alone.
-  assert.equal('b1Text' in (schemaOf(model.requests[1]).properties.s2?.properties ?? {}), false);
+  // Its text is set by code; its change, in words, leaves the title to the writer, offered the heading, which it keeps.
+  assert.equal(edited.deck.slides[1]?.slots.title, 'Background');
+  assert.deepEqual(edited.deck.slides[1]?.headings, ['Riders', 'Plans']);
+  assert.deepEqual(Object.keys(schemaOf(model.requests[1]).properties.s2?.properties ?? {}), ['title']);
 });
 
 test('planEdit says before writing that a slide would be cut', async () => {
@@ -2040,7 +2060,8 @@ test('planEdit: a table moved to a slide with no table is running text there, se
   const edited = await planEdit(demo, deck, 'Put the figures on the first slide, under the text', { llm: edit.llm, ...options });
   assert.deepEqual(edited.deck.slides[0]?.passages, [1, 2]);
   assert.deepEqual(edited.deck.slides[0]?.slots.b1Text, fillParagraphs(doc.passages, [1, 2]));
-  assert.equal('b1Text' in (schemaOf(edit.requests[1]).properties.s1?.properties ?? {}), false);
+  assert.equal(edited.deck.slides[0]?.slots.title, 'Costs');
+  assert.deepEqual(Object.keys(schemaOf(edit.requests[1]).properties.s1?.properties ?? {}), ['title']);
 });
 
 test('planEdit sets a text as it is only where the document is in the language of the deck', async () => {
@@ -2048,7 +2069,9 @@ test('planEdit sets a text as it is only where the document is in the language o
   const run = async (given: DeckSpec) => {
     const model = scripted(editOf([{ from: 1, pattern: 'cover' }, { from: 2, pattern: 'free', change: 'Add the plans', passages: [1, 2, 3, 7, 8] }, { from: 3, pattern: 'free' }, { from: 4, pattern: 'closing' }]), titles, titles, titles);
     await planEdit(demo, given, 'Add the part about the plans to slide 2', { llm: model.llm, ...options });
-    return 'b1Text' in (schemaOf(model.requests[1]).properties.s2?.properties ?? {});
+    // Where code sets the text, and the title with it, the writer is not asked at all.
+    const asked = model.requests[1];
+    return asked ? 'b1Text' in (schemaOf(asked).properties.s2?.properties ?? {}) : false;
   };
   assert.equal(await run(deck), false);
   // A deck whose document is in another language, by the planner's word: the writer writes the text.
@@ -2214,4 +2237,36 @@ test('planEdit: a slide whose text the request asks for in other words is writte
   const moved = scripted(plan(false), titles);
   const filled = await planEdit(demo, deck, 'Move the electric bikes onto slide 2', { llm: moved.llm, ...options });
   assert.deepEqual(filled.deck.slides[1]?.slots.b1Text, fillParagraphs(doc.passages, [1, 2, 3, 4]));
+});
+
+test('planEdit: a change in words titles the slide by the writer, offered its heading; a title the person gave stays', async () => {
+  const deck = await reportDeck();
+  const doc = readDocument(REPORT, 'en');
+  assert.deepEqual(
+    deck.slides.map((slide) => slide.slots.title),
+    ['Slide s1', 'Background', 'Riders', 'Slide s4'],
+  );
+  // "Call slide 3 'Who rides' and move the first costs passage to it": the change is in words, and
+  // may name a title. The writer titles the slide, offered the heading its text now opens under.
+  const titled = (request: JsonRequest) => {
+    const answer = titles(request) as Record<string, Record<string, unknown>>;
+    if (answer.s3) answer.s3.title = 'Who rides';
+    return answer;
+  };
+  const renamed = scripted(editOf([{ from: 1, pattern: 'cover' }, { from: 2, pattern: 'free' }, { from: 3, pattern: 'free', change: 'Title it "Who rides" and add the first costs passage', passages: [4, 5, 6, 7] }, { from: 4, pattern: 'closing' }]), titled);
+  const edited = await planEdit(demo, deck, 'Call slide 3 "Who rides" and move the first costs passage to it', { llm: renamed.llm, ...options });
+  assert.equal(renamed.requests.length, 2);
+  const offered = schemaOf(renamed.requests[1]).properties.s3?.properties ?? {};
+  assert.ok('title' in offered);
+  assert.match(renamed.requests[1]?.prompt ?? '', /Riders/);
+  assert.equal(edited.deck.slides[2]?.slots.title, 'Who rides');
+  assert.deepEqual(edited.deck.slides[2]?.slots.b1Text, fillParagraphs(doc.passages, [4, 5, 6, 7]));
+  // A title the person gave stays when the slide's passages change for another slide's sake.
+  const own = structuredClone(deck);
+  (own.slides[2] as DeckSpec['slides'][number]).slots.title = 'What riders pay';
+  const moved = scripted(editOf([{ from: 1, pattern: 'cover' }, { from: 2, pattern: 'free', change: 'Add the first riders passage', passages: [1, 2, 3, 4] }, { from: 3, pattern: 'free', passages: [5, 6] }, { from: 4, pattern: 'closing' }]), titles);
+  const kept = await planEdit(demo, own, 'Move the first riders passage to slide 2', { llm: moved.llm, ...options });
+  assert.equal(kept.deck.slides[2]?.slots.title, 'What riders pay');
+  // A slide the change leaves alone keeps its text and its headings as they were.
+  assert.deepEqual([kept.deck.slides[0], kept.deck.slides[3]], [own.slides[0], own.slides[3]]);
 });

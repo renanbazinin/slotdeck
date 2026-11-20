@@ -318,6 +318,7 @@ Options:
 | `shrink` | `{ to, minSize? }`: allow the text to be set smaller, as `shrinkText` does. |
 | `items` | For a slot of a row of items: how many items the slide has. In a row with `widen`, fewer items are wider, and the text is measured in the wider box. |
 | `direction` | The direction the deck reads (`'ltr'` or `'rtl'`). It decides the direction and language a paragraph that mixes scripts is written in, and so how it is measured. Defaults to the template's direction, which is what the renderer uses for a deck that states none. The checks pass the deck's. |
+| `bold` | Paragraphs drawn in bold, by their position among the text's paragraphs: the headings of a document in the slide's text (`SlideSpec.headings`), which are measured in the bold face. The checks pass a slide's. A bold face that was not supplied makes the text unmeasured, as any missing face does. |
 
 `measure.missingFonts()` returns the typefaces the template's text slots need that were not supplied.
 

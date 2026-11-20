@@ -37,6 +37,12 @@ export interface FitOptions {
    * what the renderer uses for a deck that states none.
    */
   direction?: Direction;
+  /**
+   * Paragraphs set in bold, by position among the text's paragraphs: the headings of a document in
+   * it (`SlideSpec.headings`), measured in the bold face they are drawn in. A heading set run in
+   * takes no more lines than it does on a line of its own.
+   */
+  bold?: readonly number[];
 }
 
 /** How a text sits in a slot. */
@@ -307,7 +313,7 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
    * Lays text out in a frame. `size` gives the font size of a paragraph style; `gap` overrides the
    * space after paragraphs; `deckDirection` is the direction the deck reads (see FitOptions).
    */
-  const lay = (frame: TextFrame, paragraphs: string[], size: (style: ParagraphStyle) => number, gap: number | undefined, flags: { approximate: boolean }, spare = 0, deckDirection?: Direction): Laid => {
+  const lay = (frame: TextFrame, paragraphs: string[], size: (style: ParagraphStyle) => number, gap: number | undefined, flags: { approximate: boolean }, spare = 0, deckDirection?: Direction, bold?: ReadonlySet<number>): Laid => {
     const inner = (frame.vertical ? frame.height - frame.insets.top - frame.insets.bottom : frame.width - frame.insets.left - frame.insets.right) / frame.columns - spare;
     const laid: Laid = { lines: [], widths: [], lineRoom: [], height: 0, gaps: 0, lastPitch: 0, widest: 0, firstSize: 0 };
     paragraphs.forEach((text, index) => {
@@ -318,7 +324,7 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
       // a run left to state none keeps the language it inherits.
       const direction = paragraphDirection(text, deckDirection);
       const language = filledLanguage(text, style.run.ownLang, deckDirection ? { direction: deckDirection } : {}) || style.run.lang;
-      const measure = runMeasure(metrics, style.run, points, isRtlLanguage(language), flags);
+      const measure = runMeasure(metrics, bold?.has(index) ? { ...style.run, bold: true } : style.run, points, isRtlLanguage(language), flags);
       const rest = inner - style.marginStart - style.marginEnd;
       const first = rest - (style.bullet && style.indent < 0 ? 0 : style.indent);
       // The space after a line hangs outside it, unless it sits inside text that runs against the paragraph.
@@ -413,7 +419,7 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
       const measured = (shrink: number): TextFit => {
         // A size chosen because the text just fits at it sits on the edge by construction, so a
         // shrunk text is asked to fit with a little width to spare.
-        const laid = lay(frame, paragraphs, sizeAt(shrink), chosen.paragraphGap, flags, shrink === 1 ? 0 : SPARE, options.direction ?? manifest.direction);
+        const laid = lay(frame, paragraphs, sizeAt(shrink), chosen.paragraphGap, flags, shrink === 1 ? 0 : SPARE, options.direction ?? manifest.direction, options.bold?.length ? new Set(options.bold) : undefined);
         const lines = laid.lines.reduce((sum, entry) => sum + entry.length, 0);
         const slack = SLACK * laid.lastPitch;
         const over = laid.height - room - slack;

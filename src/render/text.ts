@@ -2,6 +2,7 @@ import { NS, childElement, childElements, removeNode } from '../pptx/xml.ts';
 import type { Element } from '../pptx/xml.ts';
 import type { Direction, TableTextStyle } from '../template/manifest.ts';
 import { isRtlLanguage, leftToRightTag } from '../util/language.ts';
+import { leadsInto } from '../deck/headings.ts';
 
 export interface TextOptions {
   /** Swap left and right alignment (the deck reads the other way from the template). */
@@ -166,6 +167,167 @@ export function setTextSizes(shape: Element, sizes: number[]): void {
     }
     childElement(paragraph, NS.a, 'endParaRPr')?.setAttribute('sz', size);
   });
+}
+
+/** How wide a character is counted where a heading may be set run in: wider than PowerPoint sets any (0.41 to 0.47 of the size), and than the plans count one. */
+const HEADING_WIDE = 0.55;
+/** How much of a line is counted as filled: lines break at words. */
+const HEADING_FULL = 0.85;
+/** How much wider a heading set bold is counted than in the face of its text. */
+const BOLD = 1.12;
+/** The space between a heading set run in and the text it leads (an em space), counted as characters. */
+const RUN_IN_GAP = 3;
+
+/**
+ * Sets the headings of a text that was filled (`SlideSpec.headings`), by their positions among its
+ * paragraphs (`headingPlaces`): each in bold. A heading over a paragraph of text is set run in, at
+ * the head of that paragraph, an em space between them, where its bold letters and the space take
+ * no more than a line of the text, counted wider than any plan counts one: the paragraph it joins
+ * then takes no more lines than the two took apart, and no heading is left at the foot of a column
+ * with its text in the next. The space after the heading goes before the paragraph. The em space
+ * opens the paragraph's own text, in its language: PowerPoint places a space by the language of
+ * its run, and in the heading's, an English heading over Hebrew text stands glued to it. A heading
+ * over an item of a list (by its marker or by the bullet its paragraph draws), a row of a table,
+ * another heading or a paragraph that reads the other way, or too long for a line, keeps a line of
+ * its own, its bullet taken off, with its space after it moved before it. Run last, after the
+ * text's size is set, so that a heading keeps the size and the language its own text was given.
+ */
+export function setHeadings(shape: Element, places: readonly number[], paragraphs: readonly string[], direction?: Direction): void {
+  const body = childElement(shape, NS.p, 'txBody');
+  if (!body || places.length === 0) return;
+  const all = childElements(body, NS.a, 'p');
+  if (all.length !== paragraphs.length) return;
+  const marked = new Set(places);
+  for (const at of [...places].sort((a, b) => b - a)) {
+    const heading = all[at];
+    const next = all[at + 1];
+    if (!heading) continue;
+    const room = next ? lineRoom(shape, body, heading, next) : 0;
+    const runIn =
+      next !== undefined &&
+      !marked.has(at + 1) &&
+      leadsInto(paragraphs[at + 1] ?? '') &&
+      !drawsBullet(next, body) &&
+      readsAlike(paragraphs[at] ?? '', paragraphs[at + 1] ?? '', direction) &&
+      [...(paragraphs[at] ?? '').trim()].length * BOLD + RUN_IN_GAP <= room;
+    if (!(runIn && next && joinHeading(heading, next))) headingLine(heading);
+  }
+}
+
+/**
+ * The characters a line of a text holds, counted wide (`HEADING_WIDE`): the shape's width less
+ * its insets, shared among its columns, less the margin of the paragraph under the heading, at the
+ * heading's size. 0 where the shape or the size is not stated on the slide: the heading then keeps
+ * its own line.
+ */
+function lineRoom(shape: Element, body: Element, heading: Element, next: Element): number {
+  const properties = childElement(shape, NS.p, 'spPr');
+  const transform = properties ? childElement(properties, NS.a, 'xfrm') : undefined;
+  const extent = transform ? childElement(transform, NS.a, 'ext') : undefined;
+  const width = Number(extent?.getAttribute('cx') ?? 0);
+  const run = childElements(heading, NS.a, 'r')[0];
+  const size = Number((run ? childElement(run, NS.a, 'rPr') : undefined)?.getAttribute('sz') ?? 0) / 100;
+  if (!(width > 0 && size > 0)) return 0;
+  const box = childElement(body, NS.a, 'bodyPr');
+  const emu = (name: string, fallback: number): number => Number(box?.getAttribute(name) ?? fallback);
+  const columns = Math.max(1, emu('numCol', 1));
+  const margin = Number(childElement(next, NS.a, 'pPr')?.getAttribute('marL') ?? 0);
+  const column = (width - emu('lIns', 91440) - emu('rIns', 91440) - (columns - 1) * emu('spcCol', 0)) / columns - margin;
+  return Math.floor(column / 12700 / (HEADING_WIDE * size)) * HEADING_FULL;
+}
+
+/** Whether a paragraph draws a bullet: its own, or the one the first level of its shape's list style draws where it states none. */
+function drawsBullet(paragraph: Element, body: Element): boolean {
+  const BULLETS = ['buChar', 'buAutoNum', 'buBlip'];
+  const own = childElement(paragraph, NS.a, 'pPr');
+  if (own && childElement(own, NS.a, 'buNone')) return false;
+  if (own && BULLETS.some((name) => childElement(own, NS.a, name))) return true;
+  const level = Number(own?.getAttribute('lvl') ?? 0) || 0;
+  const styles = childElement(body, NS.a, 'lstStyle');
+  const listed = styles ? childElement(styles, NS.a, `lvl${level + 1}pPr`) : undefined;
+  return !!listed && BULLETS.some((name) => childElement(listed, NS.a, name));
+}
+
+/**
+ * Whether a paragraph keeps the direction it was written in with a heading at its head: by the rule
+ * it was written by (`paragraphDirection`), in a deck that reads `direction`. A Hebrew heading at
+ * the head of an English paragraph of a Hebrew deck would make it a Hebrew paragraph.
+ */
+const readsAlike = (heading: string, next: string, direction: Direction | undefined): boolean => paragraphDirection(`${heading} ${next}`, direction) === paragraphDirection(next, direction);
+
+/** Sets a heading at the head of the paragraph under it (see `setHeadings`). False where it has no single run to move, or the paragraph no run to follow it. */
+function joinHeading(heading: Element, next: Element): boolean {
+  const runs = childElements(heading, NS.a, 'r');
+  const run = runs[0];
+  const first = childElements(next, NS.a, 'r')[0];
+  const opening = first ? childElement(first, NS.a, 't') : undefined;
+  if (!run || runs.length !== 1 || !childElement(run, NS.a, 't') || !first || !opening) return false;
+  bold(run);
+  opening.textContent = `\u2003${opening.textContent ?? ''}`;
+  next.insertBefore(run, first);
+  const before = spaceOf(heading, 'spcBef');
+  const after = spaceOf(heading, 'spcAft');
+  if (before !== undefined && after !== undefined && before + after > 0) setSpace(next, 'spcBef', before + after);
+  removeNode(heading);
+  return true;
+}
+
+/** Sets a heading on a line of its own (see `setHeadings`). */
+function headingLine(heading: Element): void {
+  for (const run of childElements(heading, NS.a, 'r')) bold(run);
+  childElement(heading, NS.a, 'endParaRPr')?.setAttribute('b', '1');
+  const props = childElement(heading, NS.a, 'pPr');
+  if (props && props.ownerDocument) {
+    const marker = ['buChar', 'buAutoNum', 'buBlip'].map((name) => childElement(props, NS.a, name)).find(Boolean);
+    if (marker) {
+      props.replaceChild(props.ownerDocument.createElementNS(NS.a, `${props.prefix ? `${props.prefix}:` : ''}buNone`), marker);
+      if (Number(props.getAttribute('indent') ?? 0) < 0) props.setAttribute('indent', '0');
+    }
+  }
+  const before = spaceOf(heading, 'spcBef');
+  const after = spaceOf(heading, 'spcAft');
+  if (before !== undefined && after !== undefined && after > 0) {
+    setSpace(heading, 'spcBef', before + after);
+    setSpace(heading, 'spcAft', 0);
+  }
+}
+
+function bold(run: Element): void {
+  let props = childElement(run, NS.a, 'rPr');
+  if (!props && run.ownerDocument) {
+    props = run.ownerDocument.createElementNS(NS.a, `${run.prefix ? `${run.prefix}:` : ''}rPr`);
+    run.insertBefore(props, run.firstChild);
+  }
+  props?.setAttribute('b', '1');
+}
+
+/** The space a paragraph states before or after it, in points: 0 where it states none, `undefined` where it states it as a share of a line. */
+function spaceOf(paragraph: Element, name: 'spcBef' | 'spcAft'): number | undefined {
+  const props = childElement(paragraph, NS.a, 'pPr');
+  const space = props ? childElement(props, NS.a, name) : undefined;
+  if (!space) return 0;
+  const points = childElement(space, NS.a, 'spcPts');
+  return points ? Number(points.getAttribute('val') ?? 0) / 100 : undefined;
+}
+
+/** Sets the space before or after a paragraph, in points, in the order paragraph properties keep: line spacing, space before, space after, then the rest. */
+function setSpace(paragraph: Element, name: 'spcBef' | 'spcAft', points: number): void {
+  const doc = paragraph.ownerDocument;
+  if (!doc) return;
+  const prefix = paragraph.prefix ? `${paragraph.prefix}:` : '';
+  let props = childElement(paragraph, NS.a, 'pPr');
+  if (!props) {
+    props = doc.createElementNS(NS.a, `${prefix}pPr`);
+    paragraph.insertBefore(props, paragraph.firstChild);
+  }
+  const old = childElement(props, NS.a, name);
+  if (old) removeNode(old);
+  const space = doc.createElementNS(NS.a, `${prefix}${name}`);
+  const value = doc.createElementNS(NS.a, `${prefix}spcPts`);
+  value.setAttribute('val', String(Math.round(points * 100)));
+  space.appendChild(value);
+  const after = name === 'spcBef' ? (childElement(props, NS.a, 'lnSpc') ?? null) : (childElement(props, NS.a, 'spcBef') ?? childElement(props, NS.a, 'lnSpc') ?? null);
+  props.insertBefore(space, after ? after.nextSibling : props.firstChild);
 }
 
 function setParagraphGap(paragraph: Element, points: number): void {

@@ -324,8 +324,15 @@ counts the rows it shows in its table as kept, and moves only where the plain te
 
 **Writing.** A slide that holds its passages gets them word for word, set by code, where the document is in
 the deck's language, nothing asks for it shorter, it has no table that goes into a table, and its pattern has
-one running text. The writer then writes only its title and its short slots. In a layout's list, an item set
-by code has the list's bullet in place of its own; a number stays. Any other slide carrying passages is given
+one running text. The writer then writes only its short slots, and its title where code does not set it. From
+0.6.6 code also sets the title: the heading the slide's text opens under, word for word, where the title holds
+it (on a free slide, in one line). The text then does not say that heading again, and a slide whose every slot
+code sets asks the writer nothing. The other headings in the text are set in bold, each at the head of the
+paragraph under it (`SlideSpec.headings`). A heading too long for the title is the writer's to title; a text
+the writer writes keeps a heading as a paragraph of its own, and code marks it the same where it is word for
+word. A text whose first paragraph says its title again (`Background:` under the title `Background`) loses
+that paragraph. In a layout's list, an item set by code has the list's bullet in place of its own; a number
+stays. Any other slide carrying passages is given
 its text and told to keep the text's words and order, shortened only where a limit makes it: a translation, a
 summary, a slide that is cut, a table on a slide with a table (which goes into the table, cut to the limits of
 its cells), a layout of several running texts. On a slide with no table, a table of the document is part of

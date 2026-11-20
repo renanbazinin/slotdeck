@@ -133,6 +133,7 @@ interface SlideSpec {
   base?: string;                // a free slide: the pattern whose frame it stands on
   colors?: DeckColors;          // colours for this slide alone, in place of the deck's
   passages?: number[];          // a deck made from a document: the passages of it this slide carries
+  headings?: string[];          // a deck made from a document: its headings in the slide's text, set bold, run in (from 0.6.6)
 }
 interface DeckColors {
   accent?: string;                  // takes the place of the template's main colour; six hex digits
@@ -1469,6 +1470,7 @@ interface FitOptions {
   shrink?: ShrinkLimit; // allow the text to be set smaller when it does not fit
   items?: number;       // for a slot of a row of items: how many items the slide has
   direction?: Direction; // the direction the deck reads; decides how a paragraph that mixes scripts is written and measured; the template's when left out
+  bold?: number[];       // paragraphs drawn in bold, by position: a slide's document headings (SlideSpec.headings), measured in the bold face
 }
 interface ShrinkLimit { to: number; minSize?: number } // the shape of the manifest's shrinkText
 interface TextFit {

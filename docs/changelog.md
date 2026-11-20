@@ -3,6 +3,77 @@
 What changed in each version, newest first, with what to do when upgrading. The version you have installed is
 in `node_modules/slotdeck/package.json`.
 
+## 0.6.6
+
+A person's document reads as a document on its slides. On a slide set dense, its headings stood in the text as
+plain lines, indistinguishable from it ("Riders", "תוכנית"); one could end a column with its text in the next;
+and the heading the slide opened under stood nowhere when the writer gave the slide no title. Stored decks, and
+decks made without a document, render as in 0.6.5.
+
+### Fixed
+
+- **Headings in a document's text are set as headings.** Each is set in bold at the head of the paragraph
+  under it, an em space between them: `Riders  Students and commuters make up most members…`. The space after
+  the heading goes before the paragraph, so sections stay apart. A heading shares its line with its text, so
+  none ends a column with its text in the next. The em space opens the paragraph's own text, in its language,
+  so an English heading over Hebrew text (`KPI`) is not glued to it. A heading keeps a line of its own, in
+  bold and without a bullet, over a list item (by its marker or by the bullet its paragraph draws), a table
+  row or another heading, over a paragraph it would turn the other way (a Hebrew heading over an English
+  paragraph of a Hebrew deck), and where its bold letters would take more than a line of the text, counted
+  wider than any plan counts one.
+- **The heading a slide opens under is its title.** Where code sets a slide's text from its passages, code
+  sets its title too: the heading of its first passage, word for word, where the title holds it, on a free
+  slide in one line. Slides that go on from a section get the section's heading. Before, the writer chose the
+  title, and a slide without one lost the heading.
+- **A text does not open with its title.** A first paragraph that says the title again, as a heading line
+  with a colon (`רקע:` under `רקע`), is taken off; its words are the title.
+- A writer that keeps a heading in brackets (`[Riders]`) in a text it writes has the brackets taken off.
+
+### Added
+
+- **`SlideSpec.headings`:** the headings of the document that stand in the slide's text, word for word, in
+  order. The planner and `planEdit` set it; the renderer sets the paragraphs it names. A paragraph no entry
+  names is plain text, and a value that is not a list of strings names none.
+
+### Changed
+
+- **The writer is asked for less.** A slide whose every slot code sets is left out of the writer's request,
+  and a deck with nothing left to write asks no model at all. Before, such a slide was sent as an empty object
+  (a closing slide whose only text is a deck field was one).
+- The writer is told: a title is the heading in brackets at the top of the slide's text, never one further
+  down, which the slide shows in its text; a heading in brackets inside a text it writes is a paragraph of its
+  own, without the brackets.
+- `planEdit` sets a slide's title to the heading its text opens under where it sets the text again from its
+  passages, the change is to its passages alone, and the slide was titled with its heading or had no title. A
+  change in words may speak of the title: the writer then titles the slide, offered the heading where the
+  slide had it, and a title the person gave stays. A slide the change writes is settled as in a new deck; a
+  slide it leaves alone keeps its text and its headings as they were.
+- **Text is measured in bold where it is drawn bold.** With fonts, the headings of a slide are measured in the
+  bold face (`FitOptions.bold`), so a heading that takes a second line in bold is counted so. Without the bold
+  face supplied, such a text is not measured, and the character budgets hold.
+- **Previews keep the space after a heading.** Pagus trims the text of each run; the adapter keeps a space at
+  either end of a run (a word joiner beside it), so a heading set run in is not shown glued to its text.
+- In a deck written in another language than its document, a heading the writer translated and kept in
+  brackets loses the brackets and is set as a heading.
+- `slideAlternatives` keeps a slide's `headings` on the layouts it offers.
+
+### Upgrading from 0.6.5
+
+Nothing to change in code. A stored deck renders as in 0.6.5, byte for byte: it has no `headings`, and its
+headings stay plain lines until the deck is made again or changed. An app that stores decks whole keeps
+`headings` with them; one that rebuilds slides field by field must copy it. A test that counts the writer's
+requests, or compares its schema, sees no request for a slide whose every slot code sets.
+
+### Known limits
+
+- A heading too long for the slide's title is titled by the writer, which may leave it out of a free slide's
+  title. A heading over a list item or a table row is on a line of its own and can end a column.
+- On a layout that draws no bullets, the items of a list from a document are set without their markers (as
+  before); a heading over such a list stays a plain line.
+- A text the writer writes (translated, asked to be shorter, or cut) has its headings marked only where it
+  keeps them word for word.
+- A heading set run in uses U+2003 (an em space). Fonts without it fall back to another font for that space.
+
 ## 0.6.5
 
 English and mixed text on a right-to-left template reads as it was written. An English deck made from a Hebrew

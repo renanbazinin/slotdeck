@@ -37,7 +37,8 @@ import { fitTable, setTable } from './table.ts';
 import { applyRepeat, moveShape, placeShape, rowTextIds } from './repeat.ts';
 import type { FontMetrics } from '../text/fonts.ts';
 import { measurerFor } from '../text/measure.ts';
-import { adjustText, setShapeText, setTextSizes } from './text.ts';
+import { adjustText, setHeadings, setShapeText, setTextSizes } from './text.ts';
+import { headingPlaces } from '../deck/headings.ts';
 import type { TextOptions, WritingOptions } from './text.ts';
 
 const SLIDE_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.slide+xml';
@@ -275,12 +276,15 @@ ${colors?.key}` : assetId;
         // Text that does not fit is set smaller, as far as the manifest allows; the measurer says how far.
         if (measure && manifest.shrinkText) {
           // On a free slide of a deck that asks for larger text, no further than the size the text has without that wish.
-          const fit = measure.fit(pattern, slot, action.paragraphs, fitOptions(manifest, deck, slide, freeTextFloor(free, slot, action.paragraphs, manifest, slide, measure, deck.direction)));
+          const fit = measure.fit(pattern, slot, action.paragraphs, fitOptions(manifest, deck, slide, freeTextFloor(free, slot, action.paragraphs, manifest, slide, measure, deck.direction), action.paragraphs));
           if (fit && fit.scale < 1) {
             setTextSizes(shape, fit.sizes);
             shrunk.push({ slide: number, slot: sources.get(slot.name) ?? slot.name, size: fit.size, scale: Math.round(fit.scale * 1000) / 1000 });
           }
         }
+        // The headings of a person's document in the text, last, once its size is set.
+        const places = headingPlaces(action.paragraphs, slide.headings);
+        if (places.length > 0) setHeadings(shape, places, action.paragraphs, writing.direction);
       } else if (action.type === 'image' && slot.kind === 'image') {
         let image: { part: string; info: ImageInfo };
         try {

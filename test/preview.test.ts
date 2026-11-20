@@ -211,3 +211,14 @@ test('the adapter passes its options on and stops when the caller gives up', asy
   stopped.abort();
   await assert.rejects(pagus.renderSlides({ pptx: readFileSync(join(root, 'templates', 'demo.pptx')), signal: stopped.signal }), /abort/i);
 });
+
+test('a heading set run in keeps the space after it in a preview, which Pagus would trim', async () => {
+  const pagus = pagusPreviews(pagusCore, pagusRenderer);
+  const decks = JSON.parse(readFileSync(join(root, 'test', 'fixtures', 'documents-0.6.5.json'), 'utf8')) as Record<string, DeckSpec>;
+  const deck = structuredClone(decks['document en dense x2'] as DeckSpec);
+  deck.slides = [{ ...(deck.slides[0] as DeckSpec['slides'][number]), headings: ['Riders'] }];
+  const { previews } = await previewDeck(demo, deck, pagus, { layout: 'adaptive' });
+  const words = text(previews[0]?.data as Uint8Array).replace(/<[^>]+>/g, '');
+  assert.match(words, /Riders[\u2060\s]+Students and commuters/);
+  assert.doesNotMatch(words, /RidersStudents/);
+});
