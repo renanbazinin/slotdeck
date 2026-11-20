@@ -275,6 +275,8 @@ Every change is an object with `op`. `pattern` is a pattern id, `slot` a slot na
   direction?: 'ltr' | 'rtl',
   alignOnDirectionChange?: 'flip' | 'keep',
   textScale?: number | null,
+  characterWidth?: number | null,
+  leastTextSize?: number | null,
   colors?: { accent?: string | null, accent2?: string | null } | false | null,
   free?: boolean | null | { base?: string | null, styles?: Record<string, { slide: number, shape: string } | null> },
 }
@@ -282,6 +284,13 @@ Every change is an object with `op`. `pattern` is a pattern id, `slot` a slot na
 
 `textScale` enlarges the body text of every deck made from the template (`1.3` for 30% larger); `null` or `1`
 returns to the designed size.
+
+`characterWidth` says how wide PowerPoint sets a character of the template's running text, as a share of its
+size (`0.44`): the running text of free slides is then counted with it and set larger. It is a
+number measured on the template's own face, between 0.3 and 0.8; `null` goes back to the estimate. See "How wide
+a template's text is set" in [text-fit.md](text-fit.md). `leastTextSize` is the least size, in points, a long
+text set dense on a free slide is set at (`10`); `null` goes back to the size the slide's width allows. A value
+out of range is refused with its range.
 
 `colors` names the template's main and second colour, six hex digits each, for decks that ask for other
 colours: a deck's `accent` takes the place of this one. `null` has the software find them by how much each

@@ -2,6 +2,7 @@
 // them, how a plan names their parts, and how a model or a person is told which part something
 // is about. How such a slide is laid out is the work of src/free.
 import { FREE_BLOCK_KINDS, FREE_PATTERN } from '../deck/spec.ts';
+import type { HeadingOver } from '../deck/headings.ts';
 import type { DeckSpec, FreeArrange, FreeBlockKind } from '../deck/spec.ts';
 import { FREE_PARTS, describeBlocks, isFreeBlockKind } from '../free/blocks.ts';
 import { freeKitOrReason } from '../free/kit.ts';
@@ -128,7 +129,8 @@ export function freeOnOffer(template: Template, context: CatalogContext, deck: P
  * set out for them, and their budgets say what their boxes hold at that length (length.ts says
  * what the writer is then told). `paragraphs` gives some of them the number of paragraphs they
  * will have, where that is known: a text that code fills is set out as it will be. On a slide set
- * dense, `asIs` gives the lengths of those paragraphs, of a text code sets as it is.
+ * dense, `asIs` gives the lengths of those paragraphs, of a text code sets as it is, and `heads`
+ * the headings among them that stand over a paragraph.
  */
 export function freeWritePattern(
   template: Template,
@@ -140,12 +142,13 @@ export function freeWritePattern(
     lengths?: Readonly<Record<string, number>> | undefined;
     paragraphs?: Readonly<Record<string, number>> | undefined;
     asIs?: Readonly<Record<string, readonly number[]>> | undefined;
+    heads?: Readonly<Record<string, readonly HeadingOver[]>> | undefined;
   },
   context: CatalogContext,
   skip?: ReadonlySet<string>,
   withParts?: readonly string[],
 ): { pattern: UsablePattern; base: string } | { reason: string } {
-  const planned = freePattern(template, deck, { blocks: [...entry.blocks], arrange: entry.arrange, base: entry.base, lengths: entry.lengths, paragraphs: entry.paragraphs, asIs: entry.asIs }, context.icons.length > 0, withParts);
+  const planned = freePattern(template, deck, { blocks: [...entry.blocks], arrange: entry.arrange, base: entry.base, lengths: entry.lengths, paragraphs: entry.paragraphs, asIs: entry.asIs, heads: entry.heads }, context.icons.length > 0, withParts);
   if (typeof planned === 'string') return { reason: `cannot be made from this template: ${planned}` };
   const photos = entry.blocks.filter((kind) => kind === 'photo').length;
   const slots = planned.pattern.slots.map((slot): SlotDef => {

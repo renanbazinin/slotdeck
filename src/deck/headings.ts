@@ -33,3 +33,20 @@ export function headingPlaces(paragraphs: readonly string[], headings: unknown):
  * row of a table, which keep the line they start with, the heading then on a line of its own.
  */
 export const leadsInto = (next: string): boolean => !ITEM.test(next) && !next.includes(' | ');
+
+/** A heading of a text over a paragraph that is no heading itself: where it stands among the text's paragraphs, its text and the text of the paragraph under it. */
+export interface HeadingOver {
+  at: number;
+  heading: string;
+  next: string;
+}
+
+/**
+ * The headings of a text, by their positions among its paragraphs (`headingPlaces`), that stand
+ * over a paragraph that is no heading itself: those the renderer may set run in. The plans of
+ * free slides count each as it is set: run in, or on a line of its own (`runsIn` in render/text.ts).
+ */
+export function headingsOver(paragraphs: readonly string[], places: readonly number[]): HeadingOver[] {
+  const marked = new Set(places);
+  return places.filter((at) => at + 1 < paragraphs.length && !marked.has(at + 1)).map((at) => ({ at, heading: paragraphs[at] as string, next: paragraphs[at + 1] as string }));
+}

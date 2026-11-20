@@ -9,6 +9,7 @@
 // slide stays on that slide: where nothing holds it, the slide holds what it can, and the plan and
 // the deck say so.
 import { toParagraphs } from '../deck/spec.ts';
+import type { HeadingOver } from '../deck/headings.ts';
 import type { DeckSpec, FreeArrange, FreeBlockKind } from '../deck/spec.ts';
 import type { Issue } from '../deck/validate.ts';
 import { freeSlotName } from '../free/blocks.ts';
@@ -504,6 +505,7 @@ export type FreeMaker = (
   lengths: Record<string, number>,
   paragraphs?: Record<string, number>,
   asIs?: Record<string, readonly number[]>,
+  heads?: Record<string, readonly HeadingOver[]>,
 ) => UsablePattern | undefined;
 
 /** The paragraphs of a text, where they are known: a document's text has those of its passages (see `shapeOf`). */
@@ -526,7 +528,8 @@ function roomOf(home: TextHome, chars: number, planning: LengthPlanning, shape?:
   // A document's text that code sets as it is (`TextShape.asIs`) is judged as it will be set: only
   // where these are its characters, not where words asked for the slide make it shorter.
   const asIs = shape?.asIs && shape.asIs.chars === chars && name !== undefined ? { [name]: shape.asIs.each } : undefined;
-  const pattern = shape && name !== undefined && names.length === 1 ? planning.free?.(home.blocks, home.arrange, lengths, { [name]: shape.paragraphs }, asIs) : planning.free?.(home.blocks, home.arrange, lengths);
+  const heads = asIs && shape?.asIs?.heads && name !== undefined ? { [name]: shape.asIs.heads } : undefined;
+  const pattern = shape && name !== undefined && names.length === 1 ? planning.free?.(home.blocks, home.arrange, lengths, { [name]: shape.paragraphs }, asIs, heads) : planning.free?.(home.blocks, home.arrange, lengths);
   return pattern ? heldBy(pattern, planning.context, { names: new Set(names) }) : undefined;
 }
 

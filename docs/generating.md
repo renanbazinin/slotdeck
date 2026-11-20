@@ -173,7 +173,7 @@ wish and makes room for it, and from 0.6.2 the text stays on the slide it was as
      set at the template's running-text size in two columns where it needs them, and its budget is what its
      box then holds. A slide of a layout with a chart or a table keeps it beside the text;
    - else the same free slide set dense: its text alone, set smaller down to the least size that reads (9 pt on
-     a slide 13.33 inches wide, 7 pt on one 10 inches wide), in two or three columns in the larger room under
+     a slide 13.33 inches wide, 7 pt on one 10 inches wide, or the template's `leastTextSize`), in two or three columns in the larger room under
      the title. A photo gives way. So do the texts of a plan's slide of several texts, where nothing is written
      yet and they would be cut: they are one text (`planOutline`, `editPlan`). In a plan, so do a list, a
      chart, a table or cards that leave the slide less than half of the text asked, where the text alone holds

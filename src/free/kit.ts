@@ -16,6 +16,7 @@ import type { Template } from '../render/render.ts';
 import { frameParts } from '../template/compose.ts';
 import { inspectTemplate } from '../template/inspect.ts';
 import type { Box, ShapeInfo, TemplateInfo } from '../template/inspect.ts';
+import { templateTextSetting } from '../template/manifest.ts';
 import type { ChartSlotDef, Direction, PatternDef, SlideBox, SlotDef, TableSlotDef, TemplateManifest, TextSlotDef } from '../template/manifest.ts';
 import { inFrameBand } from '../template/measure.ts';
 import { TextStyles } from '../text/styles.ts';
@@ -94,6 +95,10 @@ export interface FreeKit {
   direction: Direction;
   /** The factor the template puts on body text. */
   textScale: number;
+  /** How wide PowerPoint sets a character of the template's running text, as a share of its size, where its manifest states it (`TemplateManifest.characterWidth`). */
+  characterWidth?: number;
+  /** The least size, in points, of a long text set dense on a free slide, where the manifest states it (`TemplateManifest.leastTextSize`, up to a half point); otherwise by the slide's width (`leastSizeOf` in plan.ts). */
+  leastTextSize?: number;
   styles: Record<Exclude<FreeStyleRole, 'note'>, FreeTextStyle> & { note?: FreeTextStyle };
   /** The background of a card: a tinted or outlined panel that the template sets text on. */
   panel?: FreeShapeStyle;
@@ -750,6 +755,10 @@ function frameKit(template: Template, found: Scan, id: string | undefined): Free
     chart: found.chart ?? {},
     palette: paletteOf(pkg, manifest),
   };
+  const characterWidth = templateTextSetting(manifest, 'characterWidth');
+  if (characterWidth !== undefined) result.characterWidth = characterWidth;
+  const leastTextSize = templateTextSetting(manifest, 'leastTextSize');
+  if (leastTextSize !== undefined) result.leastTextSize = leastTextSize;
   if (titleShape && titleBox) {
     // A title drawn in a narrow box beside other content has the whole width on a free slide,
     // when nothing that stays stands in its way.

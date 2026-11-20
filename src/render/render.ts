@@ -20,7 +20,7 @@ import type { Relationship } from '../pptx/package.ts';
 import { readPresentation } from '../pptx/presentation.ts';
 import { NS, childElement, childElements, descendants, openableSizes, parseXml, removeNode, rootElement, serializeXml } from '../pptx/xml.ts';
 import type { Element } from '../pptx/xml.ts';
-import { bodyTextScale, chartAtScale, defaultFit, effectiveSlots, itemCount, scalesWithText, slotSources, tableAtScale } from '../template/manifest.ts';
+import { bodyTextScale, chartAtScale, defaultFit, effectiveSlots, itemCount, scalesWithText, slotSources, tableAtScale, templateTextSetting } from '../template/manifest.ts';
 import type { ChartSlotDef, PatternDef, SlideBox, TemplateManifest } from '../template/manifest.ts';
 import { withLayouts } from '../template/compose.ts';
 import { readImageInfo } from '../util/image.ts';
@@ -284,7 +284,7 @@ ${colors?.key}` : assetId;
         }
         // The headings of a person's document in the text, last, once its size is set.
         const places = headingPlaces(action.paragraphs, slide.headings);
-        if (places.length > 0) setHeadings(shape, places, action.paragraphs, writing.direction);
+        if (places.length > 0) setHeadings(shape, places, action.paragraphs, writing.direction, templateTextSetting(manifest, 'characterWidth'));
       } else if (action.type === 'image' && slot.kind === 'image') {
         let image: { part: string; info: ImageInfo };
         try {

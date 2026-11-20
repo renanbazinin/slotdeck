@@ -169,7 +169,11 @@ export function setTextSizes(shape: Element, sizes: number[]): void {
   });
 }
 
-/** How wide a character is counted where a heading may be set run in: wider than PowerPoint sets any (0.41 to 0.47 of the size), and than the plans count one. */
+/**
+ * How wide a character is counted where a heading may be set run in: wider than PowerPoint sets any
+ * (0.41 to 0.47 of the size), and than the plans count one. A template that states how wide its
+ * text is set (`TemplateManifest.characterWidth`) and is wider is counted so.
+ */
 const HEADING_WIDE = 0.55;
 /** How much of a line is counted as filled: lines break at words. */
 const HEADING_FULL = 0.85;
@@ -177,6 +181,29 @@ const HEADING_FULL = 0.85;
 const BOLD = 1.12;
 /** The space between a heading set run in and the text it leads (an em space), counted as characters. */
 const RUN_IN_GAP = 3;
+
+/**
+ * The characters a line of a column so many points wide holds for a heading set run in, at a size:
+ * counted wide (`HEADING_WIDE`, or the template's own width where it is wider) and 85% full.
+ */
+export function headingRoom(column: number, size: number, characterWidth?: number): number {
+  return Math.floor(column / (Math.max(HEADING_WIDE, characterWidth ?? 0) * size)) * HEADING_FULL;
+}
+
+/** The characters a heading of so many letters takes at the head of the paragraph it is set run in: its letters counted bold, and the em space. */
+export const runInChars = (letters: number): number => letters * BOLD + RUN_IN_GAP;
+
+/**
+ * Whether a heading is set run in at the head of the paragraph under it, by their texts: the
+ * paragraph is no item of a list or row of a table (`leadsInto`), keeps its direction with the
+ * heading at its head (`readsAlike`), and the heading's bold letters and the em space take no more
+ * than a line that holds `room` characters (`headingRoom`). Where the paragraph draws a bullet, or
+ * is a heading itself, the heading is not set run in whatever this says (see `setHeadings`). The
+ * plans of free slides ask the same, so that a text is counted as it is set.
+ */
+export function runsIn(heading: string, next: string, direction: Direction | undefined, room: number): boolean {
+  return leadsInto(next) && readsAlike(heading, next, direction) && runInChars([...heading.trim()].length) <= room;
+}
 
 /**
  * Sets the headings of a text that was filled (`SlideSpec.headings`), by their positions among its
@@ -191,8 +218,9 @@ const RUN_IN_GAP = 3;
  * another heading or a paragraph that reads the other way, or too long for a line, keeps a line of
  * its own, its bullet taken off, with its space after it moved before it. Run last, after the
  * text's size is set, so that a heading keeps the size and the language its own text was given.
+ * `characterWidth` is the template's own (`TemplateManifest.characterWidth`), where it states one.
  */
-export function setHeadings(shape: Element, places: readonly number[], paragraphs: readonly string[], direction?: Direction): void {
+export function setHeadings(shape: Element, places: readonly number[], paragraphs: readonly string[], direction?: Direction, characterWidth?: number): void {
   const body = childElement(shape, NS.p, 'txBody');
   if (!body || places.length === 0) return;
   const all = childElements(body, NS.a, 'p');
@@ -202,25 +230,19 @@ export function setHeadings(shape: Element, places: readonly number[], paragraph
     const heading = all[at];
     const next = all[at + 1];
     if (!heading) continue;
-    const room = next ? lineRoom(shape, body, heading, next) : 0;
-    const runIn =
-      next !== undefined &&
-      !marked.has(at + 1) &&
-      leadsInto(paragraphs[at + 1] ?? '') &&
-      !drawsBullet(next, body) &&
-      readsAlike(paragraphs[at] ?? '', paragraphs[at + 1] ?? '', direction) &&
-      [...(paragraphs[at] ?? '').trim()].length * BOLD + RUN_IN_GAP <= room;
+    const room = next ? lineRoom(shape, body, heading, next, characterWidth) : 0;
+    const runIn = next !== undefined && !marked.has(at + 1) && !drawsBullet(next, body) && runsIn(paragraphs[at] ?? '', paragraphs[at + 1] ?? '', direction, room);
     if (!(runIn && next && joinHeading(heading, next))) headingLine(heading);
   }
 }
 
 /**
- * The characters a line of a text holds, counted wide (`HEADING_WIDE`): the shape's width less
- * its insets, shared among its columns, less the margin of the paragraph under the heading, at the
- * heading's size. 0 where the shape or the size is not stated on the slide: the heading then keeps
- * its own line.
+ * The characters a line of a text holds for a heading set run in (`headingRoom`): the shape's width
+ * less its insets, shared among its columns, less the margin of the paragraph under the heading, at
+ * the heading's size. 0 where the shape or the size is not stated on the slide: the heading then
+ * keeps its own line.
  */
-function lineRoom(shape: Element, body: Element, heading: Element, next: Element): number {
+function lineRoom(shape: Element, body: Element, heading: Element, next: Element, characterWidth?: number): number {
   const properties = childElement(shape, NS.p, 'spPr');
   const transform = properties ? childElement(properties, NS.a, 'xfrm') : undefined;
   const extent = transform ? childElement(transform, NS.a, 'ext') : undefined;
@@ -233,7 +255,7 @@ function lineRoom(shape: Element, body: Element, heading: Element, next: Element
   const columns = Math.max(1, emu('numCol', 1));
   const margin = Number(childElement(next, NS.a, 'pPr')?.getAttribute('marL') ?? 0);
   const column = (width - emu('lIns', 91440) - emu('rIns', 91440) - (columns - 1) * emu('spcCol', 0)) / columns - margin;
-  return Math.floor(column / 12700 / (HEADING_WIDE * size)) * HEADING_FULL;
+  return headingRoom(column / 12700, size, characterWidth);
 }
 
 /** Whether a paragraph draws a bullet: its own, or the one the first level of its shape's list style draws where it states none. */

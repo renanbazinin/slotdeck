@@ -72,7 +72,7 @@ function unfitted(plan: FreePlan, slots: SlideSpec['slots'] | undefined): Map<st
  * same frame whatever else the deck holds. A sentence instead when the template cannot carry
  * a free slide.
  */
-export function freeFor(template: Template, deck: Pick<DeckSpec, 'direction' | 'textScale'>, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 'slots' | 'base'>, planning?: FreeContext['planning']): FreeResolved | string {
+export function freeFor(template: Template, deck: Pick<DeckSpec, 'direction' | 'textScale'>, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 'slots' | 'base' | 'headings'>, planning?: FreeContext['planning']): FreeResolved | string {
   // Blocks that are no blocks give no slide to work out. The deck's check says what is wrong
   // with them; whoever asks without that check (the design checks, the pictures of a deck) is
   // told here, in a sentence, and passes the slide over.
@@ -97,10 +97,13 @@ export function freeFor(template: Template, deck: Pick<DeckSpec, 'direction' | '
   // from its neighbours, and a part that is then fitted to what is left can end up under the
   // size it has without the wish. So the slide is also planned without the wish, and that plan
   // says the least every text may be. The slide takes all of what was asked, or half of it, or
-  // none: the most at which no text is smaller.
+  // none: the most at which no text is smaller. That least is counted as 0.6.6 counted
+  // (`FreeContext.asThen`): a text that the count of headings run in, or of the template's own
+  // width, sets larger without the wish would otherwise cost the rest of the slide the wish that
+  // 0.6.6 gave it. Where none is given, the slide is set as without the wish, counted as now.
   const plain = freePlan(kit, slide, { ...context, textScale: 1 });
   resolved.plain = plain;
-  const least = textSizes(plain);
+  const least = textSizes(freePlan(kit, slide, { ...context, textScale: 1, asThen: true }));
   const smaller = (plan: FreePlan): boolean => [...textSizes(plan)].some(([name, size]) => size < (least.get(name) ?? 0) - 1e-6);
   if (!smaller(resolved.plan)) return resolved;
   for (const [scale, enlarged] of [[asked, undefined], [1 + (asked - 1) / 2, 'half']] as const) {

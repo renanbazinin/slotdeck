@@ -318,7 +318,7 @@ Options:
 | `shrink` | `{ to, minSize? }`: allow the text to be set smaller, as `shrinkText` does. |
 | `items` | For a slot of a row of items: how many items the slide has. In a row with `widen`, fewer items are wider, and the text is measured in the wider box. |
 | `direction` | The direction the deck reads (`'ltr'` or `'rtl'`). It decides the direction and language a paragraph that mixes scripts is written in, and so how it is measured. Defaults to the template's direction, which is what the renderer uses for a deck that states none. The checks pass the deck's. |
-| `bold` | Paragraphs drawn in bold, by their position among the text's paragraphs: the headings of a document in the slide's text (`SlideSpec.headings`), which are measured in the bold face. The checks pass a slide's. A bold face that was not supplied makes the text unmeasured, as any missing face does. |
+| `bold` | Paragraphs drawn in bold, by their position among the text's paragraphs: the headings of a document in the slide's text (`SlideSpec.headings`), which are measured in the bold face. A heading over a paragraph of text that draws no bullet is measured as the renderer sets it: run in at the head of that paragraph, an em space after it, its space after it before the paragraph, where its bold letters take no more than a line, asked for a line a character shorter (from 0.6.7). As the renderer, it keeps a heading on a line of its own where the slide states no size for its run or no place for its shape. `TextFit.paragraphs` and `TextFit.widths` then have an empty entry for it. The checks pass a slide's. A bold face that was not supplied makes the text unmeasured, as any missing face does. |
 
 `measure.missingFonts()` returns the typefaces the template's text slots need that were not supplied.
 
@@ -453,6 +453,70 @@ widths than the letters alone. It returns one number for each glyph rather than 
 rounds each glyph the way PowerPoint does. With `kerning` true, the kerning between two glyphs belongs in the
 advance of the first. Set `substitute: true` on a face that stands in for another weight or slant; results
 that use it are marked `approximate`.
+
+## How wide a template's text is set (`characterWidth`)
+
+Without fonts, the text of a free slide is counted by its length (see [free-slides.md](free-slides.md)). A
+character is counted at 0.55 of its size wide, or 0.48 in a long text set dense, and each line 85% full. Those
+widths leave room for a face the software does not know. PowerPoint sets a character of an ordinary face at
+about 0.42 of its size, so running text is set smaller than it would fit. Most of the time that is 2 to 4 pt
+smaller, and up to a fifth smaller in a long text set dense.
+
+From 0.6.7 a template can say how wide its text is set: `characterWidth` in its manifest (see
+[manifest-format.md](manifest-format.md)). It is the width PowerPoint gives a character of the template's
+running text, as a share of its size, measured on its own face: the width that 19 full lines in 20 stay under,
+rounded up to two decimals.
+The running text of free slides (texts and lists, set dense or not) is counted with it, and so are the budgets
+writers are told. Other things are counted as before:
+- cards, steps, quotations, notes, headings, labels, tables and charts;
+- whether a long text takes one column or two.
+
+Lines are still counted 85% full, each paragraph in whole lines, and a text in columns keeps a line free in each.
+
+| Template | Measured | Set larger by |
+| --- | --- | --- |
+| The demo template (Calibri, English) | 0.43 | 0.5 to 4.5 pt |
+| A right-to-left template in a narrow Hebrew face | 0.45 | 0.5 to 3 pt |
+
+In PowerPoint's own rendering of the texts these figures come from, 67 on each template, nothing ran past its
+box at those widths. They included:
+- English among Hebrew;
+- lines of figures (`12.5% (2024), 3,450,000 USD`);
+- paragraphs in capitals;
+- 24 short paragraphs.
+
+The setting is one width for all of a template's text. A text much wider than the usual is counted as the usual
+one: capitals throughout, long figures, words in a wider script. Where such a text is set as large as it fits,
+it can run past its box. A value under the face's own lets ordinary text run past too. So the value is
+measured, never guessed, on text of the kind the decks hold. A value over the estimate (0.55, or 0.48 for a long
+text set dense) counts that text more cautiously than without it, and sets it smaller: right for a wide face.
+
+The width changes how much a line holds, not which room a long text set dense takes. Whether such a text needs
+the larger room, where it is set in columns, is still decided by the estimate: counted narrower, a text that
+fits the first room at four fifths of the template's size would otherwise stay there, smaller than it is set in
+the larger room.
+
+To measure it, use a PC with PowerPoint and the template's fonts (installed, or embedded in the template), in a
+clone of the repository:
+
+```
+node scripts/measure-character-width.ts template.pptx manifest.json --text sample.txt
+```
+
+`sample.txt` holds paragraphs of the kind the template's decks hold, one per line, in their language, with their
+figures and names: some 3,000 characters. Left out, the text of the template's own slides is used where it has
+enough. The script renders free slides of that text from the template, short to long, and reads how PowerPoint
+breaks their lines (`scripts/measure-pptx.ps1`). It prints the width of a character on the full lines, and the
+value to state:
+
+```
+101 full lines: mean 0.420, half under 0.419, 19 of 20 under 0.442, 99 of 100 under 0.447, widest 0.465
+characterWidth: 0.45
+```
+
+Then set it in the app, with no command line: `changeManifest(template, [{ op: 'setManifest', characterWidth:
+0.45 }])`, or in words to `editManifest` ("we measured our text at 0.45"). `null` takes it away again.
+`checkManifest` warns of a value out of range (0.3 to 0.8), which is then not used.
 
 ## Checking against PowerPoint yourself
 

@@ -2,13 +2,13 @@
 // size, and whether they fit the box. Works from font files, with no PowerPoint and no browser.
 import type { PptxPackage } from '../pptx/package.ts';
 import type { Template } from '../render/render.ts';
-import { detectDirection, filledLanguage, paragraphDirection } from '../render/text.ts';
+import { detectDirection, filledLanguage, headingRoom, paragraphDirection, runsIn } from '../render/text.ts';
 import { isRtlLanguage } from '../util/language.ts';
 import type { FreeDrawn } from '../free/plan.ts';
 import { inspectTemplate } from '../template/inspect.ts';
 import type { ShapeInfo, TemplateInfo } from '../template/inspect.ts';
 import { rowTextIds } from '../render/repeat.ts';
-import { COPY_ID_STEP, effectiveSlots, itemCount, scalesWithText, widenFactor } from '../template/manifest.ts';
+import { COPY_ID_STEP, effectiveSlots, itemCount, scalesWithText, templateTextSetting, widenFactor } from '../template/manifest.ts';
 import type { Direction, PatternDef, TextSlotDef } from '../template/manifest.ts';
 import { scriptClass, textWidth, themeScript } from './fonts.ts';
 import type { FontFace, FontMetrics, FontStyle, ScriptClass } from './fonts.ts';
@@ -39,8 +39,11 @@ export interface FitOptions {
   direction?: Direction;
   /**
    * Paragraphs set in bold, by position among the text's paragraphs: the headings of a document in
-   * it (`SlideSpec.headings`), measured in the bold face they are drawn in. A heading set run in
-   * takes no more lines than it does on a line of its own.
+   * it (`SlideSpec.headings`), measured in the bold face they are drawn in. A heading over a
+   * paragraph of text is measured as the renderer sets it (`setHeadings`): run in at the head of
+   * that paragraph, an em space between them, its space after it before the paragraph, where its
+   * letters take no more than a line (`runsIn`, for a line a character shorter, as the plans of
+   * free slides count it); otherwise on a line of its own.
    */
   bold?: readonly number[];
 }
@@ -68,7 +71,7 @@ export interface TextFit {
   scale: number;
   /** About how many characters of text like this the box holds. */
   fitsChars: number;
-  /** The lines of each paragraph, as they break. */
+  /** The lines of each paragraph, as they break. A heading set run in has none: it opens the first line of the paragraph under it. */
   paragraphs: string[][];
   /** The width of each of those lines in points, without the space that hangs at its end. */
   widths: number[][];
@@ -288,6 +291,8 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
         fontScale: 1,
         lineReduction: 0,
         columns,
+        columnGap: 0,
+        placed: true,
         vertical: false,
         wrap: drawn.wrap,
       };
@@ -313,13 +318,35 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
    * Lays text out in a frame. `size` gives the font size of a paragraph style; `gap` overrides the
    * space after paragraphs; `deckDirection` is the direction the deck reads (see FitOptions).
    */
-  const lay = (frame: TextFrame, paragraphs: string[], size: (style: ParagraphStyle) => number, gap: number | undefined, flags: { approximate: boolean }, spare = 0, deckDirection?: Direction, bold?: ReadonlySet<number>): Laid => {
+  const lay = (frame: TextFrame, paragraphs: string[], size: (style: ParagraphStyle) => number, gap: number | undefined, flags: { approximate: boolean }, spare = 0, deckDirection?: Direction, bold?: ReadonlySet<number>, stated: (style: ParagraphStyle) => boolean = () => true): Laid => {
     const inner = (frame.vertical ? frame.height - frame.insets.top - frame.insets.bottom : frame.width - frame.insets.left - frame.insets.right) / frame.columns - spare;
     const laid: Laid = { lines: [], widths: [], lineRoom: [], height: 0, gaps: 0, lastPitch: 0, widest: 0, firstSize: 0 };
+    const styleAt = (index: number): ParagraphStyle => frame.paragraphs[Math.min(index, frame.paragraphs.length - 1)] as ParagraphStyle;
+    // The headings set run in, by position: over a paragraph that is no heading and draws no bullet,
+    // where the renderer sets them so, counted at the size it writes and the column it counts, the
+    // space between columns taken off. The renderer reads the size and the width the slide states:
+    // a heading whose run states no size (`stated`), in a shape the slide does not place, keeps a
+    // line of its own.
+    const joined = new Set<number>();
+    const characterWidth = templateTextSetting(manifest, 'characterWidth');
+    for (const at of bold ?? []) {
+      const next = paragraphs[at + 1];
+      if (next === undefined || bold?.has(at + 1) || styleAt(at + 1).bullet || frame.vertical || !frame.placed || !stated(styleAt(at))) continue;
+      const column = (frame.width - frame.insets.left - frame.insets.right - (frame.columns - 1) * frame.columnGap) / frame.columns - styleAt(at + 1).marginStart;
+      if (runsIn(paragraphs[at] ?? '', next, deckDirection, headingRoom(column, size(styleAt(at)), characterWidth) - 1)) joined.add(at);
+    }
     paragraphs.forEach((text, index) => {
-      const style = frame.paragraphs[Math.min(index, frame.paragraphs.length - 1)] as ParagraphStyle;
+      if (index === 0) laid.firstSize = size(styleAt(0)) * frame.fontScale;
+      // A heading set run in is laid out with the paragraph under it: it has no line of its own.
+      if (joined.has(index)) {
+        laid.lines.push([]);
+        laid.widths.push([]);
+        laid.lineRoom.push(Math.round((inner - styleAt(index).marginStart - styleAt(index).marginEnd) * 100) / 100);
+        return;
+      }
+      const head = joined.has(index - 1) ? index - 1 : undefined;
+      const style = styleAt(index);
       const points = size(style) * frame.fontScale;
-      if (index === 0) laid.firstSize = points;
       // The language and direction the renderer writes the paragraph in (see filledLanguage):
       // a run left to state none keeps the language it inherits.
       const direction = paragraphDirection(text, deckDirection);
@@ -336,17 +363,29 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
         const before = detectDirection(last);
         return before !== direction && (detectDirection(next) ?? before) === before;
       };
-      const lines = frame.wrap ? breakLines(text, Math.max(first, 1), Math.max(rest, 1), measure, against) : [text];
+      // A heading set run in opens the first line: its letters in bold, and the em space in the paragraph's own face.
+      const heading = head === undefined ? '' : (paragraphs[head] ?? '').trim();
+      const lead = head === undefined ? 0 : runMeasure(metrics, { ...styleAt(head).run, bold: true }, size(styleAt(head)) * frame.fontScale, isRtlLanguage(language), flags)(heading) + measure('\u2003');
+      const lines = frame.wrap ? breakLines(text, head === undefined ? Math.max(first, 1) : Math.max(first - lead, 0), Math.max(rest, 1), measure, against, head !== undefined) : [text];
+      if (head !== undefined && lines.length > 0) lines[0] = `${heading}\u2003${lines[0]}`;
       laid.lines.push(lines);
       laid.lineRoom.push(Math.round(rest * 100) / 100);
-      const widths = lines.map((line) => measure(line.trimEnd()));
+      const widths = lines.map((line, at) => (head !== undefined && at === 0 ? lead + measure(line.slice(heading.length + 1).trimEnd()) : measure(line.trimEnd())));
       laid.widths.push(widths.map((width) => Math.round(width * 100) / 100));
       for (const width of widths) laid.widest = Math.max(laid.widest, width / Math.max(rest, 1));
       const pitch = 'points' in style.lineSpacing ? style.lineSpacing.points : LINE * points * Math.max(0.1, style.lineSpacing.percent - frame.lineReduction);
-      laid.height += lines.length * pitch;
+      // A line is as high as its largest run: the first line under a heading set run in that is
+      // larger than its paragraph is as high as the heading's.
+      const opening = head === undefined || 'points' in style.lineSpacing ? pitch : LINE * Math.max(points, size(styleAt(head)) * frame.fontScale) * Math.max(0.1, style.lineSpacing.percent - frame.lineReduction);
+      laid.height += opening + Math.max(0, lines.length - 1) * pitch;
       laid.lastPitch = pitch;
-      // The space before the first paragraph and after the last is not drawn.
-      const between = (index > 0 ? spacing(style.before, points) : 0) + (index < paragraphs.length - 1 ? (gap ?? spacing(style.after, points)) : 0);
+      // The space before the first paragraph and after the last is not drawn. A paragraph led by a
+      // heading set run in has the heading's space before it and after it before it, as the
+      // renderer moves it.
+      const opens = head ?? index;
+      const headPoints = head === undefined ? points : size(styleAt(head)) * frame.fontScale;
+      const above = head === undefined ? spacing(style.before, points) : spacing(styleAt(head).before, headPoints) + (gap ?? spacing(styleAt(head).after, headPoints));
+      const between = (opens > 0 ? above : 0) + (index < paragraphs.length - 1 ? (gap ?? spacing(style.after, points)) : 0);
       laid.height += between;
       laid.gaps += between;
     });
@@ -419,7 +458,9 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
       const measured = (shrink: number): TextFit => {
         // A size chosen because the text just fits at it sits on the edge by construction, so a
         // shrunk text is asked to fit with a little width to spare.
-        const laid = lay(frame, paragraphs, sizeAt(shrink), chosen.paragraphGap, flags, shrink === 1 ? 0 : SPARE, options.direction ?? manifest.direction, options.bold?.length ? new Set(options.bold) : undefined);
+        // The renderer writes a size on a run that states one, of a slot that sets one, or of text it shrinks.
+        const stated = (style: ParagraphStyle): boolean => chosen.fontSize !== undefined || style.run.ownSize || shrink !== 1;
+        const laid = lay(frame, paragraphs, sizeAt(shrink), chosen.paragraphGap, flags, shrink === 1 ? 0 : SPARE, options.direction ?? manifest.direction, options.bold?.length ? new Set(options.bold) : undefined, stated);
         const lines = laid.lines.reduce((sum, entry) => sum + entry.length, 0);
         const slack = SLACK * laid.lastPitch;
         const over = laid.height - room - slack;

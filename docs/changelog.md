@@ -3,6 +3,163 @@
 What changed in each version, newest first, with what to do when upgrading. The version you have installed is
 in `node_modules/slotdeck/package.json`.
 
+## 0.6.7
+
+Running text on free slides is set larger where it fits. On a right-to-left template, a document's text under
+six headings was set at 9.5 pt in three columns, the last a third full, where PowerPoint fits it at 12. Three
+things held such text small:
+- the count that sizes running text takes a character to be as wide as any face may set it;
+- it counted each heading of a document on a line of its own, though 0.6.6 sets a heading at the head of its
+  paragraph;
+- a long text went down half a point at a time in two columns before it was allowed three.
+
+A template can now say how wide its text is set, headings are counted as they are set, and three columns come
+sooner. The count still keeps a margin: that text is now set at 10 pt, not at 12 (see Known limits). On 990
+test slides on three templates, compared with 0.6.6:
+- Nearly half the long texts with a document's headings are set larger: by 1 pt on a typical one of them, and
+  up to 5.
+- On a template that states its width, running text that is set larger is set 0.5 to 1.5 pt larger on a
+  typical slide, up to 4, and up to 6.5 with headings. Most short texts not set dense do not change.
+- Nothing is set smaller, unless a template states its width: wider than the estimate, it counts more
+  cautiously; or, on a small template, a long text stays whole where 0.6.6 cut it (see Known limits).
+- No text is reported over its budget that was not before.
+
+In PowerPoint's own rendering of 134 texts on two templates, capitals, figures and mixed scripts among them,
+nothing ran past its box that did not before.
+
+### Added
+
+- **`TemplateManifest.characterWidth`: how wide the template's text is set.** It is the width PowerPoint gives
+  a character of the template's running text, as a share of its size, measured on the template's own face: the
+  width that 19 full lines in 20 stay under, rounded up. Where it is stated, the running text of free slides
+  (texts and lists, set dense or not) is counted with it, in place of 0.55, and 0.48 for text set dense. On the
+  demo template at 0.44, six paragraphs of 1,400 characters went from 14.5 to 16 pt, and a text of 2,000 set
+  dense from 13.5 to 14.5. On a right-to-left template at 0.45, three texts side by side went from 13.5 to 15.
+  The budgets a writer is told grow with it. Other things are counted as before:
+  - cards, steps, quotations, notes, headings, labels, tables and charts;
+  - whether a long text takes one column or two;
+  - whether a long text set dense needs the larger room, where it is set in columns. Counted narrower, a text
+    would otherwise stay in the first room, smaller than in the larger one. Where the larger room holds such a
+    text at no size and the first room holds it, it stays in the first: in columns it would be cut;
+  - how far down the slide a short text not set dense starts. Counted narrower, a text of many short paragraphs
+    was set so far down that it ran under its box;
+  - how small texts beside each other may be set: four fifths of the top size. Counted narrower, the top is
+    higher in a deck that asks for larger text, and three texts that need smaller were set over their budget.
+
+  The value is between 0.3 and 0.8. A value under the face's own lets text run past its box: measure it, don't
+  guess it. A value over the estimate (0.48 for a long text set dense, 0.55 for other running text) counts that
+  text more cautiously, and sets it smaller: right for a wide face. To manage it:
+  - `changeManifest` sets it (`{ op: 'setManifest', characterWidth: 0.45 }`), and `null` clears it.
+  - `editManifest` takes it in words.
+  - `checkManifest` warns of a value out of range, which is then not used.
+- **`scripts/measure-character-width.ts` measures it.** It renders free slides of the template's kind of text,
+  reads how PowerPoint breaks their lines (`scripts/measure-pptx.ps1`), and prints the width 19 lines in 20 stay
+  under, rounded up. It is a development tool for a PC with PowerPoint, in the repository, not in the package.
+  See "How wide a template's text is set" in [text-fit.md](text-fit.md).
+- **`TemplateManifest.leastTextSize`: the least size, in points, of a long text set dense.**
+  - Such a text is set no smaller, also where the first room would hold it at four fifths of the template's
+    size. Where it needs smaller, it is cut, or the planner gives it more slides.
+  - What a slide of one text holds (`freeTextRoom`, and with it the room the planner counts for a document) is
+    counted at it: a slide set dense is said to hold no more than it holds at that size, and, where that is
+    less than the shortest length the room is asked about (650 characters), what it holds.
+  - Where it is over the size that reads (9 pt on a slide 13.33 inches wide), a writer of such a text is told
+    what its box holds at the least size it is set at there, in the paragraphs it is told. Before there is
+    content the text may be set larger, but what is written can hardly be set smaller: a writer told what the
+    box holds in a few long paragraphs wrote it in many, and was cut.
+  - A value over the template's own size of running text is taken as that size, and a value between half
+    points as the next half point up (12.2 as 12.5): text is set in half points.
+  - A value under 9 pt (on a slide 13.33 inches wide) also lowers the size under which the checks call a
+    slide's text small.
+
+  Left out, it is 9 pt on a slide 13.33 inches wide and less on a narrower one, by its width, as before. The
+  value is between 5 and 24. `changeManifest` and `editManifest` set it, as above.
+
+### Changed
+
+- **A document's headings are counted as they are set.** On a free slide, a heading set run in takes no line of
+  its own in the count that sizes the text:
+  - its bold letters and the em space go to the head of its paragraph;
+  - the space after it goes before that paragraph.
+
+  The count asks the renderer's own question of each heading (`runsIn`), for a line a character shorter, so
+  that a heading counted run in is always set run in. On the demo template, a text of twelve sections went from
+  10.5 to 11.5 pt. Whether a long text set dense needs the larger room is still decided as 0.6.6 counted it,
+  with its headings on lines of their own. Counted run in, a text of short parts fits the first room more often,
+  and kept there it came out smaller: in one column at 14.5 pt where the larger room set it at 22 in two. While
+  a deck is planned, a document's text that code sets as it is carries its headings into either room, so the
+  plan counts it as the slide will be set.
+- **With the template's fonts, a heading is measured as it is set.** The deck's check and the renderer's
+  `shrinkText` measured each heading of a document on a line of its own (`FitOptions.bold`). A text the plan now
+  sets larger, its headings counted run in, was then reported over its box, and set smaller with `shrinkText`:
+  twelve short sections planned at 20.5 pt were measured as 24 lines in a box of 21, and set at 18. A heading
+  over a paragraph of text is now measured run in at its head, in bold, an em space after it, where the renderer
+  sets it so, asked for a line a character shorter as the plans ask. As the renderer, it counts a line of a text
+  in columns without the space between them, and sets a heading on a line of its own where the slide states no
+  size for its run or no place for its shape. A word that does not fit what the heading leaves of the line
+  starts the next, and a heading larger than its paragraph makes its line as high as it is.
+  `TextFit.paragraphs` and `TextFit.widths` have an empty entry for it: its words open the first line of the
+  paragraph under it.
+- **A deck that asks for larger text gets what 0.6.6 gave it.** The size each text of a free slide may not go
+  under is counted as 0.6.6 counted it, its headings on lines of their own and a character no narrower than the
+  estimate. Counted as now, a text with headings, or on a template that states its width, came out larger
+  without the wish, and the wish then cost the rest of its slide half of it: a note set at 19.5 pt went to
+  18.5, with a warning. Where the slide takes none of the wish, it is set as without it, counted as now.
+- **A long text set dense takes three columns where two do not hold it**, at the same size, as long as a line
+  in three columns still holds 45 characters as PowerPoint sets them. Before, it took three only where two
+  would make lines longer than 95 characters. It went down half a point at a time in two columns, then jumped
+  to three with the last column part empty. On a right-to-left template, a document's text of 2,000 characters
+  under ten headings went from 10.5 to 11 pt, and to 11.5 with `characterWidth` 0.45. A text that fits at no
+  size is set as before: at the least size, in the columns its lines take there.
+- `setHeadings` counts a line with the template's `characterWidth` where it is wider than its own 0.55. The box
+  of running text set in two columns (not dense) is as high as that width needs, where it is wider than 0.47.
+
+### Upgrading from 0.6.6
+
+Nothing to change in code. Stored decks render as in 0.6.6, with two exceptions, on every template:
+- A slide set dense whose text two columns did not hold at some size, and three columns do, is now set larger,
+  in three columns.
+- A slide whose text has a document's headings (`SlideSpec.headings`, from 0.6.6) is counted with its headings
+  run in, and is set at the same size or larger. With the template's fonts it is measured so too, and
+  `shrinkText` sets it smaller less often.
+
+Plans of such texts change the same way: a test that compares a plan's budgets or a rendered deck with a stored
+copy sees larger sizes and budgets there. Code that reads `TextFit.paragraphs` or `TextFit.widths` of a text
+measured with `bold` finds an empty entry for a heading set run in.
+
+To have a template's text set larger, measure its width and set it once:
+
+1. On a PC with PowerPoint, in a clone of the repository, run:
+   `node scripts/measure-character-width.ts template.pptx manifest.json --text sample.txt`
+   `sample.txt` holds paragraphs of the kind the decks hold, one per line, some 3,000 characters.
+2. In the app, set the printed value: `changeManifest(template, [{ op: 'setManifest', characterWidth: 0.45 }])`.
+3. Store the manifest it returns.
+
+[prompts/character-width.md](prompts/character-width.md) is the prompt for a coding agent. A template without
+the setting is counted as before.
+
+### Known limits
+
+- `characterWidth` is one width for all of a template's running text. A text much wider than the template's
+  usual (capitals, long figures, words in a wider script) is counted as the usual one, and can run past its box
+  where it is set larger. Measure it on text of the kind the decks hold.
+- The count keeps its margins with the setting too: it counts lines 85% full, and keeps a line free in each
+  column. In PowerPoint, a text set by it still has room for about 2 to 3 pt more: the document's text under
+  six headings above is set at 10 pt where PowerPoint fits it at 12, with or without the setting. Templates
+  loaded with fonts measure the layouts' text as before, and the setting does not change that.
+- On a template that states its width, a long text set dense that the larger room holds at no size stays in
+  the first room where that holds it whole. There it is set down to four fifths of the template's size, which
+  on a small template is under the least size of the larger room: on a slide 10 inches wide, at a text size
+  of 0.8, 6.5 pt where 0.6.6 set it at 7 pt and cut it. A text with headings can stay so where the same text
+  without them, counted longer, goes to the larger room at 7 pt and is cut. On the demo template and a
+  13.33-inch right-to-left template four fifths of the size is over the least size, and this does not arise.
+- The plans and the measured check ask of a heading for a line a character shorter than the renderer does. A
+  heading at that edge is counted on a line of its own where it is set run in: a line more, never fewer. On
+  1,080 texts measured with fonts, 11 had one such heading, all on a template wider than the estimate.
+- A text with headings that are not set run in, such as headings over list items or table rows, is counted
+  with each heading on a line of its own, as before.
+- A `leastTextSize` over 9 pt does not raise the size under which the checks call a slide's text small. That
+  check looks at all of a slide's text, its captions and labels among it.
+
 ## 0.6.6
 
 A person's document reads as a document on its slides. On a slide set dense, its headings stood in the text as

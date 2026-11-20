@@ -95,6 +95,13 @@ export interface TextFrame {
   /** Text runs top to bottom, so the box's height is the length of a line. */
   vertical: boolean;
   columns: number;
+  /** The space between two columns, in points (`spcCol`). */
+  columnGap: number;
+  /**
+   * Whether the slide states the shape's size, or the renderer gives it a box: where neither does, the
+   * renderer cannot tell how wide a line of it is, and sets no heading run in (`setHeadings`).
+   */
+  placed: boolean;
   /** One entry for each paragraph of the sample text, styled as the renderer will style new text. */
   paragraphs: ParagraphStyle[];
   /** The sample text, paragraph by paragraph. */
@@ -348,6 +355,8 @@ export class TextStyles {
       lineReduction: fit?.localName === 'normAutofit' ? Number(fit.getAttribute('lnSpcReduction') ?? 0) / 100000 : 0,
       vertical: vert !== null && vert !== 'horz',
       columns: Math.max(1, Number(bodyAttr('numCol') ?? 1) || 1),
+      columnGap: points(bodyAttr('spcCol'), 0),
+      placed: box !== undefined || !!path(shape, [NS.p, 'spPr'], [NS.a, 'xfrm'], [NS.a, 'ext']),
       paragraphs: paragraphs.map((paragraph) => readParagraph(paragraph, styleRun, lists, theme)),
       sample: paragraphs.map((paragraph) =>
         descendants(paragraph, NS.a, 't')

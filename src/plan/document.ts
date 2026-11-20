@@ -4,7 +4,8 @@
 // the writer writes the rest, and is held to the words of the text. Without a document nothing here
 // is used, and a plan and its writing are what they were.
 import { toParagraphs } from '../deck/spec.ts';
-import { ITEM, leadsInto } from '../deck/headings.ts';
+import { ITEM, headingsOver, leadsInto } from '../deck/headings.ts';
+import type { HeadingOver } from '../deck/headings.ts';
 import type { DeckSpec, SlideSpec, SlotValue } from '../deck/spec.ts';
 import type { Issue } from '../deck/validate.ts';
 import type { JsonSchema } from '../llm/provider.ts';
@@ -675,14 +676,7 @@ export function settleDocumentSlide(slide: SlideSpec, all: readonly DocumentPass
   const sections = sectionsOf(all, numbers);
   const { headings: _headings, ...rest } = slide;
   if (sections.length === 0) return rest;
-  const known = new Set(sections.map((section) => section.trim()));
-  // The headings whose first passage on the slide is a list or a table: what follows them is an item or a row.
-  const listed = new Set(
-    sections.filter((section) => {
-      const first = numbers.map((number) => all[number - 1]).find((passage) => passage?.section === section);
-      return first !== undefined && first.kind !== 'text';
-    }),
-  );
+  const { known, listed } = headingRule(all, numbers);
   const title = typeof slide.slots.title === 'string' ? comparable(slide.slots.title) : '';
   const slots: Record<string, SlotValue> = {};
   const headings: string[] = [];
@@ -702,18 +696,50 @@ export function settleDocumentSlide(slide: SlideSpec, all: readonly DocumentPass
     });
     const first = paragraphs[0];
     if (title && first !== undefined && paragraphs.length > 1 && [...first.trim()].length <= HEADING_MOST && comparable(first) === title) paragraphs = paragraphs.slice(1);
-    paragraphs.forEach((paragraph, index) => {
-      const text = paragraph.trim();
-      const next = paragraphs[index + 1];
-      if (next === undefined || !(known.has(text) || translated.has(text))) return;
-      // Over a list or a table, the next paragraph says it is an item or a row, or the heading is left plain.
-      if (listed.has(text) && leadsInto(next)) return;
-      headings.push(text);
-    });
+    for (const at of headingAt(paragraphs, known, listed, translated)) headings.push((paragraphs[at] as string).trim());
     slots[name] = paragraphs;
   }
   return headings.length > 0 ? { ...rest, slots, headings } : { ...rest, slots };
 }
+
+/**
+ * What says which paragraphs of a slide's text from some passages are headings: the headings of
+ * the passages (`known`), and of those the ones whose first passage on the slide is a list or a
+ * table (`listed`), where what follows is an item or a row.
+ */
+function headingRule(all: readonly DocumentPassage[], numbers: readonly number[]): { known: Set<string>; listed: Set<string> } {
+  const sections = sectionsOf(all, numbers);
+  const listed = new Set(
+    sections.filter((section) => {
+      const first = numbers.map((number) => all[number - 1]).find((passage) => passage?.section === section);
+      return first !== undefined && first.kind !== 'text';
+    }),
+  );
+  return { known: new Set(sections.map((section) => section.trim())), listed };
+}
+
+/**
+ * The positions of the paragraphs of a text that are headings: a known one (or one a writer
+ * translated) over a paragraph; over a list or a table only where the next paragraph says it is an
+ * item or a row, or the heading is left plain.
+ */
+function headingAt(paragraphs: readonly string[], known: ReadonlySet<string>, listed: ReadonlySet<string>, translated: ReadonlySet<string> = new Set()): number[] {
+  const places: number[] = [];
+  paragraphs.forEach((paragraph, index) => {
+    const text = paragraph.trim();
+    const next = paragraphs[index + 1];
+    if (next === undefined || !(known.has(text) || translated.has(text))) return;
+    if (listed.has(text) && leadsInto(next)) return;
+    places.push(index);
+  });
+  return places;
+}
+
+/** The positions of the headings of a slide's text from some passages as code sets it (`fillParagraphs`), as the slide settles them (`settleDocumentSlide`). */
+export const documentHeadingPlaces = (paragraphs: readonly string[], all: readonly DocumentPassage[], numbers: readonly number[]): number[] => {
+  const { known, listed } = headingRule(all, numbers);
+  return headingAt(paragraphs, known, listed);
+};
 
 /** The words of some passages. */
 export const passageWords = (all: readonly DocumentPassage[], numbers: readonly number[]): number => numbers.reduce((sum, number) => sum + (all[number - 1] ? passageTokens(all[number - 1] as DocumentPassage).length : 0), 0);
@@ -748,15 +774,23 @@ export function needOf(doc: DocumentPlan, numbers: readonly number[], language: 
 export function shapeOf(doc: DocumentPlan, numbers: readonly number[], tables = true): TextShape {
   const running = runningOf(doc, numbers, tables);
   const shape: TextShape = { paragraphs: paragraphsOf(doc.passages, running) };
-  if (doc.same && running.length > 0) shape.asIs = { chars: needOf(doc, numbers, undefined, tables), each: fillParagraphs(doc.passages, running, { bullets: true }).map((paragraph) => paragraph.length) };
+  if (doc.same && running.length > 0) {
+    const paragraphs = fillParagraphs(doc.passages, running, { bullets: true });
+    const heads = headingsOver(paragraphs, documentHeadingPlaces(paragraphs, doc.passages, numbers));
+    shape.asIs = { chars: needOf(doc, numbers, undefined, tables), each: paragraphs.map((paragraph) => paragraph.length), ...(heads.length > 0 ? { heads } : {}) };
+  }
   return shape;
 }
 
 /** The paragraphs of a slide's text from a document: how many (see {@link shapeOf}), and, where code may set them as they are, how long each is. */
 export interface TextShape {
   paragraphs: number;
-  /** The lengths of the paragraphs code sets on a free slide, of a text of `chars` characters (`needOf`). Only a text of those characters is that text. */
-  asIs?: { chars: number; each: number[] };
+  /**
+   * The lengths of the paragraphs code sets on a free slide, of a text of `chars` characters
+   * (`needOf`), and the headings among them that stand over a paragraph (`heads`), which the slide
+   * sets as headings (`settleDocumentSlide`). Only a text of those characters is that text.
+   */
+  asIs?: { chars: number; each: number[]; heads?: HeadingOver[] };
 }
 
 /** What a slide of a plan carries of its document, worked out from its passages and its words. */

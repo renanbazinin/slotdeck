@@ -26,6 +26,26 @@ export interface TemplateManifest {
    */
   textScale?: number;
   /**
+   * How wide PowerPoint sets a character of the template's running text, as a share of its size,
+   * in the template's own face: the width that 19 full lines of it in 20 stay under, such as 0.44
+   * for a narrow face. Stated, the free slides of a deck count their running text (its texts and
+   * lists) with it, in place of an estimate that leaves room for any face (0.55, and 0.48 for a
+   * long text set small): such text is set larger, up to the template's size.
+   * Between 0.3 and 0.8; left out, the estimate. A value under the face's own lets text run past
+   * its box, so it is measured, not guessed (see docs/text-fit.md).
+   */
+  characterWidth?: number;
+  /**
+   * The least size, in points, that a long text a person asked to have whole (set dense on a free
+   * slide) is set at: it is set no smaller, and is cut, or given more slides, where it needs
+   * smaller. A value over the template's own size of running text is taken as that size, and one
+   * between half points as the next half point up. Left out,
+   * 9 pt on a slide 13.33 inches wide and less on a narrower one, by its width (7 pt on one 10
+   * inches wide). A lower value also lowers the size under which a slide is told its text is
+   * small. Between 5 and 24.
+   */
+  leastTextSize?: number;
+  /**
    * Lets text that does not fit its box be set smaller: down to `to` of its size (0.85 is 85%)
    * and never under `minSize` points. It needs fonts to measure with, so it only acts for a
    * template loaded with fonts; without them nothing is shrunk.
@@ -83,6 +103,37 @@ export function templateScaleProblem(value: unknown): string | undefined {
   if (Number.isFinite(scale) && scale > 0) return undefined;
   const given = typeof value === 'number' ? String(value) : JSON.stringify(value);
   return `the template's textScale is ${given}; it is a factor on body text such as 1.25, which changeManifest sets with "textScale"`;
+}
+
+/** The range of a manifest's `characterWidth`, as a share of the size. */
+export const CHARACTER_WIDTH = { least: 0.3, most: 0.8 } as const;
+/** The range of a manifest's `leastTextSize`, in points. */
+export const LEAST_TEXT_SIZE = { least: 5, most: 24 } as const;
+
+/**
+ * What is wrong with a manifest's own `characterWidth` or `leastTextSize`, as a sentence;
+ * `undefined` when it is left out (or null) or a number in its range. A setting that is wrong is
+ * not used: the software counts as it does without it.
+ */
+export function templateTextProblem(name: 'characterWidth' | 'leastTextSize', value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  const range = name === 'characterWidth' ? CHARACTER_WIDTH : LEAST_TEXT_SIZE;
+  if (typeof value === 'number' && Number.isFinite(value) && value >= range.least && value <= range.most) return undefined;
+  const given = typeof value === 'number' ? String(value) : JSON.stringify(value);
+  return name === 'characterWidth'
+    ? `the template's characterWidth is ${given}; it is how wide a character of its text is set, as a share of its size, between ${range.least} and ${range.most}, such as 0.43; it is not used`
+    : `the template's leastTextSize is ${given}; it is a size in points between ${range.least} and ${range.most}, such as 10; it is not used`;
+}
+
+/**
+ * A manifest's `characterWidth` or `leastTextSize` where it is one the software uses (see
+ * `templateTextProblem`). A `leastTextSize` between half points is taken up to the next: text is
+ * set in half points, and 12.2 set at 12 would be under it.
+ */
+export function templateTextSetting(manifest: Pick<TemplateManifest, 'characterWidth' | 'leastTextSize'>, name: 'characterWidth' | 'leastTextSize'): number | undefined {
+  const value: unknown = manifest[name];
+  if (value === undefined || value === null || templateTextProblem(name, value) !== undefined) return undefined;
+  return name === 'leastTextSize' ? Math.ceil((value as number) * 2 - 1e-9) / 2 : (value as number);
 }
 
 /** The factor on body text for a deck: the template's own setting times the deck's. A deck's factor that is null, as an application stores a number that is not set, is 1. */

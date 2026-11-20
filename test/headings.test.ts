@@ -5,8 +5,8 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { strFromU8, unzipSync } from 'fflate';
-import { loadTemplate, planOutline, renderDeck, slideAlternatives, textMeasurer, writeDeck } from '../src/index.ts';
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
+import { loadTemplate, planOutline, renderDeck, sampleDeck, slideAlternatives, textMeasurer, writeDeck } from '../src/index.ts';
 import type { DeckSpec, FontMetrics, SlideSpec, TemplateManifest } from '../src/index.ts';
 import { headingPlaces, leadsInto } from '../src/deck/headings.ts';
 import { fitOptions } from '../src/deck/validate.ts';
@@ -23,7 +23,7 @@ const demo = loadTemplate(pptx, manifest);
 const stored = JSON.parse(readFileSync(join(root, 'test', 'fixtures', 'documents-0.6.5.json'), 'utf8')) as Record<string, DeckSpec>;
 const A = 'http://schemas.openxmlformats.org/drawingml/2006/main';
 const P = 'http://schemas.openxmlformats.org/presentationml/2006/main';
-const EM = ' ';
+const EM = '\u2003';
 
 test('headingPlaces names paragraphs in order, never the last, and nothing for what is no list of strings', () => {
   const text = ['Opening text.', 'Riders', 'Text on riders.', 'Costs', 'Text on costs.', 'Plans'];
@@ -216,8 +216,19 @@ test('headings are measured in bold, as they are drawn', () => {
   const text = ['Opening text.', 'Riders and their trips', 'Students and commuters make up most members.'];
   const widths = (bold?: number[]) => measure.fit('text-and-photo', 'body', text, bold ? { bold } : {})?.widths[1]?.[0];
   assert.equal(widths(), 22 * 0.5 * 18);
-  // Each glyph on PowerPoint's grid of an eighth of a point: 10.8 pt is set at 10.75.
-  assert.equal(widths([1]), 22 * 10.75);
+  // Over a list item a heading keeps a line of its own. Each glyph on PowerPoint's grid of an
+  // eighth of a point: 10.8 pt is set at 10.75.
+  const listed = ['Opening text.', 'Riders and their trips', '- Students and commuters.'];
+  assert.equal(measure.fit('text-and-photo', 'body', listed, { bold: [1] })?.widths[1]?.[0], 22 * 10.75);
+  // Over a paragraph of text it is set run in, as the renderer sets it: it has no line of its
+  // own, and opens the first line of the paragraph, in bold, an em space after it.
+  const joined = measure.fit('text-and-photo', 'body', text, { bold: [1] });
+  assert.deepEqual(joined?.paragraphs[1], []);
+  // A text that opens with a heading set run in is measured at its size.
+  assert.equal(measure.fit('text-and-photo', 'body', text.slice(1), { bold: [0] })?.size, 18);
+  const opening = joined?.paragraphs[2]?.[0] ?? '';
+  assert.ok(opening.startsWith('Riders and their trips\u2003Students'), opening);
+  assert.equal(joined?.widths[2]?.[0], 22 * 10.75 + 9 + 9 * opening.slice(23).trimEnd().length);
   // The checks pass the headings a slide marks, by their places in the text.
   assert.deepEqual(fitOptions(manifest, {}, { headings: ['Riders and their trips'] }, undefined, text).bold, [1]);
   assert.equal(fitOptions(manifest, {}, { headings: ['Riders and their trips'] }).bold, undefined);
@@ -265,4 +276,59 @@ test('a slide is titled with the heading its text opens under where the title ho
   // Over the title's limit on this template (41 characters): the writer titles the slide.
   const long = await make('Background and the first five years of the network');
   assert.deepEqual([long.slide.slots.title, long.slide.headings, long.writerAsked], ['Written title', ['Riders'], true]);
+});
+
+/** The demo template with the body of its text-and-photo slide changed: `change` is given the XML of that shape. */
+const bodyChanged = (change: (shape: string) => string): Uint8Array => {
+  const files = unzipSync(new Uint8Array(pptx));
+  const name = 'ppt/slides/slide2.xml';
+  const xml = strFromU8(files[name] as Uint8Array);
+  const start = xml.indexOf('<p:cNvPr id="7" name="Body"/>');
+  const end = xml.indexOf('</p:sp>', start);
+  assert.ok(start > 0 && end > start);
+  files[name] = strToU8(xml.slice(0, start) + change(xml.slice(start, end)) + xml.slice(end));
+  return zipSync(files);
+};
+/** A font whose letters are half their size wide, a tenth more in bold. */
+const halfEm: FontMetrics = { face: (_name, style) => ({ has: () => true, advances: (text) => [...text].map(() => (style.bold ? 0.6 : 0.5)) }) };
+/** The headings the measurer counts run in, and those the renderer sets run in, of the body of text-and-photo. */
+const runInBoth = (file: Uint8Array, paragraphs: string[], headings: string[]) => {
+  const template = loadTemplate(file, manifest);
+  const { deck: sample, assets } = sampleDeck(template);
+  const base = sample.slides.find((slide) => slide.pattern === 'text-and-photo') as SlideSpec;
+  const slide: SlideSpec = { ...base, slots: { ...base.slots, body: paragraphs }, headings };
+  const deck: DeckSpec = { ...sample, slides: [slide] };
+  const fit = textMeasurer(template, halfEm).fit('text-and-photo', 'body', paragraphs, fitOptions(manifest, deck, slide, undefined, paragraphs));
+  const xml = strFromU8(unzipSync(renderDeck(template, deck, { assets, layout: 'adaptive' }).pptx)['ppt/slides/slide1.xml'] as Uint8Array);
+  return { measured: fit?.paragraphs.filter((lines) => lines.length === 0).length, rendered: xml.split(EM).length - 1, fit };
+};
+
+test('the measurer counts a heading run in exactly where the renderer sets it so: text in columns, and runs that state no size', () => {
+  const body = 'Students and commuters make up most members.';
+  // In two columns an inch apart, the room of a line is a column's, less the space between them.
+  const columns = bodyChanged((shape) => shape.replace('<a:bodyPr', '<a:bodyPr numCol="2" spcCol="914400"'));
+  for (let letters = 6; letters <= 20; letters++) {
+    const heading = 'Riders and their trips on the line'.slice(0, letters).trim();
+    const { measured, rendered } = runInBoth(columns, ['Opening text.', heading, body], [heading]);
+    assert.equal(measured, rendered, `${letters} letters`);
+  }
+  // Runs that state no size: the renderer cannot tell the size of the line, and sets the heading on a line of its own.
+  const unsized = bodyChanged((shape) => shape.replaceAll(' sz="1800"', ''));
+  const { measured, rendered } = runInBoth(unsized, ['Opening text.', 'Riders', body], ['Riders']);
+  assert.deepEqual([measured, rendered], [0, 0]);
+});
+
+test('under a heading set run in, a word that does not fit what is left of the line starts the next whole, and a larger heading makes its line higher', () => {
+  const measure = textMeasurer(loadTemplate(pptx, manifest), halfEm);
+  // 25 letters: wider than what the heading leaves of the first line, narrower than a line.
+  const text = ['Riders and their trips', 'Telecommunicationsnetwork rides on.'];
+  const fit = measure.fit('text-and-photo', 'body', text, { bold: [0] });
+  assert.deepEqual(fit?.paragraphs[0], []);
+  assert.equal(fit?.paragraphs[1]?.[0], `Riders and their trips${EM}`);
+  assert.ok(fit?.paragraphs[1]?.[1]?.startsWith('Telecommunicationsnetwork '), JSON.stringify(fit?.paragraphs));
+  // The template's first paragraph is a lead, at 24 pt; the second at 18. Its heading set run in makes the first line as high as a line at 24 pt.
+  const lead = textMeasurer(loadTemplate(bodyChanged((shape) => shape.replace(' sz="1800"', ' sz="2400"')), manifest), halfEm);
+  const joined = lead.fit('text-and-photo', 'body', ['Riders', 'Students ride.'], { bold: [0] });
+  assert.deepEqual(joined?.paragraphs[0], []);
+  assert.equal(joined?.height, lead.fit('text-and-photo', 'body', ['Riders'])?.height);
 });

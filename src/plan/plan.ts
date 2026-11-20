@@ -3,6 +3,7 @@ import { unstatedChartValues } from '../deck/numbers.ts';
 import { DeckValidationError } from '../deck/validate.ts';
 import type { Issue, LayoutMode } from '../deck/validate.ts';
 import { FREE_PATTERN } from '../deck/spec.ts';
+import type { HeadingOver } from '../deck/headings.ts';
 import type { DeckColors, DeckSpec, FreeArrange, FreeBlockKind, SlotValue } from '../deck/spec.ts';
 import { describeBlocks } from '../free/blocks.ts';
 import { freeKit } from '../free/kit.ts';
@@ -864,8 +865,8 @@ function lengthPlanning(loaded: Template, planned: Planning, catalog: Catalog): 
   const byId = new Map(catalog.patterns.map((pattern) => [pattern.def.id, pattern]));
   const plain = catalog.patterns.filter((pattern) => isPlainText(pattern.def)).map((pattern) => pattern.def.id);
   const kinds = new Set<FreeBlockKind>(free?.kinds ?? []);
-  const written: NonNullable<LengthPlanning['written']> = (blocks, arrange, lengths, paragraphs, asIs) => {
-    const made = freeWritePattern(loaded, { direction, textScale: context.textScale }, { blocks, arrange, lengths, ...(paragraphs ? { paragraphs } : {}), ...(asIs ? { asIs } : {}) }, context);
+  const written: NonNullable<LengthPlanning['written']> = (blocks, arrange, lengths, paragraphs, asIs, heads) => {
+    const made = freeWritePattern(loaded, { direction, textScale: context.textScale }, { blocks, arrange, lengths, ...(paragraphs ? { paragraphs } : {}), ...(asIs ? { asIs } : {}), ...(heads ? { heads } : {}) }, context);
     return 'pattern' in made ? made.pattern : undefined;
   };
   return {
@@ -1406,10 +1407,11 @@ export function freeSlidesOff(template: Template, plan: DeckPlan, options: Pick<
  * and the lengths of those paragraphs where code may set them as they are (`TextShape.asIs`):
  * neither asked to be shorter nor a table that goes into a table (see `filledText`).
  */
-export function paragraphsFor(carry: SlideDocument | undefined, names: ReadonlySet<string>): { paragraphs?: Record<string, number>; asIs?: Record<string, readonly number[]> } {
+export function paragraphsFor(carry: SlideDocument | undefined, names: ReadonlySet<string>): { paragraphs?: Record<string, number>; asIs?: Record<string, readonly number[]>; heads?: Record<string, readonly HeadingOver[]> } {
   const [name] = [...names];
   if (!carry || name === undefined || names.size !== 1) return {};
-  const asIs = carry.shape.asIs && carry.asked === undefined && !carry.table && carry.shape.asIs.chars === carry.need ? { asIs: { [name]: carry.shape.asIs.each } } : {};
+  const own = carry.shape.asIs && carry.asked === undefined && !carry.table && carry.shape.asIs.chars === carry.need ? carry.shape.asIs : undefined;
+  const asIs = own ? { asIs: { [name]: own.each }, ...(own.heads ? { heads: { [name]: own.heads } } : {}) } : {};
   return { paragraphs: { [name]: carry.shape.paragraphs }, ...asIs };
 }
 

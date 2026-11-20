@@ -1,13 +1,14 @@
 // What a planner needs to know of free slides before any content exists: whether a template can
 // carry them, which kinds of block a deck may be offered, how many read well, and the pattern a
 // planned slide is written against.
+import type { HeadingOver } from '../deck/headings.ts';
 import type { DeckSpec, FreeArrange, FreeBlockKind, SlideSpec } from '../deck/spec.ts';
 import { FREE_BLOCK_KINDS } from '../deck/spec.ts';
 import type { Template } from '../render/render.ts';
 import type { PatternDef, TemplateManifest } from '../template/manifest.ts';
 import { freeSlotName, isFreeBlockKind } from './blocks.ts';
 import { freeKitOrReason } from './kit.ts';
-import { freeBodySize, readableSize } from './plan.ts';
+import { freeBodySize, leastSizeOf } from './plan.ts';
 import type { FreeContext } from './plan.ts';
 import { freeFor } from './resolve.ts';
 
@@ -109,6 +110,8 @@ export interface PlannedFree {
   paragraphs?: Readonly<Record<string, number>> | undefined;
   /** For some of those texts on a slide set dense: the lengths of the paragraphs code sets as they are, by slot name (see `FreeContext.planning`). */
   asIs?: Readonly<Record<string, readonly number[]>> | undefined;
+  /** Of those texts: the headings among their paragraphs that stand over a paragraph, by slot name (see `FreeContext.planning`). */
+  heads?: Readonly<Record<string, readonly HeadingOver[]>> | undefined;
 }
 
 /**
@@ -133,6 +136,7 @@ export function freePattern(template: Template, deck: Pick<DeckSpec, 'direction'
   if (planned.lengths && Object.keys(planned.lengths).length > 0) planning.lengths = planned.lengths;
   if (planned.lengths && planned.paragraphs && Object.keys(planned.paragraphs).length > 0) planning.paragraphs = planned.paragraphs;
   if (planned.lengths && planned.asIs && Object.keys(planned.asIs).length > 0) planning.asIs = planned.asIs;
+  if (planning.asIs && planned.heads && Object.keys(planned.heads).length > 0) planning.heads = planned.heads;
   const resolved = freeFor(template, deck, slide, planning);
   return typeof resolved === 'string' ? resolved : { pattern: resolved.plan.pattern, base: resolved.kit.base };
 }
@@ -218,7 +222,7 @@ export function freeTextRoom(template: Template, deck: Pick<DeckSpec, 'direction
   let found: FreeTextRoom | undefined;
   if (kit !== undefined && typeof kit !== 'string') {
     const body = freeBodySize(kit, deck.textScale ?? 1);
-    const least = readableSize(kit.slideWidth);
+    const least = kit.leastTextSize !== undefined ? Math.min(kit.leastTextSize, Math.floor(body * 2) / 2) : leastSizeOf(kit);
     /** The budget of the text of a slide of so many characters, and the size it is set at. */
     const at = (chars: number, dense: boolean): { held: number; size: number } => {
       const count = paragraphs ?? Math.min(12, Math.max(1, Math.round(chars / 300)));
@@ -243,7 +247,22 @@ export function freeTextRoom(template: Template, deck: Pick<DeckSpec, 'direction
         else open.densest = false;
       }
     }
-    found = { ...room, densest: Math.max(room.densest, room.dense), sizes };
+    // A slide set dense holds at least what the plain slide holds, where the template states no
+    // least size. Where it states one, a slide set dense holds what it holds at it, which can be
+    // less than the plain slide holds at a size over it, counted otherwise.
+    const plainHeld = kit.leastTextSize === undefined;
+    // A slide set dense that holds less than the shortest length asked of it at that size holds
+    // what it holds there: a slide said to hold nothing is offered nothing.
+    if (!plainHeld && room.densest === 0) {
+      for (let chars = Math.floor(at(ROOM_LEAST, true).held / 10) * 10, step = 0; chars > 0 && step < 30; chars -= 10, step++) {
+        const shorter = at(chars, true);
+        if (shorter.held >= chars && shorter.size >= least - 1e-9) {
+          [room.densest, sizes.densest] = [chars, shorter.size];
+          break;
+        }
+      }
+    }
+    found = { ...room, densest: plainHeld ? Math.max(room.densest, room.dense) : room.densest, sizes };
   }
   cache.known.set(key, found);
   return found;
