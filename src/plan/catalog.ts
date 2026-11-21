@@ -4,8 +4,10 @@ import type { LayoutMode } from '../deck/validate.ts';
 import type { JsonSchema } from '../llm/provider.ts';
 import { defaultItems, effectiveSlots, itemRange, rowLayout, tableAtScale, textBudget } from '../template/manifest.ts';
 import type { ChartSlotDef, ImageSlotDef, PatternDef, SlotDef, TableSlotDef, TemplateManifest, TextSlotDef } from '../template/manifest.ts';
+import { toldPair } from '../template/told.ts';
+import type { SlotCount, ToldCounter } from '../template/told.ts';
 import { askedSlidesProperty, documentLanguageProperty, leftOutProperty, passagesProperty } from './document.ts';
-import { MOST_WORDS, WORDS_NOTE } from './length.ts';
+import { MOST_WORDS, WORDS_NOTE, withoutLength } from './length.ts';
 
 /** An icon the app offers; the planning model picks from these by id. */
 export interface IconDef {
@@ -46,11 +48,17 @@ export interface CatalogContext {
    * so they are offered whatever the brief holds, and the list says they were made for the deck.
    */
   own?: string[];
+  /**
+   * The count of the template's slots of paragraphs (`toldCounter`): where it speaks for a slot,
+   * the writer is told what any text of the paragraphs told holds, its spacing counted. Without
+   * it, every slot is told its stored budget.
+   */
+  told?: ToldCounter;
 }
 
 /** How one manifest slot is presented to the planning model. */
 export type PlannedSlot =
-  | { slot: TextSlotDef; mode: 'text' | 'paragraphs'; required: boolean }
+  | { slot: TextSlotDef; mode: 'text' | 'paragraphs'; required: boolean; told?: SlotCount }
   | { slot: ImageSlotDef; mode: 'photo' | 'icon' | 'graphic'; required: boolean }
   | { slot: TableSlotDef; mode: 'table'; required: boolean; mayBeEmpty?: boolean }
   | { slot: ChartSlotDef; mode: 'chart'; required: boolean; mayBeEmpty?: boolean };
@@ -104,7 +112,8 @@ export function planPattern(
         continue;
       }
       if (!mayFill) continue;
-      slots.push({ slot, mode: (slot.maxParagraphs ?? 1) > 1 ? 'paragraphs' : 'text', required: mustFill });
+      const told = context.told?.(def, slot, budgetScale(context), items);
+      slots.push({ slot, mode: (slot.maxParagraphs ?? 1) > 1 ? 'paragraphs' : 'text', required: mustFill, ...(told ? { told } : {}) });
       continue;
     }
 
@@ -170,10 +179,22 @@ export function buildCatalog(manifest: TemplateManifest, context: CatalogContext
   return { patterns, excluded };
 }
 
+/**
+ * What the writer of a text slot is told it holds, at the deck's text size: the count's pair where
+ * the slot has one, for a text of `paragraphs` paragraphs where that is known, else its stored
+ * budget (`textBudget`). The deck is checked against the stored budget, never less.
+ */
+export function toldOf(planned: PlannedSlot, context: CatalogContext, paragraphs?: number): { maxChars?: number; maxParagraphs?: number } {
+  if (planned.slot.kind !== 'text') return {};
+  const count = (planned as { told?: SlotCount }).told;
+  if (count) return paragraphs === undefined ? { maxChars: count.maxChars, maxParagraphs: count.maxParagraphs } : toldPair(count, paragraphs);
+  return textBudget(planned.slot, budgetScale(context));
+}
+
 /** A limit in words: "at most 4 rows", and "at most 1 row" for one. */
 const atMost = (count: number, one: string, many: string): string => `at most ${count} ${count === 1 ? one : many}`;
 
-function limits(given: SlotDef, scale = 1): string {
+function limits(given: SlotDef, scale = 1, told?: { maxChars?: number; maxParagraphs?: number }): string {
   const slot = given.kind === 'table' ? tableAtScale(given, scale) : given;
   if (slot.kind === 'table') {
     const parts: string[] = [];
@@ -189,13 +210,19 @@ function limits(given: SlotDef, scale = 1): string {
     return parts.join(', ');
   }
   if (slot.kind !== 'text') return '';
-  const budget = textBudget(slot, scale);
+  const budget = told ?? textBudget(slot, scale);
   const several = (slot.maxParagraphs ?? 1) > 1;
   const parts: string[] = [];
   if (budget.maxChars !== undefined) parts.push(`${atMost(budget.maxChars, 'character', 'characters')}${several ? ' in total' : ''}`);
   if (several && budget.maxParagraphs !== undefined) parts.push(atMost(budget.maxParagraphs, 'item', 'items'));
   return parts.join(', ');
 }
+
+/** The pair a planned slot's count tells, where it has one. */
+const told = (planned: PlannedSlot): { maxChars: number; maxParagraphs: number } | undefined => {
+  const count = (planned as { told?: SlotCount }).told;
+  return count ? { maxChars: count.maxChars, maxParagraphs: count.maxParagraphs } : undefined;
+};
 
 /** The pattern list as the outline prompt shows it. */
 export function describeCatalog(catalog: Catalog, textScale = 1): string {
@@ -214,7 +241,7 @@ export function describeCatalog(catalog: Catalog, textScale = 1): string {
           const { slot } = planned;
           const kind =
             planned.mode === 'text' || planned.mode === 'paragraphs'
-              ? limits(slot, textScale) || 'text'
+              ? limits(slot, textScale, told(planned)) || 'text'
               : planned.mode === 'table' || planned.mode === 'chart'
                 ? [planned.mode, limits(slot, textScale)].filter(Boolean).join(': ')
                 : planned.mode;
@@ -247,9 +274,17 @@ export function describeCatalog(catalog: Catalog, textScale = 1): string {
     .join('\n');
 }
 
-/** What a slot's schema says of it: its description, then its limits at the deck's text size. */
-export function slotNote(slot: SlotDef, context: CatalogContext): string {
-  return [slot.description, limits(slot, budgetScale(context))].filter(Boolean).join('. ');
+/**
+ * What a slot's schema says of it: its description, then its limits at the deck's text size: of a
+ * planned slot with a count, the pair it tells. Where that pair holds fewer characters than the
+ * slot's stored budget, a length the description states as a clause of its own ("About 420
+ * characters in all") is left out: it would tell the writer more than the pair.
+ */
+export function slotNote(slot: SlotDef, context: CatalogContext, planned?: PlannedSlot): string {
+  const pair = planned ? told(planned) : undefined;
+  const stored = (planned as { told?: SlotCount } | undefined)?.told?.stored.maxChars;
+  const lowered = pair !== undefined && stored !== undefined && pair.maxChars < stored;
+  return [lowered ? withoutLength(slot.description) : slot.description, limits(slot, budgetScale(context), pair)].filter(Boolean).join('. ');
 }
 
 /** Said with every chart a model is asked for. */
@@ -269,14 +304,14 @@ const EMPTY_TABLE_NOTE = '[] for a table that is left empty';
 
 function slotSchema(planned: PlannedSlot, context: CatalogContext): JsonSchema {
   const { slot } = planned;
-  const note = slotNote(slot, context);
+  const note = slotNote(slot, context, planned);
 
   switch (planned.mode) {
     case 'text':
       return { type: 'string', description: note || 'Text' };
     case 'paragraphs': {
       const schema: JsonSchema = { type: 'array', items: { type: 'string' }, minItems: 1, description: note || 'One string per paragraph' };
-      const most = textBudget(planned.slot, budgetScale(context)).maxParagraphs;
+      const most = toldOf(planned, context).maxParagraphs;
       if (most !== undefined) schema.maxItems = most;
       return schema;
     }

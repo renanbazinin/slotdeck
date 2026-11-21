@@ -3,6 +3,110 @@
 What changed in each version, newest first, with what to do when upgrading. The version you have installed is
 in `node_modules/slotdeck/package.json`.
 
+## 0.6.8
+
+A layout's text no longer runs past its box when it is written to the length the writer is told. A layout's
+budget (`maxChars`, `maxParagraphs`) is counted once, for the template's own text, without the space the
+template keeps around paragraphs. A text that fills it in many paragraphs takes that space many times: on a
+right-to-left template, six points beside a photo, 480 characters as told, ran 19.5 pt past their box in
+PowerPoint, and three paragraphs in each of two columns 17 pt. The check counts characters and paragraphs, so
+it said nothing.
+
+What a writer is told a layout's slot of paragraphs holds now counts that space, without fonts, from the
+template itself. The check is unchanged. On a right-to-left template whose manifest states `characterWidth`
+0.45, a writer is told, at the deck's usual text size:
+
+| Slot | 0.6.7 told | 0.6.8 tells |
+| --- | --- | --- |
+| Text beside a photo | 715 characters in 3 paragraphs | 518 in 3 |
+| Points beside a photo | 480 in 6 | 357 in 5 |
+| Two columns, each | 550 in 3 | 428 in 3 |
+| A page of text | 1,299 in 7 | 1,071 in 6 |
+| Points on cards, each | 86 in 4 | 79 in 3 |
+
+In all, 19% fewer characters on that template; 28.5% fewer where the manifest does not state its width. Each
+paragraph is counted in whole lines, each line 85% full, so the pair holds a text of any paragraph lengths. On
+17,109 texts PowerPoint set on three templates, none inside what it tells ran past its box. Stored decks render
+as in 0.6.7.
+
+### Changed
+
+- **A writer is told what a layout's slot of paragraphs holds with its template's spacing counted.** For each
+  slot of two paragraphs or more whose template keeps space before or after its paragraphs, or sets its lines
+  further apart than 1.2 times their size, the count reads from the slide:
+  - the box;
+  - the lines it holds at the slot's size;
+  - the space PowerPoint draws between paragraphs. With `spcFirstLastPara` it also draws the space before the
+    first and after the last.
+
+  A text of p paragraphs is held where it fits in the lines left, each paragraph ending on a line of its own.
+  The writer is told one pair of characters and paragraphs:
+  - Where the stored budget fits, nothing changes.
+  - Where keeping the paragraphs costs few characters, they are kept with fewer characters: two columns, 550 in 3
+    become 428 in 3.
+  - Else it is told fewer, longer paragraphs: points beside a photo, 480 in 6 become 357 in 5.
+
+  The pair is in the slot's limits, the outline's list of layouts, and the writer's `maxItems`. A slot that
+  keeps no such space, a free slide's texts, a deck's fields and slots of one paragraph are told their stored
+  budgets, as before.
+- **A slot's description loses a length it states, where the pair is less.** "About 420 characters in all"
+  would tell a writer more than the pair; the rest of the description stays.
+- **An asked length is held by what a layout holds in the paragraphs it takes.** A slide asked for 200 words
+  was held by nine tenths of a layout's limits, a margin for the spacing that was not counted. A slot the count
+  speaks for now holds what it holds in some number of paragraphs. Its writer is told that number and what it
+  holds: on the demo template, 45 words in a body of three short paragraphs are told 331 characters in two,
+  where three hold 263. It is told no fewer than half the paragraphs of the pair, so a list stays a list: the
+  demo's list beside a photo holds at most 306 characters of a length, in two items. A longer text is told
+  that most, in those paragraphs, and is cut or moved as before. Other slots keep the nine tenths.
+- **A document's text on a layout is counted the same way.** A text of known paragraphs is told what that many
+  hold, or fewer that hold more: the writer joins them, as before, and the slide says so. A text code sets as it
+  is, in a layout's one running slot, is held where its own paragraphs fit, each counted in its own whole
+  lines. On the demo template, a lead line and three short items now stay in the list beside a photo, set as
+  they are; 0.6.7 moved them to a free slide. A change that keeps such a slide's passages keeps its text as
+  code set it: a new title does not hand it to a writer. A text that a writer writes, not code, is held to what
+  the writer is told, also where a home is found for it: a slide asked shorter, a table of the text that goes
+  into the layout's table, and in `planEdit` a text asked in other words, which goes to a free slide where its
+  layout held it only as code set it. A layout of four paragraphs or more no longer tells a text of three or
+  more one paragraph fewer where the count speaks for it: the count says how many.
+- **A document is shared over slides by what a slide holds of a document's text.** On a template whose layout
+  of plain text the count speaks for, the room the outline is told a slide holds of a document is the pair
+  that layout is told: 263 characters on the demo template, where 0.6.7 said 297.
+
+### Added
+
+- **`PlanOptions.countSpacing`, and `countSpacing` of `presentationTools` and `planTextFit`.** On unless
+  `false`. With `false`, every writer is told the slot's stored budget, as in 0.6.7.
+
+### Upgrading from 0.6.7
+
+Nothing to change in code. Stored decks render byte for byte as in 0.6.7, and their check is the same: a deck
+written to 0.6.7's budgets gets no new warning.
+
+Plans change on templates that keep space between paragraphs, for a layout's text, an asked length on a
+layout, and a document's text on a layout. The numbers move both ways:
+- A writer is told fewer characters, or fewer paragraphs, where the spacing costs room: most of a layout's
+  slots of many paragraphs.
+- An asked length and a document's text lose 0.6.7's shares of nine tenths and three quarters, so they may be
+  told more characters, often in fewer paragraphs: on the demo template, 45 words are told up to 310
+  characters in at most two paragraphs, where 0.6.7 told up to 290 in three.
+
+A slide may then move to a free slide where 0.6.7 kept its layout, or keep a layout it left before. A test that
+compares a plan's budgets, a writer's schema or `planTextFit`'s `holds` with stored copies sees the new numbers.
+`countSpacing: false` gives 0.6.7's.
+
+A template that states `characterWidth` loses less: on the right-to-left template above, 19% where it would
+lose 28.5%. To set it, see "How wide a template's text is set" in [text-fit.md](text-fit.md) and
+[prompts/character-width.md](prompts/character-width.md).
+
+### Known limits
+
+- The count holds any paragraph lengths, so a text of even paragraphs often has room left: in PowerPoint, the
+  writer could have been told more. It counts lines 85% full, as free slides do.
+- A slot of one paragraph is not counted: its stored budget stands. On a template whose cards hold one
+  paragraph each, a card filled to its budget can still run past its box, as in 0.6.7.
+- Measured with the template's fonts (`textMeasurer`, `shrinkText`), the space before the first paragraph and
+  after the last that `spcFirstLastPara` draws is still not counted.
+
 ## 0.6.7
 
 Running text on free slides is set larger where it fits. On a right-to-left template, a document's text under

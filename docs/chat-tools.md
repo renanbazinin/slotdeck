@@ -40,6 +40,7 @@ const tools = presentationTools({
   numberPatterns: 'from-brief',                 // optional
   review,                                       // optional DeckReview: a second look at every draft (design-checks.md)
   free: true,                                   // optional: free slides, for content no layout shows; on unless false (see below)
+  countSpacing: true,                           // optional: a layout's budget told with its template's spacing counted (generating.md); on unless false
   composeLayouts: 2,                            // optional: new layouts for such slides in place of free slides; needs free: false (generating.md)
   patterns: ['cover', 'text-only', 'free'],     // optional: the only layouts the tools may use
   colors: true,                                 // optional: whether a person may ask for another colour; false leaves accent_color and color_slides out

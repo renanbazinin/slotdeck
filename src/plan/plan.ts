@@ -17,9 +17,10 @@ import type { Template } from '../render/render.ts';
 import { TEXT_SIZES, itemRange, textBudget } from '../template/manifest.ts';
 import { measurerFor } from '../text/measure.ts';
 import type { Direction, PatternDef, TemplateManifest, TextSize, TextSlotDef } from '../template/manifest.ts';
-import { budgetScale, buildCatalog, describeCatalog, isPlainText, outlineEntrySchema, outlineSchema, planPattern, readItems } from './catalog.ts';
+import { budgetScale, buildCatalog, describeCatalog, isPlainText, outlineEntrySchema, outlineSchema, planPattern, readItems, toldOf } from './catalog.ts';
 import type { AssetDef, Catalog, CatalogContext, IconDef, ImageDensity, UsablePattern, WriteItem } from './catalog.ts';
 import { withLayouts } from '../template/compose.ts';
+import { toldCounter } from '../template/told.ts';
 import type { PatternDesign } from '../template/compose.ts';
 import { FREE_CHANGE_RULE, FREE_OUTLINE_RULE, MOST_PARTS, describeEntry, entryBlocks, freeKnown, freeLine, freeOnOffer, freeReading, freeTurnedOff, freeWritePattern, isFreeEntry, kindsUsed, namesFree, readShows, withFreePhotos } from './free.ts';
 import type { FreeReading } from './free.ts';
@@ -63,13 +64,15 @@ import {
   textCut,
   textCutDense,
 } from './document.ts';
-import type { DocumentPlan, KeptCheck, SettleOptions, SlideDocument } from './document.ts';
+import type { DocumentPlan, KeptCheck, SettleOptions, SlideDocument, TextShape } from './document.ts';
 import {
   WORDS_CHANGE_RULE,
   charsOfWords,
   densable,
+  documentHeld,
   documentParagraphs,
   documentRoom,
+  holdsAsIs,
   freeLengths,
   heldBy,
   homeFor,
@@ -162,6 +165,12 @@ export type PlanProgress =
 
 export interface PlanOptions {
   llm: LlmProvider;
+  /**
+   * Whether a writer of a template's slot of paragraphs is told what its box holds with the
+   * template's own spacing counted (the default), or its stored budget, as 0.6.7 told it. The
+   * deck's check is the stored budget either way.
+   */
+  countSpacing?: boolean;
   /** Defaults to `strict`. */
   layout?: LayoutMode;
   /** The app's icon set. Patterns with icon slots are only offered when this is given. */
@@ -657,6 +666,8 @@ function planning(loaded: Template, brief: Brief, options: PlanOptions, stage: P
   // A size that is not one of the list ("huge", or "__proto__", which every object has) is the usual one.
   const textScale = typeof brief.textSize === 'string' && Object.hasOwn(TEXT_SIZES, brief.textSize) ? TEXT_SIZES[brief.textSize] : 1;
   const context: CatalogContext = { layout, fields, icons: options.icons ?? [], assets: options.assets ?? [], imageDensity: density, figures, textScale, templateScale: manifest.textScale ?? 1 };
+  // What a writer is told counts the template's own spacing, on its layouts and the deck's.
+  if (options.countSpacing !== false) context.told = toldCounter(template);
   // A template that has a pattern called `free` has that pattern and no free slides. In a new
   // brief the id may always be named otherwise: where no free slide can be planned, the reason is given
   // below. A stored list may name it where the template can carry free slides, which is looked at
@@ -971,7 +982,7 @@ function documentRooms(loaded: Template, planned: Planning, catalog: Catalog): {
   const { context, direction, free } = planned;
   const room = free?.kinds.includes('text') ? freeTextRoom(loaded, { direction, textScale: context.textScale }) : undefined;
   if (room && room.comfortable > 0) return { comfortable: room.comfortable, target: Math.max(50, Math.floor((0.9 * room.comfortable) / 50) * 50) };
-  const plain = catalog.patterns.filter((pattern) => isPlainText(pattern.def)).map((pattern) => heldBy(pattern, context));
+  const plain = catalog.patterns.filter((pattern) => isPlainText(pattern.def)).map((pattern) => documentHeld(pattern, context));
   const comfortable = Math.max(0, ...plain) || 500;
   return { comfortable, target: comfortable };
 }
@@ -1028,7 +1039,7 @@ function textHomeOf(planning: LengthPlanning): TextHome | undefined {
   const rooms = planning.plain
     .flatMap((id) => {
       const pattern = planning.layout(id);
-      return pattern ? [{ id, room: heldBy(pattern, planning.context) }] : [];
+      return pattern ? [{ id, room: documentHeld(pattern, planning.context) }] : [];
     })
     .filter((one) => one.room > 0)
     .sort((a, b) => a.room - b.room);
@@ -1088,12 +1099,22 @@ const tableInHome = (home: TextHome, planning: LengthPlanning): boolean => ('blo
  * where a table of them is running text, and words asked for the slide ask for it shorter as they
  * would. Where free slides are not on offer, a layout of plain text is tried for it (`plain`).
  */
-const textFirstOf = (doc: DocumentPlan, numbers: readonly number[], language: string | undefined, words?: number): TextFirst => ({
-  need: slideDocument(doc, numbers, words, language, false)?.need ?? needOf(doc, numbers, language, false),
-  shape: shapeOf(doc, numbers, false),
-  below: 1,
-  plain: true,
-});
+const textFirstOf = (doc: DocumentPlan, numbers: readonly number[], language: string | undefined, words?: number): TextFirst => {
+  const carry = slideDocument(doc, numbers, words, language, false);
+  return { need: carry?.need ?? needOf(doc, numbers, language, false), shape: homeShape(carry, shapeOf(doc, numbers, false)), below: 1, plain: true };
+};
+
+/**
+ * A text's shape as a home is found for it: its own paragraph lengths count on a layout only where
+ * code sets it there as it is (`asIsOf`), not where the slide asks for it shorter or puts a table of
+ * it into the layout's table (`TextShape.layoutAsIs`).
+ */
+function homeShape(carry: SlideDocument | undefined, shape: TextShape): TextShape {
+  return carry && asIsOf(carry) ? shape : { ...shape, layoutAsIs: false };
+}
+
+/** The shape of some passages' text as a home is found for it ({@link homeShape}), with the words asked for its slide. */
+const homeShapeOf = (doc: DocumentPlan, numbers: readonly number[], language: string | undefined, tables: boolean, words?: unknown): TextShape => homeShape(slideDocument(doc, numbers, words, language, tables), shapeOf(doc, numbers, tables));
 
 /**
  * Passages shorter than this, in characters, are a heading or a title line, which an opening or a
@@ -1118,7 +1139,7 @@ function endKeeps(doc: DocumentPlan, planning: LengthPlanning): NonNullable<Sett
     const numbers = [...to.passages, ...end.passages].sort((a, b) => a - b);
     const home = homeOfEntry(to as OutlineEntry);
     const tables = tableInHome(home, planning);
-    const found = homeForChars(home, needOf(doc, numbers, language, tables), planning, { shape: shapeOf(doc, numbers, tables), dense: true, join: true, first: textFirstOf(doc, numbers, language) });
+    const found = homeForChars(home, needOf(doc, numbers, language, tables), planning, { shape: homeShapeOf(doc, numbers, language, tables), dense: true, join: true, first: textFirstOf(doc, numbers, language) });
     return !found.holds;
   };
 }
@@ -1159,7 +1180,7 @@ export function fitDocument(entries: OutlineEntry[], doc: DocumentPlan, planning
    * holds them. With `textFirst` false, what else the slide shows stays (see `textFirstOf`).
    */
   const homed = (entry: OutlineEntry, home: TextHome, numbers: readonly number[], need = needOf(doc, numbers, language, tableIn(home)), textFirst = true): { entry: OutlineEntry; holds: boolean } => {
-    const found = homeForChars(home, need, planning, { shape: shapeOf(doc, numbers, tableIn(home)), dense: true, join: true, ...(textFirst ? { first: textFirstOf(doc, numbers, language, entry.words) } : {}) });
+    const found = homeForChars(home, need, planning, { shape: homeShapeOf(doc, numbers, language, tableIn(home), entry.words), dense: true, join: true, ...(textFirst ? { first: textFirstOf(doc, numbers, language, entry.words) } : {}) });
     return { entry: found.home === home ? entry : placeEntry(entry, found.home), holds: found.holds };
   };
   const isTable = (number: number): boolean => doc.passages[number - 1]?.kind === 'table';
@@ -1231,7 +1252,7 @@ export function fitDocument(entries: OutlineEntry[], doc: DocumentPlan, planning
         // of the slide goes to the part that carries the table of its passages.
         const from = tableFor(part === 0 ? home : (text ?? home), tabledOf(home, carry.own), group);
         const tables = tableIn(from);
-        const found = homeForChars(from, needOf(doc, group, language, tables), planning, { shape: shapeOf(doc, group, tables), dense: true, join: true, ...(firstAt[at] ? { first: textFirstOf(doc, group, language) } : {}) });
+        const found = homeForChars(from, needOf(doc, group, language, tables), planning, { shape: homeShapeOf(doc, group, language, tables), dense: true, join: true, ...(firstAt[at] ? { first: textFirstOf(doc, group, language) } : {}) });
         return found.home === home ? own : placeEntry(own, found.home);
       });
     });
@@ -1330,7 +1351,7 @@ const NO_MODEL: LlmProvider = {
  * that cannot be built is left out, as is every slide without words or passages: `[]` for a plan
  * with neither, or one that cannot be planned at all (`writeDeck` says why).
  */
-export function planTextFit(template: Template, plan: DeckPlan, options: Pick<PlanOptions, 'patterns' | 'free' | 'icons' | 'assets' | 'layout' | 'numberPatterns'> = {}): SlideTextFit[] {
+export function planTextFit(template: Template, plan: DeckPlan, options: Pick<PlanOptions, 'patterns' | 'free' | 'icons' | 'assets' | 'layout' | 'numberPatterns' | 'countSpacing'> = {}): SlideTextFit[] {
   const slides: unknown[] = Array.isArray(plan?.slides) ? plan.slides : [];
   const isEntry = (slide: unknown): slide is OutlineEntry => typeof slide === 'object' && slide !== null && !Array.isArray(slide);
   const given = plan?.brief?.document;
@@ -1353,7 +1374,7 @@ export function planTextFit(template: Template, plan: DeckPlan, options: Pick<Pl
     const words = carry ? carry.words : readWords(entry.words);
     if (words === undefined) return [];
     const need = carry ? carry.need : charsOfWords(words, language);
-    const roomIn = (pattern: UsablePattern, names?: ReadonlySet<string>): number => (carry ? documentRoom(pattern, context, carry.shape, names) : heldBy(pattern, context, { names, language }));
+    const roomIn = (pattern: UsablePattern, names?: ReadonlySet<string>): number => (carry ? documentRoom(pattern, context, carry.shape, names, asIsOf(carry)) : heldBy(pattern, context, { names, language }));
     const fit = (room: number): SlideTextFit => ({ slide: index + 1, words, holds: room >= need ? words : Math.floor((words * room) / need) });
     const named = (found: SlideTextFit): SlideTextFit[] => [carry ? { ...found, passages: carry.label } : found];
     if (isFreeEntry(entry) && !byId.has(entry.pattern)) {
@@ -1391,7 +1412,7 @@ export function planTextFit(template: Template, plan: DeckPlan, options: Pick<Pl
  * smaller, which what is said of a slide that is cut says too. `false` for a plan that cannot be
  * planned at all.
  */
-export function freeSlidesOff(template: Template, plan: DeckPlan, options: Pick<PlanOptions, 'patterns' | 'free' | 'icons' | 'assets' | 'layout' | 'numberPatterns'> = {}): boolean {
+export function freeSlidesOff(template: Template, plan: DeckPlan, options: Pick<PlanOptions, 'patterns' | 'free' | 'icons' | 'assets' | 'layout' | 'numberPatterns' | 'countSpacing'> = {}): boolean {
   const slides: unknown[] = Array.isArray(plan?.slides) ? plan.slides : [];
   try {
     const hasFree = slides.some((slide) => typeof slide === 'object' && slide !== null && isFreeEntry(slide as OutlineEntry));
@@ -1402,6 +1423,11 @@ export function freeSlidesOff(template: Template, plan: DeckPlan, options: Pick<
   }
 }
 
+/** The lengths of the paragraphs of a slide's text from a document, where code may set it as it is: in the deck's script, not asked to be shorter, with no table that goes into a table. */
+export function asIsOf(carry: SlideDocument | undefined): { chars: number; each: number[]; heads?: HeadingOver[] } | undefined {
+  return carry && carry.shape.asIs && carry.asked === undefined && !carry.table && carry.shape.asIs.chars === carry.need ? carry.shape.asIs : undefined;
+}
+
 /**
  * The paragraphs a free slide's text from a document is set out for, where it goes to one slot,
  * and the lengths of those paragraphs where code may set them as they are (`TextShape.asIs`):
@@ -1410,7 +1436,7 @@ export function freeSlidesOff(template: Template, plan: DeckPlan, options: Pick<
 export function paragraphsFor(carry: SlideDocument | undefined, names: ReadonlySet<string>): { paragraphs?: Record<string, number>; asIs?: Record<string, readonly number[]>; heads?: Record<string, readonly HeadingOver[]> } {
   const [name] = [...names];
   if (!carry || name === undefined || names.size !== 1) return {};
-  const own = carry.shape.asIs && carry.asked === undefined && !carry.table && carry.shape.asIs.chars === carry.need ? carry.shape.asIs : undefined;
+  const own = asIsOf(carry);
   const asIs = own ? { asIs: { [name]: own.each }, ...(own.heads ? { heads: { [name]: own.heads } } : {}) } : {};
   return { paragraphs: { [name]: carry.shape.paragraphs }, ...asIs };
 }
@@ -1425,7 +1451,8 @@ export function paragraphsFor(carry: SlideDocument | undefined, names: ReadonlyS
  */
 export function filledText(doc: DocumentPlan, carry: SlideDocument, pattern: UsablePattern, context: CatalogContext, names?: ReadonlySet<string>): { slot: string; value: string | string[] } | undefined {
   if (!doc.same || carry.asked !== undefined || carry.table) return undefined;
-  if (documentRoom(pattern, context, carry.shape, names) < carry.need) return undefined;
+  const asIs = asIsOf(carry);
+  if (documentRoom(pattern, context, carry.shape, names, asIs) < carry.need) return undefined;
   const running = runningNames(pattern, names);
   const [slot] = running;
   if (slot === undefined || running.length !== 1 || (names && !/^b\d+Text$/.test(slot))) return undefined;
@@ -1437,7 +1464,7 @@ export function filledText(doc: DocumentPlan, carry: SlideDocument, pattern: Usa
   if (paragraphs.length === 0) return undefined;
   if (planned.mode === 'text') return paragraphs.length === 1 ? { slot, value: paragraphs[0] as string } : undefined;
   const scale = budgetScale(context);
-  const most = names ? textBudget(planned.slot, scale).maxParagraphs : documentParagraphs(planned.slot, scale, carry.shape.paragraphs);
+  const most = names ? textBudget(planned.slot, scale).maxParagraphs : asIs && holdsAsIs(pattern, asIs) ? textBudget(planned.slot, scale).maxParagraphs : documentParagraphs(planned, context, carry.shape.paragraphs);
   return most === undefined || paragraphs.length <= most ? { slot, value: paragraphs } : undefined;
 }
 
@@ -1746,7 +1773,7 @@ function toldParagraphsOf(pattern: UsablePattern, context: CatalogContext, names
   for (const name of runningNames(pattern, names)) {
     const planned = pattern.slots.find((one) => one.slot.name === name);
     if (!planned || planned.mode !== 'paragraphs') return undefined;
-    const most = textBudget(planned.slot as TextSlotDef, scale).maxParagraphs;
+    const most = toldOf(planned, context).maxParagraphs;
     if (most === undefined) return undefined;
     told += most;
   }
@@ -1849,6 +1876,7 @@ export async function writeDeck(loaded: Template, plan: DeckPlan, options: PlanO
     const dense = isFree(entry) && entry.arrange?.dense === true;
     const asked = (pattern: UsablePattern, names?: ReadonlySet<string>): UsablePattern => {
       if (carry && doc) {
+        // Its writer writes the text (code sets it, where it can, before this): it is held to what the writer is told.
         const room = documentRoom(pattern, context, carry.shape, names);
         const size = dense ? runningSize(pattern, names) : undefined;
         if (room < carry.need) short.push(size !== undefined ? textCutDense(number, carry.label, carry.need, room, size) : textCut(number, carry.label, carry.need, room, freeOff));

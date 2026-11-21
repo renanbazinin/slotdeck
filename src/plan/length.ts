@@ -16,7 +16,9 @@ import { freeSlotName } from '../free/blocks.ts';
 import { said } from '../messages/en.ts';
 import { scalesWithText, textBudget } from '../template/manifest.ts';
 import type { TextSlotDef } from '../template/manifest.ts';
-import { budgetScale } from './catalog.ts';
+import { budgetScale, toldOf } from './catalog.ts';
+import { mostHeld, toldFor } from '../template/told.ts';
+import type { SlotCount } from '../template/told.ts';
 import type { CatalogContext, PlannedSlot, UsablePattern } from './catalog.ts';
 import type { TextShape } from './document.ts';
 
@@ -94,10 +96,30 @@ function isRunning(planned: PlannedSlot, names?: ReadonlySet<string>): planned i
   return planned.slot.name !== 'title' && (planned.mode === 'paragraphs' || (planned.slot.maxChars ?? 0) >= 200);
 }
 
-/** How many characters of running text a pattern holds at the deck's text size: in all its running slots, or in those named. */
+/** How many characters of running text a pattern holds at the deck's text size, as its writers are told (`toldOf`): in all its running slots, or in those named. */
 export function textRoom(pattern: UsablePattern, context: CatalogContext, names?: ReadonlySet<string>): number {
-  const scale = budgetScale(context);
-  return pattern.slots.filter((planned) => isRunning(planned, names)).reduce((sum, planned) => sum + (textBudget(planned.slot as TextSlotDef, scale).maxChars ?? 0), 0);
+  return pattern.slots.filter((planned) => isRunning(planned, names)).reduce((sum, planned) => sum + (toldOf(planned, context).maxChars ?? 0), 0);
+}
+
+/** The count of the template's spacing for a slot (`CatalogContext.told`), where it speaks for it. */
+const countOf = (planned: PlannedSlot): SlotCount | undefined => (planned as { told?: SlotCount }).told;
+
+/** Whether the count of the template's spacing speaks for a slot: what it is told is safe in any text of its paragraphs, and no share of it is kept back. */
+const counted = (planned: PlannedSlot): boolean => countOf(planned) !== undefined;
+
+/**
+ * The running slots' room in all: of a slot the count speaks for, what `held` says it holds; of any
+ * other, `share` of its stored budget.
+ */
+function sharedRoom(pattern: UsablePattern, context: CatalogContext, share: number, held: (planned: PlannedSlot, count: SlotCount) => number): number {
+  let told = 0;
+  let stored = 0;
+  for (const planned of pattern.slots.filter((one) => isRunning(one))) {
+    const count = countOf(planned);
+    if (count) told += held(planned, count);
+    else stored += toldOf(planned, context).maxChars ?? 0;
+  }
+  return Math.floor(told + share * stored);
 }
 
 /**
@@ -176,8 +198,10 @@ const FEWER_FROM = 4;
  * told ({@link withPassages}), what code sets as it is (`filledText`), and where a text is held
  * (`homeForChars`). `undefined` where the slot has no limit.
  */
-export function documentParagraphs(slot: TextSlotDef, scale: number, paragraphs: number): number | undefined {
-  const most = textBudget(slot, scale).maxParagraphs;
+export function documentParagraphs(planned: PlannedSlot, context: CatalogContext, paragraphs: number): number | undefined {
+  // A slot the count speaks for takes what the count tells a text of that many paragraphs.
+  if (counted(planned)) return toldOf(planned, context, paragraphs).maxParagraphs;
+  const most = textBudget(planned.slot as TextSlotDef, budgetScale(context)).maxParagraphs;
   if (most === undefined) return undefined;
   return paragraphs >= 3 && most >= FEWER_FROM ? most - 1 : most;
 }
@@ -190,9 +214,24 @@ export interface LengthOptions {
   language?: string | undefined;
 }
 
-/** How many characters of running text a pattern holds for an asked length: of a layout, the share it may fill. */
+/**
+ * How many characters of running text a pattern holds for an asked length: of a layout, the share
+ * it may fill, and of a slot the count speaks for, the most it holds in the paragraphs its writer
+ * may choose ({@link toldFor}).
+ */
 export function heldBy(pattern: UsablePattern, context: CatalogContext, options: LengthOptions = {}): number {
-  return Math.floor((options.names ? 1 : LAYOUT_SHARE) * textRoom(pattern, context, options.names));
+  if (options.names) return Math.floor(textRoom(pattern, context, options.names));
+  return sharedRoom(pattern, context, LAYOUT_SHARE, (_planned, count) => mostHeld(count));
+}
+
+/**
+ * How many characters of a document's text a layout holds before its paragraphs are known: as
+ * {@link heldBy}, but of a slot the count speaks for, the pair it is told. A document's text keeps
+ * its paragraphs, so what a slot holds in fewer of them is not its room. What a deck's slides are
+ * sized by, where its document is shared out.
+ */
+export function documentHeld(pattern: UsablePattern, context: CatalogContext): number {
+  return sharedRoom(pattern, context, LAYOUT_SHARE, (planned) => toldOf(planned, context).maxChars ?? 0);
 }
 
 /**
@@ -201,10 +240,9 @@ export function heldBy(pattern: UsablePattern, context: CatalogContext, options:
  * with no limit any number.
  */
 function slotParagraphs(pattern: UsablePattern, context: CatalogContext, paragraphs: number): number {
-  const scale = budgetScale(context);
   return pattern.slots
     .filter((planned) => isRunning(planned))
-    .reduce((sum, planned) => sum + (planned.mode === 'text' ? 1 : (documentParagraphs(planned.slot as TextSlotDef, scale, paragraphs) ?? Number.POSITIVE_INFINITY)), 0);
+    .reduce((sum, planned) => sum + (planned.mode === 'text' ? 1 : (documentParagraphs(planned, context, paragraphs) ?? Number.POSITIVE_INFINITY)), 0);
 }
 
 /**
@@ -215,9 +253,30 @@ function slotParagraphs(pattern: UsablePattern, context: CatalogContext, paragra
  * paragraphs, and none is a limit on one paragraph. So this is the room the writer is told (see
  * {@link withPassages}), and the room a slide is said to hold.
  */
-export function documentRoom(pattern: UsablePattern, context: CatalogContext, shape?: { paragraphs: number }, names?: ReadonlySet<string>): number {
+export function documentRoom(pattern: UsablePattern, context: CatalogContext, shape?: { paragraphs: number }, names?: ReadonlySet<string>, asIs?: { chars: number; each: readonly number[] }): number {
   if (names) return heldBy(pattern, context, { names });
-  return shape && shape.paragraphs >= 3 ? Math.floor(PARAGRAPH_SHARE * textRoom(pattern, context)) : heldBy(pattern, context);
+  if (!shape) return heldBy(pattern, context);
+  const room = sharedRoom(pattern, context, shape.paragraphs >= 3 ? PARAGRAPH_SHARE : LAYOUT_SHARE, (planned) => toldOf(planned, context, shape.paragraphs).maxChars ?? 0);
+  // A text code sets as it is (`TextShape.asIs`) in the one running slot is held where its own
+  // paragraphs fit, each counted in whole lines: the same count, of lengths that are known.
+  return asIs && holdsAsIs(pattern, asIs) ? Math.max(room, asIs.chars) : room;
+}
+
+/**
+ * Whether a pattern holds a document's text only where code sets it as it is: its writer would be
+ * told less than the text (`documentRoom` without `asIs`), and its own paragraphs fit
+ * ({@link holdsAsIs}). Only where the count of the template's spacing speaks for its slot.
+ */
+export function holdsOnlyAsIs(pattern: UsablePattern, context: CatalogContext, shape: { paragraphs: number }, need: number, asIs: { chars: number; each: readonly number[] }): boolean {
+  return documentRoom(pattern, context, shape) < need && documentRoom(pattern, context, shape, undefined, asIs) >= need;
+}
+
+/** Whether the one running slot of a pattern, counted, holds a text of paragraphs of these lengths as it is. */
+export function holdsAsIs(pattern: UsablePattern, asIs: { each: readonly number[] }, names?: ReadonlySet<string>): boolean {
+  const running = pattern.slots.filter((planned) => isRunning(planned, names));
+  const [only] = running;
+  const count = running.length === 1 && only ? (only as { told?: { holds(each: readonly number[]): boolean } }).told : undefined;
+  return count !== undefined && count.holds(asIs.each);
 }
 
 /** One running slot's part of an asked length: its share in characters, and the range it is told. */
@@ -226,6 +285,8 @@ interface LengthShare {
   share: number;
   least: number;
   most: number;
+  /** Of a slot the count speaks for, the pair it is told for its share ({@link toldFor}). */
+  pair?: { maxChars: number; maxParagraphs: number };
 }
 
 /**
@@ -235,21 +296,26 @@ interface LengthShare {
 function sharesOf(pattern: UsablePattern, words: number, context: CatalogContext, options: LengthOptions): { shares: LengthShare[]; short: boolean } | undefined {
   const { names, language } = options;
   const fill = names ? 1 : LAYOUT_SHARE;
-  const scale = budgetScale(context);
   const running = pattern.slots.filter((planned) => isRunning(planned, names));
-  const rooms = running.map((planned) => fill * (textBudget(planned.slot as TextSlotDef, scale).maxChars ?? 0));
+  // A slot the count speaks for holds what it holds in the paragraphs its share takes (`toldFor`).
+  const rooms = running.map((planned) => {
+    const count = countOf(planned);
+    return count ? mostHeld(count) : fill * (toldOf(planned, context).maxChars ?? 0);
+  });
   const total = rooms.reduce((sum, room) => sum + room, 0);
   if (running.length === 0 || total <= 0) return undefined;
   const need = charsOfWords(words, language);
   const short = total < need;
   const shares = running.map((planned, at): LengthShare => {
-    const room = rooms[at] as number;
-    const share = Math.min(room, Math.round((need * room) / total));
+    const share = Math.min(rooms[at] as number, Math.round((need * (rooms[at] as number)) / total));
+    const count = countOf(planned);
+    const pair = count ? toldFor(count, share) : undefined;
+    const room = pair ? pair.maxChars : (rooms[at] as number);
     // From the share to a little over it, never over what the slot may hold. A slot that holds
     // less than its share is asked for what it holds, from nine tenths of it.
     const least = tens(short ? 0.9 * share : Math.min(share, 0.95 * room));
     const most = Math.max(least, Math.min(tens(room), tens(1.15 * share)));
-    return { planned, share, least, most };
+    return { planned, share, least, most, ...(pair ? { pair } : {}) };
   });
   return { shares, short };
 }
@@ -271,7 +337,9 @@ export function withLength(pattern: UsablePattern, words: number, context: Catal
   const { shares, short } = shared;
   const several = shares.length > 1;
   const told = new Map<string, string>();
-  shares.forEach(({ planned, share, least, most }) => {
+  const pairs = new Map<string, { maxChars: number; maxParagraphs: number }>();
+  shares.forEach(({ planned, share, least, most, pair }) => {
+    if (pair) pairs.set(planned.slot.name, pair);
     const amount = `Write ${Math.max(1, wordsOfChars(share, language))} words`;
     const range = `${least} to ${most} characters`;
     const said = short
@@ -287,7 +355,11 @@ export function withLength(pattern: UsablePattern, words: number, context: Catal
     ...pattern,
     slots: pattern.slots.map((planned) => {
       const description = told.get(planned.slot.name);
-      return description === undefined ? planned : ({ ...planned, slot: { ...planned.slot, description } } as PlannedSlot);
+      const count = countOf(planned);
+      const pair = pairs.get(planned.slot.name);
+      // A slot the count speaks for is told the pair for its share: its limits and its number of items say it.
+      const counting = count && pair ? { told: { ...count, ...pair } } : {};
+      return description === undefined ? planned : ({ ...planned, ...counting, slot: { ...planned.slot, description } } as PlannedSlot);
     }),
   };
 }
@@ -317,7 +389,8 @@ export function withPassages(pattern: UsablePattern, need: number, context: Cata
   const fill = names ? 1 : (shape?.paragraphs ?? 1) >= 3 ? PARAGRAPH_SHARE : LAYOUT_SHARE;
   const scale = budgetScale(context);
   const running = pattern.slots.filter((planned) => isRunning(planned, names));
-  const rooms = running.map((planned) => fill * (textBudget(planned.slot as TextSlotDef, scale).maxChars ?? 0));
+  const paragraphs = names ? undefined : shape?.paragraphs;
+  const rooms = running.map((planned) => (counted(planned) ? (toldOf(planned, context, paragraphs).maxChars ?? 0) : fill * (textBudget(planned.slot as TextSlotDef, scale).maxChars ?? 0)));
   const total = rooms.reduce((sum, room) => sum + room, 0);
   if (running.length === 0 || total <= 0) return pattern;
   const holds = documentRoom(pattern, context, shape, names) >= need;
@@ -342,18 +415,24 @@ export function withPassages(pattern: UsablePattern, need: number, context: Cata
   });
   /** The paragraphs a slot of a layout takes of the text ({@link documentParagraphs}), as its limit is counted (`textBudget`), where that is fewer than its limit. */
   const fewer = (planned: PlannedSlot): { maxParagraphs: number } | undefined => {
-    if (names || planned.mode !== 'paragraphs') return undefined;
+    if (names || planned.mode !== 'paragraphs' || counted(planned)) return undefined;
     const slot = planned.slot as TextSlotDef;
     const most = textBudget(slot, scale).maxParagraphs;
-    const taken = documentParagraphs(slot, scale, shape?.paragraphs ?? 1);
+    const taken = documentParagraphs(planned, context, shape?.paragraphs ?? 1);
     if (most === undefined || taken === undefined || taken >= most) return undefined;
     return { maxParagraphs: Math.ceil(taken * (scalesWithText(slot) ? scale : 1)) };
+  };
+  /** A slot the count speaks for is told the pair for the text's paragraphs: its writer writes the text, so it is held to the count. */
+  const pairFor = (planned: PlannedSlot): { told: SlotCount } | undefined => {
+    const count = countOf(planned);
+    if (names || !count || planned.mode !== 'paragraphs') return undefined;
+    return { told: { ...count, ...toldOf(planned, context, shape?.paragraphs ?? 1) } };
   };
   return {
     ...pattern,
     slots: pattern.slots.map((planned) => {
       const description = told.get(planned.slot.name);
-      return description === undefined ? planned : ({ ...planned, slot: { ...planned.slot, description, ...fewer(planned) } } as PlannedSlot);
+      return description === undefined ? planned : ({ ...planned, ...pairFor(planned), slot: { ...planned.slot, description, ...fewer(planned) } } as PlannedSlot);
     }),
   };
 }
@@ -520,7 +599,7 @@ type Shape = TextShape | undefined;
 function roomOf(home: TextHome, chars: number, planning: LengthPlanning, shape?: Shape): number | undefined {
   if (!isFreeHome(home)) {
     const pattern = planning.layout(home.pattern, home.items);
-    return pattern ? (shape ? documentRoom(pattern, planning.context, shape) : heldBy(pattern, planning.context)) : undefined;
+    return pattern ? (shape ? documentRoom(pattern, planning.context, shape, undefined, setOnLayout(shape, chars)) : heldBy(pattern, planning.context)) : undefined;
   }
   const lengths = freeLengths(home.blocks, chars);
   const names = Object.keys(lengths);
@@ -639,7 +718,7 @@ export function homeForChars(given: TextHome, need: number, planning: LengthPlan
       .map((id) => ({ id, room: roomOf({ pattern: id }, first.need, planning, first.shape) ?? 0 }))
       .filter((one) => one.room > 0)
       .sort((a, b) => a.room - b.room);
-    const pick = rooms.find((one) => one.room >= first.need && setsAsIs({ pattern: one.id }, planning, first.shape)) ?? rooms.find((one) => one.room >= first.need) ?? rooms.at(-1);
+    const pick = rooms.find((one) => one.room >= first.need && setsAsIs({ pattern: one.id }, planning, first.shape, first.need)) ?? rooms.find((one) => one.room >= first.need) ?? rooms.at(-1);
     if (pick) other = { home: { pattern: pick.id }, room: pick.room, holds: pick.room >= first.need };
     // A free slide the plan has is written all the same: it keeps what it holds as it is written.
     const room = isFreeHome(result.home) ? (roomOf(result.home, need, { ...planning, free: planning.written }, options.shape) ?? result.room) : result.room;
@@ -672,7 +751,7 @@ function place(current: TextHome, need: number, planning: LengthPlanning, dense:
    * paragraphs and loses no characters by that, so its room stays what it holds (see
    * {@link documentRoom}).
    */
-  const holdsIn = (home: TextHome, room: number): boolean => room >= need && (need === 0 || takesParagraphs(home, planning, shape));
+  const holdsIn = (home: TextHome, room: number): boolean => room >= need && (need === 0 || takesParagraphs(home, planning, shape, need));
   const attempt = (home: TextHome): boolean => {
     const room = roomOf(home, need, planning, shape);
     if (room === undefined) return false;
@@ -689,7 +768,7 @@ function place(current: TextHome, need: number, planning: LengthPlanning, dense:
       .sort((a, b) => a.room - b.room);
     for (const other of others) tried.push({ home: { pattern: other.id }, room: other.room });
     // One where code sets a document's text as it is comes first.
-    const fits = others.find((other) => holdsIn({ pattern: other.id }, other.room) && (need === 0 || setsAsIs({ pattern: other.id }, planning, shape))) ?? others.find((other) => holdsIn({ pattern: other.id }, other.room));
+    const fits = others.find((other) => holdsIn({ pattern: other.id }, other.room) && (need === 0 || setsAsIs({ pattern: other.id }, planning, shape, need))) ?? others.find((other) => holdsIn({ pattern: other.id }, other.room));
     if (fits) return { home: { pattern: fits.id }, room: fits.room, holds: true };
   }
   if (planning.free) {
@@ -711,6 +790,8 @@ function place(current: TextHome, need: number, planning: LengthPlanning, dense:
   // home it has before another, else the least.
   const taken = (home: TextHome): number => {
     const pattern = shape && !isFreeHome(home) ? planning.layout(home.pattern, home.items) : undefined;
+    const asIs = setOnLayout(shape, need);
+    if (pattern && asIs && holdsAsIs(pattern, asIs)) return shape?.paragraphs ?? Number.POSITIVE_INFINITY;
     return pattern && shape ? Math.min(shape.paragraphs, slotParagraphs(pattern, planning.context, shape.paragraphs)) : Number.POSITIVE_INFINITY;
   };
   const loose = tried
@@ -723,10 +804,22 @@ function place(current: TextHome, need: number, planning: LengthPlanning, dense:
   return best ? { ...best, holds: false } : { home: current, room: 0, holds: false };
 }
 
+/**
+ * The lengths of a text's own paragraphs that a layout is judged by, where code sets the text there
+ * as it is (`TextShape.asIs`): a text of `need` characters, that code sets on a layout
+ * (`TextShape.layoutAsIs`).
+ */
+function setOnLayout(shape: Shape, need: number | undefined): { chars: number; each: readonly number[] } | undefined {
+  return shape?.asIs && shape.layoutAsIs !== false && shape.asIs.chars === need ? shape.asIs : undefined;
+}
+
 /** Whether the running slots of a home take a text's paragraphs as they are ({@link documentParagraphs}): a free slide's, and any where they are not known, do. */
-function takesParagraphs(home: TextHome, planning: LengthPlanning, shape: Shape): boolean {
+function takesParagraphs(home: TextHome, planning: LengthPlanning, shape: Shape, need?: number): boolean {
   if (!shape || isFreeHome(home)) return true;
   const pattern = planning.layout(home.pattern, home.items);
+  // A text code sets as it is, that the one running slot holds as it is, keeps its paragraphs.
+  const asIs = setOnLayout(shape, need);
+  if (pattern && asIs && holdsAsIs(pattern, asIs)) return true;
   return !pattern || shape.paragraphs <= slotParagraphs(pattern, planning.context, shape.paragraphs);
 }
 
@@ -736,11 +829,11 @@ function takesParagraphs(home: TextHome, planning: LengthPlanning, shape: Shape)
  * a text, one of two columns that the writer fills each, and one of a single text that takes its
  * paragraphs, the second is chosen: there the person's words are set as they are.
  */
-function setsAsIs(home: TextHome, planning: LengthPlanning, shape: Shape): boolean {
+function setsAsIs(home: TextHome, planning: LengthPlanning, shape: Shape, need?: number): boolean {
   if (!shape || isFreeHome(home)) return true;
   const pattern = planning.layout(home.pattern, home.items);
   if (!pattern) return true;
-  return pattern.slots.filter((planned) => isRunning(planned)).length === 1 && takesParagraphs(home, planning, shape);
+  return pattern.slots.filter((planned) => isRunning(planned)).length === 1 && takesParagraphs(home, planning, shape, need);
 }
 
 /** The purpose of one of several slides that share a text: "The plan for 2026 (2/3)". */

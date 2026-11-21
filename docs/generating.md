@@ -56,6 +56,7 @@ It runs `planDeck`, then `resolveAssets`, then `renderDeck`.
 | `review` | `DeckReview` | none | A second look at every draft: design checks, a model that looks at pictures of the slides, or a function of your own. What it finds goes back to the model in the repair rounds. See [design-checks.md](design-checks.md). |
 | `composeLayouts` | number | 0 (off) | Up to this many new layouts may be made for the deck, in the template's own look, for slides that none of its layouts shows well. About 10 to 25 seconds more. None is made while free slides are on offer. See "New layouts for a deck" below. |
 | `free` | boolean | `true` | Whether a slide may be a free slide: one the software lays out itself from the parts the plan names, for content that no pattern shows. `false` turns them off. See "Free slides" below. |
+| `countSpacing` | boolean | `true` | Whether the writer of a layout's slot of paragraphs is told what its box holds, the template's own spacing counted. `false` tells every slot its stored budget, as 0.6.7 did. See "What a writer is told a layout holds" below. |
 | `cache` | `Map<string, Uint8Array>` | none | Generated pictures by asset id. Pass the same map on later calls and pictures whose description did not change are reused. |
 | `imageConcurrency` | number | 3 | How many pictures to generate at once. |
 | `onProgress` | function | none | Called with `{ stage: 'outline' }`, `{ stage: 'layouts' }` (with `composeLayouts`), `{ stage: 'write', slides }`, `{ stage: 'repair', attempt, issues }`, `{ stage: 'images', done, total }`, `{ stage: 'render' }`. |
@@ -154,6 +155,30 @@ Two things to know:
   `PlanError: Template "x" has no plain text pattern, so a text-only deck cannot be planned from it`. Add one as a
   derived pattern (see [layout-freedom.md](layout-freedom.md)).
 
+### What a writer is told a layout holds
+
+A slot's budget (`maxChars`, `maxParagraphs`) is counted once, for the template's own text, without the space
+the template keeps around paragraphs. A text that fills it in many paragraphs takes that space many times, and
+can run past its box while it keeps to the budget. From 0.6.8 the writer of a slot of two paragraphs or more is
+told what its box holds, counted without fonts from the template. This applies where the template keeps space
+before or after the slot's paragraphs, or sets their lines further apart than 1.2 times their size:
+- the lines the box holds at the slot's size, the deck's text size counted;
+- less the space PowerPoint draws between paragraphs, and before the first and after the last where the shape
+  says so (`spcFirstLastPara`);
+- each paragraph counted in whole lines, each line 85% full, characters as wide as `characterWidth` or the
+  estimate.
+
+So a text of any paragraph lengths that keeps to what it is told fits. The writer is told one pair:
+- the stored budget where that fits;
+- else the same paragraphs with fewer characters, where that costs few;
+- else fewer, longer paragraphs.
+
+The pair stands in the slot's limits ("at most 357 characters in total, at most 5 items"), in the outline's list
+of layouts, and as the writer's `maxItems`. A length the slot's description states as a clause of its own
+("About 420 characters in all") is left out where the pair is less. The deck is still checked against the
+stored budget, so a writer is not sent back for a text between the two. `countSpacing: false` turns the count
+off.
+
 ### Asking for an amount of text
 
 A person may ask for an amount of text on a slide: "200 words on the expansion", "a paragraph of about 80
@@ -165,9 +190,11 @@ wish and makes room for it, and from 0.6.2 the text stays on the slide it was as
    planned and written as before.
 2. Code finds the text a slide that holds it, counting about 6 characters to a word with its space, 6.5 in
    Hebrew (200 words are about 1,200 characters), at the deck's text size:
-   - the layout planned, when nine tenths of the limits of its running text (paragraphs, lists, texts of 200
-     characters or more) hold it. A layout's limits were found for the template's own text, and a text that
-     fills them in many paragraphs is the one most likely to run over its box;
+   - the layout planned, when its running text (paragraphs, lists, texts of 200 characters or more) holds it. A
+     slot the count above speaks for holds what its box holds in some number of paragraphs, and its writer is
+     told that number and what it holds. Any other slot holds nine tenths of its limits: they were found for the
+     template's own text, and a text that fills them in many paragraphs is the one most likely to run over its
+     box;
    - else, for a slide of plain text, the smallest layout of plain text that holds it;
    - else a free slide, where free slides are on offer, set out for that length: one text alone that long is
      set at the template's running-text size in two columns where it needs them, and its budget is what its
@@ -198,7 +225,9 @@ wish and makes room for it, and from 0.6.2 the text stays on the slide it was as
    holds where that is less: `Write 200 words, as was asked: 1200 to 1370 characters in all`. A model writes
    short of a length it is told "about", by a fifth. A long text with nothing else to say of itself is asked
    for in paragraphs, at most 12 on a dense slide, whose range ends where the text fits in any number of them
-   of any length. The slot's limits stay as they are. A text written under 85% of the least it was told is
+   of any length. The slot's limits stay as they are, except on a slot whose box the count of its template's
+   spacing speaks for: its limits and `maxItems` are then what it holds in the paragraphs it is told (see
+   "What a writer is told a layout holds" above). A text written under 85% of the least it was told is
    sent back once; still short, the deck gets a warning: `500 words were asked for this slide, and it has
    about 380: ask for it again to have them all`. A slide that holds less is told what it holds (`Write 446
    words, 2610 to 2900 characters: of the 1000 words asked for this slide, the most it holds`), and the deck
@@ -209,7 +238,7 @@ wish and makes room for it, and from 0.6.2 the text stays on the slide it was as
 
 With free slides off a slide holds what its layout holds: no text is set smaller, no slide is added, and the
 rest of a long text is cut, which the plan says before writing. From 0.6.3 the deck's warning says why, at its
-end: `200 words were asked for this slide, and it holds about 49: ask for the text over more slides, or for a
+end: `200 words were asked for this slide, and it holds about 55: ask for the text over more slides, or for a
 shorter one; free slides are off, so its text is not set smaller`. So do the plan tool's `note` and the
 `TextCutError` of a change that stops before writing: `Free slides are off, so the text is not set smaller.`
 Free slides are off where `free: false` is passed, the manifest says `"free": false`, or a list of patterns
@@ -350,11 +379,15 @@ at most twelve paragraphs, or, where the slide holds all of it in more, in the m
 rest. A text of more paragraphs than a layout's slots take has some of them joined, which loses no room. Such
 a text goes on to a layout of plain text whose one running text takes its paragraphs, else, with free slides
 on, to a free slide, where code sets its paragraphs as they are; where neither holds it, a layout that holds
-its characters keeps it, and its writer joins some paragraphs. A slot of paragraphs of a layout that takes
-four or more takes one fewer of a text of three or more paragraphs (from 0.6.3): each paragraph ends on a line
-of its own, and on a right-to-left template five such paragraphs, each just over a line, ran 19 pt past the
-box of a text layout that holds 417 characters. Its
-writer is told one fewer and joins them, and code sets such a text there as it is only where it has no more.
+its characters keeps it, and its writer joins some paragraphs. Each paragraph ends on a line of its own, and
+on a right-to-left template five such paragraphs, each just over a line, ran 19 pt past the box of a text
+layout that holds 417 characters. So a slot of paragraphs is told what any text of the text's paragraphs holds,
+its template's spacing counted, or fewer paragraphs that hold more (see "What a writer is told a layout holds"
+above), and its writer joins them. Code sets such a text there as it is where its own paragraphs fit, each
+counted in its own whole lines; a slide whose text is written again (a change in other words, a change to its
+title) is held to what its writer is told. Where the count does not speak for the slot (`countSpacing: false`,
+or a template with no such spacing), a slot that takes four paragraphs or more takes one fewer of a text of
+three or more, as from 0.6.3.
 With free slides off the warning ends `; free slides are off, so its text is not set smaller`. The numbers a
 chart shows may come from the document as well as from the brief.
 
@@ -392,7 +425,7 @@ Each `SlideTextFit` has `slide` (from 1), `words` (asked, or of its passages) an
 and `templateSize`, the size running text has there when nothing makes it smaller; on a dense slide `dense` and
 `most`, the most words it holds at the least size that reads; and on a slide of a document `passages`, as
 `"p3-p5"`. A plan with neither words nor a document gives `[]`. Pass it the options the plan was made with:
-`patterns`, `free`, `icons`, `assets`, `layout` and `numberPatterns`. The chat tools say the same in `text_pt`,
+`patterns`, `free`, `icons`, `assets`, `layout`, `numberPatterns` and `countSpacing`. The chat tools say the same in `text_pt`,
 `holds_words` and `note` (see [chat-tools.md](chat-tools.md)).
 
 ### New layouts for a deck

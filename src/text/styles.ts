@@ -98,6 +98,11 @@ export interface TextFrame {
   /** The space between two columns, in points (`spcCol`). */
   columnGap: number;
   /**
+   * Whether PowerPoint draws the first paragraph's space before and the last one's space after
+   * (`spcFirstLastPara`). Without it, only the space between paragraphs is drawn.
+   */
+  firstLast: boolean;
+  /**
    * Whether the slide states the shape's size, or the renderer gives it a box: where neither does, the
    * renderer cannot tell how wide a line of it is, and sets no heading run in (`setHeadings`).
    */
@@ -356,6 +361,7 @@ export class TextStyles {
       vertical: vert !== null && vert !== 'horz',
       columns: Math.max(1, Number(bodyAttr('numCol') ?? 1) || 1),
       columnGap: points(bodyAttr('spcCol'), 0),
+      firstLast: /^(1|true)$/.test(bodyAttr('spcFirstLastPara') ?? ''),
       placed: box !== undefined || !!path(shape, [NS.p, 'spPr'], [NS.a, 'xfrm'], [NS.a, 'ext']),
       paragraphs: paragraphs.map((paragraph) => readParagraph(paragraph, styleRun, lists, theme)),
       sample: paragraphs.map((paragraph) =>

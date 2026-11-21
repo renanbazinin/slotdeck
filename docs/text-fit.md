@@ -376,7 +376,9 @@ paragraph, or the reverse): then the space stays inside the line.
 **Height.** Lines are 1.2 times the font size apart, whatever the font: this is how PowerPoint spaces lines.
 Line spacing set on the paragraph (a percentage, or exact points) is applied, and so is the space between
 paragraphs, including a slot's `paragraphGap`. The space before the first paragraph and after the last is not
-drawn and not counted.
+counted. PowerPoint draws it only where the shape says so (`spcFirstLastPara`), which the budgets writers are
+told count (see "What a writer is told a layout holds" in [generating.md](generating.md)) and this measure does
+not yet.
 
 **Fitting.** A text fits when its height is within the room, with a slack of three tenths of a line: a last
 line that hangs that little under the box is not reported. A box that does not wrap fits when its longest
@@ -467,7 +469,10 @@ From 0.6.7 a template can say how wide its text is set: `characterWidth` in its 
 running text, as a share of its size, measured on its own face: the width that 19 full lines in 20 stay under,
 rounded up to two decimals.
 The running text of free slides (texts and lists, set dense or not) is counted with it, and so are the budgets
-writers are told. Other things are counted as before:
+writers are told. From 0.6.8 so is what a writer is told a layout's slot of paragraphs holds, its template's
+spacing counted (see "What a writer is told a layout holds" in [generating.md](generating.md)): on a
+right-to-left template the width cut what writers lose to that count from 28.5% to 19%. Other things are
+counted as before:
 - cards, steps, quotations, notes, headings, labels, tables and charts;
 - whether a long text takes one column or two.
 

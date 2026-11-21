@@ -123,6 +123,42 @@ interface Shared {
 
 const shared = new WeakMap<PptxPackage, Shared>();
 
+/** A shape of a slide by id: a copied item's shapes exist only once the row is rendered, and are set like the shape they copy. */
+function shapeIn(entry: Shared, slide: number, id: string): ShapeInfo | undefined {
+  let byId = entry.shapes.get(slide);
+  if (!byId) {
+    byId = new Map((entry.info.slides[slide - 1]?.shapes ?? []).map((shape) => [shape.id, shape]));
+    entry.shapes.set(slide, byId);
+  }
+  return byId.get(id) ?? byId.get(String(Number(id) % COPY_ID_STEP));
+}
+
+/**
+ * The frame a template's own slot is set in, read without fonts: the shape's size, the box the slot
+ * states, or, for an item of a row that widens with fewer items, the box the renderer gives it.
+ * The measurer and the count of what a writer is told (`template/told.ts`) read the same box.
+ * A slot copied onto a free slide (`styleOf`) is not one: the measurer frames it itself.
+ */
+export function slotFrame(pkg: PptxPackage, pattern: PatternDef, slot: TextSlotDef, items?: number): TextFrame | undefined {
+  const entry = sharedFor(pkg);
+  const { styles } = entry;
+  const shape = shapeIn(entry, pattern.sourceSlide, slot.shapeId);
+  if (!shape) return undefined;
+  // The shape's own size is read exactly from the slide; a slot that moves its box states another.
+  const box = slot.box;
+  const size = box && box.w > 0 && box.h > 0 ? { width: box.w * styles.slideWidth, height: box.h * styles.slideHeight } : undefined;
+  const repeat = pattern.repeat;
+  if (!size && repeat && items !== undefined) {
+    const count = itemCount(pattern, items);
+    const texts = rowTextIds(pattern);
+    if (texts?.has(slot.shapeId) && widenFactor(repeat, count) > 1) {
+      const widened = styles.rowFrame(pattern.sourceSlide, slot.shapeId, slot.styleRun ?? 'first', { key: pattern.id, repeat, count, texts });
+      if (widened) return widened;
+    }
+  }
+  return styles.frame(pattern.sourceSlide, shape.id, slot.styleRun ?? 'first', size);
+}
+
 function sharedFor(pkg: PptxPackage): Shared {
   let entry = shared.get(pkg);
   if (!entry) {
@@ -245,17 +281,9 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
   if (!fonts) throw new Error('textMeasurer needs font metrics: pass them, or load the template with fonts');
   const metrics = fonts;
   const { manifest, pkg } = template;
-  const { styles, info, shapes } = sharedFor(pkg);
+  const { styles } = sharedFor(pkg);
   const missing = new Map<string, TemplateFont>();
-  const shapeOf = (slide: number, id: string): ShapeInfo | undefined => {
-    let byId = shapes.get(slide);
-    if (!byId) {
-      byId = new Map((info.slides[slide - 1]?.shapes ?? []).map((shape) => [shape.id, shape]));
-      shapes.set(slide, byId);
-    }
-    // A copied item's shapes exist only once the row is rendered; they are set like the shape they copy.
-    return byId.get(id) ?? byId.get(String(Number(id) % COPY_ID_STEP));
-  };
+  const shapeOf = (slide: number, id: string): ShapeInfo | undefined => shapeIn(sharedFor(pkg), slide, id);
 
   /**
    * The frame a slot's text is measured in. This is the one place that decides the box: every
@@ -297,21 +325,7 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
         wrap: drawn.wrap,
       };
     }
-    const shape = shapeOf(pattern.sourceSlide, slot.shapeId);
-    if (!shape) return undefined;
-    // The shape's own size is read exactly from the slide; a slot that moves its box states another.
-    const box = slot.box;
-    const size = box && box.w > 0 && box.h > 0 ? { width: box.w * styles.slideWidth, height: box.h * styles.slideHeight } : undefined;
-    const repeat = pattern.repeat;
-    if (!size && repeat && items !== undefined) {
-      const count = itemCount(pattern, items);
-      const texts = rowTextIds(pattern);
-      if (texts?.has(slot.shapeId) && widenFactor(repeat, count) > 1) {
-        const widened = styles.rowFrame(pattern.sourceSlide, slot.shapeId, slot.styleRun ?? 'first', { key: pattern.id, repeat, count, texts });
-        if (widened) return widened;
-      }
-    }
-    return styles.frame(pattern.sourceSlide, shape.id, slot.styleRun ?? 'first', size);
+    return slotFrame(pkg, pattern, slot, items);
   };
 
   /**

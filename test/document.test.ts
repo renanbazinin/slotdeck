@@ -1123,13 +1123,14 @@ test('with free slides off a slide of a document moves to the layout of plain te
   const doc = readDocument(REPORT, 'en');
   const need = (doc.passages[0] as DocumentPassage).chars + (doc.passages[1] as DocumentPassage).chars;
   const words = passageWords(doc.passages, [1, 2]);
-  // Two paragraphs: nine tenths of the 331 characters of the text layout.
-  const room = Math.floor(0.9 * 331);
+  // Two paragraphs: the text layout holds all its 331 characters in two, its spacing counted (0.6.7 kept a tenth back).
+  const room = 331;
   assert.deepEqual(planTextFit(demo, plan, off), [{ slide: 1, words, holds: Math.floor((words * room) / need), passages: 'p1-p2' }]);
   const writer = scripted((request: JsonRequest) => ({ s1: { title: 'Background', body: ['Riders rely on it.'], ...(titles(request) as { s1: object }).s1 } }));
   const written = await writeDeck(demo, plan, { llm: writer.llm, ...off });
   const body = (schemaOf(writer.requests[0]).properties.s1 as Schema).properties.body?.description ?? '';
-  assert.ok(body.startsWith("The slide's text from the document (p1-p2) shortened to 260 to 290 characters, the most this slide holds"), body);
+  assert.ok(body.startsWith("The slide's text from the document (p1-p2) shortened to 290 to 330 characters, the most this slide holds"), body);
+  assert.match(body, /at most 331 characters in total, at most 2 items$/, 'its limits are the pair the count tells two paragraphs');
   assert.deepEqual(
     withoutCodes(written.warnings.filter((issue) => /cut to fit/.test(issue.message))),
     [
@@ -1260,7 +1261,9 @@ test('with free slides off a change to a plan moves a free slide of a text and a
 
 test("a layout's slot of four paragraphs or more takes one fewer of a text of three or more: code sets it on a free slide, or the writer joins them", async () => {
   // One passage of four lines of about 66 characters. The demo's list beside a photo takes four
-  // paragraphs, and so three of such a text.
+  // paragraphs, and so three of such a text. This is the rule for a slot the count of the
+  // template's spacing does not speak for: here it is turned off, as 0.6.7 told every slot.
+  const uncounted = { ...options, countSpacing: false };
   const lines = [
     'Notes',
     'Trips by bike grew by a fifth this year, the most in the region.',
@@ -1282,12 +1285,12 @@ test("a layout's slot of four paragraphs or more takes one fewer of a text of th
       ]),
     );
   // With free slides on, a free slide takes the text, and code sets its four paragraphs as they are.
-  const on = await planOutline(demo, listed, { llm: scripted(outlineOf([entry('list-with-photo', 'Notes', [1])])).llm, ...options, assets });
+  const on = await planOutline(demo, listed, { llm: scripted(outlineOf([entry('list-with-photo', 'Notes', [1])])).llm, ...uncounted, assets });
   assert.equal(on.slides[0]?.pattern, 'free');
-  const set = await writeDeck(demo, on, { llm: scripted(withPhoto, withPhoto).llm, ...options, assets });
+  const set = await writeDeck(demo, on, { llm: scripted(withPhoto, withPhoto).llm, ...uncounted, assets });
   assert.deepEqual(set.deck.slides[0]?.slots.b1Text, lines.split('\n').slice(1));
   // With free slides off the layout stays, and its writer is told three and joins them: code sets none.
-  const off = { ...options, free: false, assets };
+  const off = { ...uncounted, free: false, assets };
   const kept = await planOutline(demo, listed, { llm: scripted(outlineOf([entry('list-with-photo', 'Notes', [1])])).llm, ...off });
   assert.equal(kept.slides[0]?.pattern, 'list-with-photo');
   const writer = scripted(withPhoto, withPhoto);
@@ -1296,9 +1299,9 @@ test("a layout's slot of four paragraphs or more takes one fewer of a text of th
   assert.deepEqual(written.deck.slides[0]?.slots.bulletList, joined);
   // A text of three such lines is within the rule: code sets it there as it is.
   const three = lines.split('\n').slice(0, 4).join('\n');
-  const short = await planOutline(demo, { ...listed, document: three }, { llm: scripted(outlineOf([entry('list-with-photo', 'Notes', [1])])).llm, ...options, assets });
+  const short = await planOutline(demo, { ...listed, document: three }, { llm: scripted(outlineOf([entry('list-with-photo', 'Notes', [1])])).llm, ...uncounted, assets });
   assert.equal(short.slides[0]?.pattern, 'list-with-photo');
-  const filled = await writeDeck(demo, short, { llm: scripted(withPhoto, withPhoto).llm, ...options, assets });
+  const filled = await writeDeck(demo, short, { llm: scripted(withPhoto, withPhoto).llm, ...uncounted, assets });
   assert.deepEqual(filled.deck.slides[0]?.slots.bulletList, three.split('\n').slice(1));
 });
 
@@ -1533,19 +1536,29 @@ test("a list set by code into a layout's list has no bullet of its own there; a 
   assert.deepEqual(written.deck.slides[0]?.slots.bulletList, ['What riders said:', 'Bikes are easy to find near the station', '1. Some docks are often full']);
   // A free text draws none: there an item keeps its bullet.
   assert.deepEqual(fillParagraphs(documentPassages(text), [1, 2]), text.split('\n'));
-  // A lead line and three items are four paragraphs, one more than the layout's list of four takes
-  // of such a text. With free slides on, a free slide takes them, and code sets them word for word,
-  // each item with its bullet. With free slides off, the layout stays and its writer is told three.
+  // A lead line and three items are four paragraphs. The layout's list holds them as they are, its
+  // spacing counted line by line: code sets them there, each item without its bullet.
   const four = ['What riders said:', '- Bikes are easy to find near the station', '- The app works well', '1. Some docks are often full'].join('\n');
   const listed = { ...brief, imageDensity: 'medium' as const, document: four, slideCount: 1 };
-  const freed = await planOutline(demo, listed, { llm: scripted(outlineOf([{ pattern: 'list-with-photo', purpose: 'Riders', passages: [1, 2], items: 4 }])).llm, ...options, assets });
+  const fourOutline = () => scripted(outlineOf([{ pattern: 'list-with-photo', purpose: 'Riders', passages: [1, 2], items: 4 }])).llm;
+  const counted = await planOutline(demo, listed, { llm: fourOutline(), ...options, assets });
+  assert.equal(counted.slides[0]?.pattern, 'list-with-photo');
+  const countedWriter = scripted(photo);
+  const countedSet = await writeDeck(demo, counted, { llm: countedWriter.llm, ...options, assets });
+  assert.equal('bulletList' in (schemaOf(countedWriter.requests[0]).properties.s1?.properties ?? {}), false);
+  assert.deepEqual(countedSet.deck.slides[0]?.slots.bulletList, ['What riders said:', 'Bikes are easy to find near the station', 'The app works well', '1. Some docks are often full']);
+  // Without the count (as 0.6.7 told every slot), four is one more than the layout's list of four
+  // takes of such a text. With free slides on, a free slide takes them, and code sets them word for
+  // word, each item with its bullet. With free slides off, the layout stays and its writer is told three.
+  const uncounted = { ...options, countSpacing: false };
+  const freed = await planOutline(demo, listed, { llm: fourOutline(), ...uncounted, assets });
   assert.equal(freed.slides[0]?.pattern, 'free');
   const freeWriter = scripted(photo);
-  const freeSet = await writeDeck(demo, freed, { llm: freeWriter.llm, ...options, assets });
+  const freeSet = await writeDeck(demo, freed, { llm: freeWriter.llm, ...uncounted, assets });
   assert.equal('b1Text' in (schemaOf(freeWriter.requests[0]).properties.s1?.properties ?? {}), false);
   assert.deepEqual(freeSet.deck.slides[0]?.slots.b1Text, four.split('\n'));
-  const off = { ...options, free: false, assets };
-  const kept = await planOutline(demo, listed, { llm: scripted(outlineOf([{ pattern: 'list-with-photo', purpose: 'Riders', passages: [1, 2], items: 4 }])).llm, ...off });
+  const off = { ...uncounted, free: false, assets };
+  const kept = await planOutline(demo, listed, { llm: fourOutline(), ...off });
   assert.equal(kept.slides[0]?.pattern, 'list-with-photo');
   const keptWriter = scripted(photo, photo);
   await writeDeck(demo, kept, { llm: keptWriter.llm, ...off }).catch(() => undefined);
@@ -1960,8 +1973,9 @@ test('planEdit shows the document once, and the writer the text of each slide it
   assert.ok(!writer.includes(doc.passages[0]?.text as string));
   assert.ok(writer.includes('Slides with text from the document say that text.'));
   assert.equal(model.requests[1]?.system, systemPrompt('en', 'deck', true));
-  // It keeps its layout, which is a little short of its text, as it was when it was planned.
-  assert.match(String(schemaOf(model.requests[1]).properties.s4?.properties.body?.description), /^The slide's text from the document \(p7\) shortened to \d+ to \d+ characters, the most this slide holds/);
+  // It keeps its layout, which holds its one paragraph whole: the count of the layout's spacing
+  // holds all 331 characters in one or two, where 0.6.7 told nine tenths of them and the text was shortened.
+  assert.match(String(schemaOf(model.requests[1]).properties.s4?.properties.body?.description), /^The slide's text from the document \(p7\), in its own words: \d+ to \d+ characters in all\..* at most 331 characters in total, at most 2 items$/);
 });
 
 test('planEdit: named passages move, inherited ones stay, and a slide that loses some is written', async () => {
@@ -2269,4 +2283,130 @@ test('planEdit: a change in words titles the slide by the writer, offered its he
   assert.equal(kept.deck.slides[2]?.slots.title, 'What riders pay');
   // A slide the change leaves alone keeps its text and its headings as they were.
   assert.deepEqual([kept.deck.slides[0], kept.deck.slides[3]], [own.slides[0], own.slides[3]]);
+});
+
+// --- 0.6.8: a layout's slot of paragraphs told with its template's spacing counted (template/told.ts) ---
+
+/** A document of a heading over lines of exactly these lengths, cut from a sentence: one passage. */
+const linesOf = (heading: string, lengths: readonly number[], sentence = 'Riders take the bike to work and back. '): string =>
+  [
+    heading,
+    ...lengths.map((length) => {
+      const words = sentence.repeat(Math.ceil(length / sentence.length) + 1).slice(0, length - 1);
+      return words.endsWith(' ') ? `${words.slice(0, -1)}s.` : `${words}.`;
+    }),
+  ].join('\n');
+
+test("a document's text that the count says a layout holds as it is is set there by code; where a writer writes it again, the writer is held to the count", async () => {
+  // Three lines of 96, 93 and 97 characters: 286, more than the 263 any text of three paragraphs
+  // holds in the demo's text-only body, but these three hold as they are, each counted in its
+  // own whole lines.
+  const lines = linesOf('Background', [96, 93, 97]);
+  const doc = readDocument(lines, 'en');
+  assert.deepEqual(doc.passages.map((passage) => passage.chars), [286]);
+  const off = { ...options, free: false };
+  const listed = { ...brief, document: lines, slideCount: 1 };
+  const plan = await planOutline(demo, listed, { llm: scripted(outlineOf([entry('text-only', 'Background', [1])])).llm, ...off });
+  assert.equal(plan.slides[0]?.pattern, 'text-only');
+  const words = passageWords(doc.passages, [1]);
+  assert.deepEqual(planTextFit(demo, plan, off), [{ slide: 1, words, holds: words, passages: 'p1' }]);
+  const writer = scripted(titles);
+  const written = await writeDeck(demo, plan, { llm: writer.llm, ...off });
+  assert.equal('body' in (schemaOf(writer.requests[0]).properties.s1?.properties ?? {}), false, 'code sets the body');
+  assert.deepEqual(written.deck.slides[0]?.slots.body, lines.split('\n').slice(1));
+  assert.deepEqual(written.warnings.filter((issue) => /cut to fit/.test(issue.message)), []);
+
+  // A change that keeps the passages and asks for a shorter title keeps the text as code set it:
+  // only the title is written, and nothing is cut, also where the change stops before a cut.
+  const model = scripted(editOf([{ from: 1, pattern: 'text-only', change: 'A shorter title' }]), titles);
+  const edited = await planEdit(demo, written.deck, 'A shorter title', { llm: model.llm, ...off, stopBeforeCut: true });
+  assert.equal('body' in (schemaOf(model.requests[1]).properties.s1?.properties ?? {}), false, 'code keeps the body');
+  assert.deepEqual(edited.deck.slides[0]?.slots.body, lines.split('\n').slice(1));
+  assert.deepEqual(edited.warnings.filter((issue) => /cut to fit/.test(issue.message)), []);
+
+  // In other words, its writer writes it, told what any text of three paragraphs holds, which is
+  // less than the text. With free slides off it is cut, and a change that stops before a cut stops.
+  const reword = () => scripted(editOf([{ from: 1, pattern: 'text-only', change: 'Simpler words', reword: true }]), titles);
+  const reworded = reword();
+  const cut = await planEdit(demo, written.deck, 'Slide 1 in simpler words', { llm: reworded.llm, ...off });
+  const body = String(schemaOf(reworded.requests[1]).properties.s1?.properties.body?.description);
+  assert.match(body, /shortened to \d+ to \d+ characters, the most this slide holds.* at most 263 characters in total, at most 3 items$/);
+  assert.equal(schemaOf(reworded.requests[1]).properties.s1?.properties.body?.maxItems, 3);
+  assert.ok(cut.warnings.some((issue) => /is 286 characters, and the slide holds about 263: it is cut to fit/.test(issue.message)), JSON.stringify(cut.warnings));
+  await assert.rejects(planEdit(demo, written.deck, 'Slide 1 in simpler words', { llm: reword().llm, ...off, stopBeforeCut: true }), TextCutError);
+  // With free slides on it goes to a free slide, which holds it all.
+  const freed = await planEdit(demo, written.deck, 'Slide 1 in simpler words', { llm: scripted(editOf([{ from: 1, pattern: 'text-only', change: 'Simpler words', reword: true }]), titles, titles).llm, ...options });
+  assert.equal(freed.deck.slides[0]?.pattern, 'free');
+  assert.deepEqual(freed.warnings.filter((issue) => /cut to fit/.test(issue.message)), []);
+});
+
+test("a document is shared out by what a slide holds of a document's text, not what it holds of a length in fewer paragraphs", async () => {
+  // A sentence of 119 characters and a list of two items, 317 characters in three paragraphs: more
+  // than the 263 any text of three holds on the demo's text-only body, and not held as they are.
+  // The demo's plain layout holds 331 of an asked length in two paragraphs, but a document's text
+  // keeps its own: the text goes over two slides, each held whole.
+  const text = [
+    'Riders often take the bikes to work in the morning and back home again in the evening when the weather is fine and dry.',
+    '- Docks near the main station are often full by nine in the morning so riders ride on to the next dock up the road',
+    '- The app shows the nearest free dock and the bikes there for each rider in the city',
+  ].join('\n');
+  const off = { ...options, free: false };
+  const model = scripted(outlineOf([entry('text-only', 'Background', [1, 2])]), outlineOf([entry('text-only', 'Background', [1, 2])]));
+  const plan = await planOutline(demo, { ...brief, document: text, slideCount: undefined }, { llm: model.llm, ...off });
+  assert.match(model.requests[0]?.prompt ?? '', /one holds about 263 characters of it/);
+  assert.deepEqual(plan.slides.map((slide) => slide.passages), [[1], [2]]);
+  assert.ok(planTextFit(demo, plan, off).every((fit) => fit.holds === fit.words), JSON.stringify(planTextFit(demo, plan, off)));
+});
+
+test('a slide that asks for its text shorter, or puts a table of it into its table, is not judged by the text as it is when a home is found for it', async () => {
+  // Three lines of short words, 89, 89 and 91 characters (269, more than the 263 the pair holds,
+  // and held as they are), with fewer words asked than they have, which still come to all of it:
+  // a writer writes the text, so the layout holds 263 of it. A free slide holds it all.
+  const lines = linesOf('Riding', [89, 89, 91], 'We go to it by bus or by car. ');
+  const doc = readDocument(lines, 'en');
+  const whole = passageWords(doc.passages, [1]);
+  const asked = 60;
+  assert.ok(asked < 0.8 * whole, `${asked} of ${whole} words`);
+  assert.ok(charsOfWords(asked, 'en') >= doc.passages[0]!.chars, 'the words asked come to the text as it is');
+  const plan = await planOutline(demo, { ...brief, document: lines, slideCount: 1 }, { llm: scripted(outlineOf([entry('text-only', 'Riding', [1], { words: asked })])).llm, ...options });
+  const [fit] = planTextFit(demo, plan, options);
+  assert.equal(fit?.holds, fit?.words, JSON.stringify([plan.slides, fit]));
+});
+
+test("a slide that holds a document's text only with its paragraphs joined says so, where the count tells fewer", async () => {
+  // A list of four items, three of two lines and more and a short one: 217 characters, within the
+  // 244 the demo's list beside a photo holds in three, but not as they are in four.
+  const lines = linesOf('Riders', [62, 62, 62, 31]);
+  const assets = [{ id: 'bike', kind: 'photo' as const, description: 'A bike at a dock', data: new Uint8Array() }];
+  const off = { ...options, free: false, assets };
+  const listed = { ...brief, imageDensity: 'medium' as const, document: lines, slideCount: 1 };
+  const plan = await planOutline(demo, listed, { llm: scripted(outlineOf([entry('list-with-photo', 'Riders', [1])])).llm, ...off });
+  assert.equal(plan.slides[0]?.pattern, 'list-with-photo');
+  const photo = (request: JsonRequest): unknown =>
+    Object.fromEntries(Object.entries(schemaOf(request).properties).map(([key, slide]) => [key, Object.fromEntries((slide.required ?? []).map((name) => [name, slide.properties[name]?.type === 'object' ? { asset: 'bike' } : slide.properties[name]?.type === 'array' ? ['One.', 'Two.', 'Three.'] : 'Riders']))]));
+  const writer = scripted(photo, photo);
+  const written = await writeDeck(demo, plan, { llm: writer.llm, ...off });
+  assert.equal(schemaOf(writer.requests[0]).properties.s1?.properties.bulletList?.maxItems, 3);
+  assert.ok(written.warnings.some((issue) => /has 4 paragraphs, and the slide holds it only as 3: its paragraphs are joined/.test(issue.message)), JSON.stringify(written.warnings));
+});
+
+test('a slide whose text a change has written in other words is placed by what its writer is told, not by the text as it is', async () => {
+  // Two passages; the slide moves from the first to the second, three lines of 96, 93 and 97
+  // characters that the demo's text-only body holds only as they are. Written in other words, they
+  // are held to the 263 any text of three holds: a free slide takes them all.
+  const lines = `${linesOf('Intro', [80])}\n\n${linesOf('Background', [96, 93, 97])}`;
+  assert.deepEqual(documentPassages(lines).map((passage) => passage.chars), [80, 286]);
+  const deck: DeckSpec = { version: 1, language: 'en', fields, title: 'Bikes', document: lines, slides: [{ pattern: 'text-only', passages: [1], slots: { title: 'Intro', body: [lines.split('\n')[1] as string] } }] };
+  const reworded = scripted(editOf([{ from: 1, pattern: 'text-only', change: 'The background, in simpler words', passages: [2], reword: true }]), titles, titles);
+  const edited = await planEdit(demo, deck, 'Slide 1 on the background, in simpler words', { llm: reworded.llm, ...options });
+  assert.equal(edited.deck.slides[0]?.pattern, 'free', JSON.stringify(edited.deck.slides[0]));
+  assert.deepEqual(edited.warnings.filter((issue) => /cut to fit/.test(issue.message)), []);
+});
+
+test("a document's text of more paragraphs than a layout's columns are told goes where it is set as it is", async () => {
+  // Five short lines: two columns are told two paragraphs each, four in all, and the text has five.
+  // With free slides on, a free slide sets them as they are.
+  const lines = linesOf('Before and after', [40, 40, 40, 40, 40]);
+  const plan = await planOutline(demo, { ...brief, document: lines, slideCount: 1 }, { llm: scripted(outlineOf([entry('two-columns', 'Before and after', [1])])).llm, ...options });
+  assert.equal(plan.slides[0]?.pattern, 'free', JSON.stringify(plan.slides));
 });

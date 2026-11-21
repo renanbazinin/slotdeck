@@ -286,8 +286,8 @@ Every change is an object with `op`. `pattern` is a pattern id, `slot` a slot na
 returns to the designed size.
 
 `characterWidth` says how wide PowerPoint sets a character of the template's running text, as a share of its
-size (`0.44`): the running text of free slides is then counted with it and set larger. It is a
-number measured on the template's own face, between 0.3 and 0.8; `null` goes back to the estimate. See "How wide
+size (`0.44`): the running text of free slides is then counted with it and set larger, and from 0.6.8 what a
+writer is told a layout's slot of paragraphs holds. It is a number measured on the template's own face, between 0.3 and 0.8; `null` goes back to the estimate. See "How wide
 a template's text is set" in [text-fit.md](text-fit.md). `leastTextSize` is the least size, in points, a long
 text set dense on a free slide is set at (`10`); `null` goes back to the size the slide's width allows. A value
 out of range is refused with its range.

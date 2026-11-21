@@ -372,7 +372,7 @@ back under 0.85 of the least it was told is sent back once; still short, `warnin
 ### `planTextFit`
 
 ```ts
-function planTextFit(template: Template, plan: DeckPlan, options?: Pick<PlanOptions, 'patterns' | 'free' | 'icons' | 'assets' | 'layout' | 'numberPatterns'>): SlideTextFit[];
+function planTextFit(template: Template, plan: DeckPlan, options?: Pick<PlanOptions, 'patterns' | 'free' | 'icons' | 'assets' | 'layout' | 'numberPatterns' | 'countSpacing'>): SlideTextFit[];
 ```
 
 What each slide of a plan that has asked words or passages of a document will carry, worked out by code
@@ -538,6 +538,7 @@ interface PlanOptions {
   review?: DeckReview; // a second look at every draft; see "Design checks and reviews"
   composeLayouts?: number; // up to this many new layouts for the deck, in the template's own look; off (0) by default
   free?: boolean; // whether a slide may be a free slide, laid out by the software from the parts the plan names; on unless false
+  countSpacing?: boolean; // a writer of a layout's slot of paragraphs is told what its box holds, the template's spacing counted; on unless false
   onProgress?: (event: PlanProgress) => void;
   signal?: AbortSignal;
 }
@@ -833,6 +834,7 @@ interface PresentationToolsOptions {
   review?: DeckReview; // a second look at every draft the tools write
   composeLayouts?: number; // new layouts for a new plan, as for planOutline; none while free slides are on offer
   free?: boolean; // whether a slide may be a free slide, as `free` of PlanOptions; on unless false
+  countSpacing?: boolean; // as `countSpacing` of PlanOptions; on unless false
   patterns?: string[]; // the only layouts the tools may use: the app's own list; a person may narrow it, not widen it
   colors?: boolean; // whether a person may ask for another colour; false leaves accent_color and color_slides out
   thumbnail?: (patternId: string) => string | undefined;
@@ -1516,7 +1518,7 @@ interface TemplateManifest {
   direction: Direction;
   alignOnDirectionChange?: AlignPolicy;
   textScale?: number; // enlarges body text in every deck made from the template
-  characterWidth?: number; // how wide PowerPoint sets a character of its running text, as a share of its size, measured (0.3 to 0.8); free slides count their running text with it
+  characterWidth?: number; // how wide PowerPoint sets a character of its running text, as a share of its size, measured (0.3 to 0.8); free slides count their running text with it, and from 0.6.8 a layout's slots of paragraphs what their writers are told
   leastTextSize?: number; // the least size, in points, of a long text set dense on a free slide (5 to 24, up to a half point); left out, by the slide's width
   shrinkText?: { to: number; minSize?: number }; // lets text that does not fit be set smaller; needs fonts
   colors?: { accent?: string; accent2?: string } | false; // the main and second colour; false keeps every deck in the template's own

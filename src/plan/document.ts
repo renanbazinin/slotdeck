@@ -791,6 +791,12 @@ export interface TextShape {
    * sets as headings (`settleDocumentSlide`). Only a text of those characters is that text.
    */
   asIs?: { chars: number; each: number[]; heads?: HeadingOver[] };
+  /**
+   * `false` where code would not set `asIs` on a layout: the slide asks for its text shorter, or puts
+   * a table of it into the layout's table (see `asIsOf`). A layout is then judged by what its
+   * writer is told. A free slide is judged as before.
+   */
+  layoutAsIs?: false;
 }
 
 /** What a slide of a plan carries of its document, worked out from its passages and its words. */
