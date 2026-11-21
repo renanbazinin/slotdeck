@@ -566,6 +566,7 @@ type ImageDensity = 'none' | 'low' | 'medium' | 'high';
 
 interface PlanOptions {
   llm: LlmProvider;
+  delivery?: 'present' | 'read'; // from 0.7.0: 'read' for decks read on their own: full sentences, no thank-you slide
   layout?: LayoutMode;
   icons?: IconDef[];
   assets?: AssetDef[];
@@ -885,6 +886,7 @@ interface PresentationToolsOptions {
 }
 interface PresentationTools {
   definitions: ToolDefinition[];
+  instructions: string; // from 0.7.0: lines for the chat model's system prompt, made from the same options; see chat-tools.md
   call(name: string, args: unknown, context?: ToolCallContext): Promise<ToolResult>;
 }
 interface ToolCallContext {

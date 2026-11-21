@@ -49,6 +49,8 @@ export interface PresentationToolsOptions {
   layout?: LayoutMode;
   /** Deck-level values every deck gets, e.g. the unit shown in the header. */
   fields?: Record<string, string>;
+  /** How the app's decks are used, as `delivery` of `planDeck`: `read` for decks that are mailed and read on their own. From 0.7.0. */
+  delivery?: PlanOptions['delivery'];
   /**
    * What a presentation's file says of itself (see `RenderOptions.properties`): its title,
    * language, number of slides and the version that made it, in place of the template's. Set
@@ -155,6 +157,13 @@ export interface ToolResult {
 export interface PresentationTools {
   /** Tool declarations to give the chat model. They are made for this template and these options. */
   definitions: ToolDefinition[];
+  /**
+   * Lines for the chat model's system prompt, made from the same options as `definitions`: how to
+   * pass on a number of slides, the person's own text and their wishes, what to tell the person,
+   * and that a plan is shown before a presentation is made. Add them to the app's own prompt as
+   * they are, and they change with an update of slotdeck as the tools do. From 0.7.0.
+   */
+  instructions: string;
   /**
    * Runs a tool the chat model called. Expected failures come back as `{ error }` for the model to
    * act on, and so does a name that is none of the declared tools. Where the software itself trips
@@ -302,6 +311,35 @@ const FREE_LAYOUT_LINE = `- ${FREE_PATTERN}: A slide laid out by the software fr
  * takes time is deciding `freeKinds`, which the caller does once for a loaded template (see
  * `presentationTools`).
  */
+/**
+ * The lines of the chat model's system prompt that go with the tools: what the tool descriptions
+ * cannot say, because it holds for the whole conversation. `freeKinds` and `documents` are what the
+ * tools were declared with: a line about several charts on one slide, or about texts named in
+ * `documents`, is there only where the tools can do it.
+ */
+export function toolInstructions(freeKinds: readonly FreeBlockKind[] | undefined, documents = false): string {
+  const several = severalOnOneSlide(freeKinds ?? []);
+  const smaller = freeKinds?.includes('text') === true;
+  const lines = [
+    `Making presentations with the tools ${TOOL_NAMES.plan}, ${TOOL_NAMES.editPlan}, ${TOOL_NAMES.create} and ${TOOL_NAMES.edit}:`,
+    documents
+      ? `- When the user wants their own text on the slides, name it in "documents" and keep "topic" to what the presentation is for. A shorter text of theirs that is not listed goes in "instructions", whole and word for word, in quotation marks. Otherwise put every fact, figure and name the user gave into "topic": a number that is in none of these is not used.`
+      : `- When the user wants their own text on the slides, put it in "instructions", whole and word for word, in quotation marks. Otherwise put every fact, figure and name the user gave into "topic": a number that is in neither is not used.`,
+    `- Set "slide_count" whenever the user names a number of slides, and pass an amount of text on in "instructions" as they said it. Do not split slides or shorten text yourself${smaller ? ': the planner sets long text smaller' : ''}.`,
+    `- When a result has "note", "not_on_slides" or "warnings", tell the user before you go on. Set "accept_cut" only after the user accepted the cut.`,
+    `- Speak the language the user writes in. What the tools say is English: retell it in your own words, in the user's language, with the same slide numbers and figures, and never paste it as it is.`,
+    `- Pass wishes about the kind of slides on in the user's words ("no tables", "only cards"), in "topic" or "instructions". For a presentation of text only, set "text_only": true; "no pictures" alone ("image_density": "none") still allows cards, tables and charts.`,
+    ...(several
+      ? [`- A slide can hold ${several.replace(/ on one slide$/, '')}, or any number of cards or figures. When the user asks for that ("all six charts on one slide"), pass the wish on in "instructions" in their words, with the number they said. Do not answer that the template has no such layout.`]
+      : []),
+    `- Every number a chart is to show must be in "topic". A chart the user gave no numbers for is left off the slide, and the result says so in "warnings": pass that on.`,
+    `- Show the plan to the user and wait for their approval before you call ${TOOL_NAMES.create}.`,
+    `- For a change to a finished presentation, call ${TOOL_NAMES.edit} with the user's words; do not plan again from scratch. That goes for a slide of many parts too ("add a chart for the new store to slide 3"). Give the numbers of a new chart in the instruction.`,
+    '- Refer to presentations and plans by their ids only. Never ask for or write deck JSON.',
+  ];
+  return lines.join('\n');
+}
+
 function toolDefinitions(layouts: Array<Pick<PatternDef, 'id' | 'description'>>, colors: boolean, freeKinds: readonly FreeBlockKind[] | undefined, documents = false): ToolDefinition[] {
   const free = freeKinds !== undefined;
   // Long text is set smaller only on a free slide of text: without one, a slide holds what its layout holds.
@@ -775,6 +813,7 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
     if (freeKinds) offered.add(FREE_PATTERN);
   }
   const definitions = toolDefinitions(limitable, colorsOn, freeKinds, options.documents === true);
+  const instructions = toolInstructions(freeKinds, options.documents === true);
 
   /**
    * The layouts a `layouts` argument names: `undefined` when it names none, an empty list when it
@@ -794,6 +833,7 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
 
   const planOptions = (tool: string, signal: AbortSignal | undefined): PlanOptions => {
     const plan: PlanOptions = { llm };
+    if (options.delivery) plan.delivery = options.delivery;
     if (options.layout) plan.layout = options.layout;
     if (options.icons) plan.icons = options.icons;
     if (options.assets) plan.assets = options.assets;
@@ -1256,6 +1296,7 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
 
   return {
     definitions,
+    instructions,
     async call(name, args, context) {
       // Only a tool that is declared is run. "constructor" and "toString" are keys of every object
       // and no tools, and a name may be anything a provider hands on: a symbol cannot stand in a text.

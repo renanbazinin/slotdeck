@@ -743,7 +743,7 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
   const partsNow = freeSlides.reduce((sum, slide) => sum + (slide.blocks?.length ?? 0), 0);
   const room =
     planRoom(deck.slides.length + 10) * 1.5 + (freeIn ? FREE_ENTRY_ROOM * (deck.slides.length + 10) + partsRoom(partsNow, instruction) : 0) + (docNow ? 8 * (deck.slides.length + 10) : 0);
-  const planSystem = systemPrompt(currentLanguage, 'deck', docNow !== undefined);
+  const planSystem = systemPrompt(currentLanguage, 'deck', docNow !== undefined, options.delivery);
   let plan = readPlan(await asker(options.llm, planSystem, options.signal, 'low')(planRequest, planSchema, room));
   if (plan.problem) {
     const retry = `${planRequest}\n\nYour previous answer could not be used: ${plan.problem}. Answer again.`;
@@ -1477,7 +1477,7 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
       .filter(Boolean)
       .join('\n\n');
 
-  const system = systemPrompt(language, 'deck', doc !== undefined);
+  const system = systemPrompt(language, 'deck', doc !== undefined, options.delivery);
   // A text written well short of the length asked for it goes back once, with the first answer's
   // problems, and so does a slide that keeps too few of the words of its text from the document.
   // The issues that send them are the writer's alone: the deck is told after the last answer.

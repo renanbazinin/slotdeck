@@ -24,10 +24,13 @@ import type { FreeJob, PartRange, RangeAnswer } from './parts.ts';
  * The rules every planning and writing call is given. `document` says the deck is made from a
  * document: its text is then said in its own words, and its figures may be used.
  */
-export function systemPrompt(language: string, source: 'brief' | 'deck', document = false): string {
+export function systemPrompt(language: string, source: 'brief' | 'deck', document = false, delivery: Delivery = 'present'): string {
+  // A deck that is read on its own says what a speaker would have said: in sentences.
+  const short = delivery === 'read' ? 'elsewhere write full sentences: the deck is read on its own, with no one to present it.' : 'elsewhere keep slide text short: a phrase beats a sentence.';
   const limits = document
-    ? `- Character limits are hard and count spaces. Stay under them. A slide that has text from the document says that text, in its words and order: shorten it only where a limit ${source === 'brief' ? 'makes you' : 'or the request makes you'}, by leaving out what matters least, never by summing it up. Text in another language than the deck's is translated closely, sentence by sentence. Where a slot says how much to write, write about that much; elsewhere keep slide text short: a phrase beats a sentence.`
-    : '- Character limits are hard and count spaces. Stay under them. Where a slot says how much to write, write about that much; elsewhere keep slide text short: a phrase beats a sentence.';
+    ? `- Character limits are hard and count spaces. Stay under them. A slide that has text from the document says that text, in its words and order: shorten it only where a limit ${source === 'brief' ? 'makes you' : 'or the request makes you'}, by leaving out what matters least, never by summing it up. Text in another language than the deck's is translated closely, sentence by sentence. Where a slot says how much to write, write about that much; ${short}`
+    : `- Character limits are hard and count spaces. Stay under them. Where a slot says how much to write, write about that much; ${short}`;
+  const given = source === 'brief' ? (document ? 'the brief and the document' : 'the brief') : document ? 'the request, the document and the deck as it is' : 'the request and the deck as it is';
   const figures =
     source === 'brief'
       ? `- Every figure on a slide must come from the brief${document ? ' or the document' : ''}. Never make up statistics, quotes or names.`
@@ -41,9 +44,19 @@ export function systemPrompt(language: string, source: 'brief' | 'deck', documen
     limits,
     '- Plain text only: no markdown, no bullet characters, no line breaks inside a string, no placeholder text.',
     figures,
+    // Thin briefs grew into decks with an incident procedure, a hotline open day and night and a tax claim that no one gave.
+    `- Never state the organisation's own procedures, terms, prices, contacts (people, phone numbers, email or web addresses), results or plans that ${given} do not give.`,
+    '- Write the content itself. Never write about the slide or its layout as slide text ("this slide is about", "see the chart below").',
     topics,
+    ...(delivery === 'read' ? ['- The deck is read, not presented: no closing slide of thanks or questions, and an agenda only in a deck of more than ten slides.'] : []),
   ].join('\n');
 }
+
+/**
+ * How a deck is used: `present`ed by a speaker, whose slides carry short phrases, or `read` on its
+ * own, mailed and opened, whose slides say what a speaker would have said.
+ */
+export type Delivery = 'present' | 'read';
 
 export function cleanText(value: unknown): string {
   return String(value ?? '')

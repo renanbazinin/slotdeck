@@ -56,6 +56,8 @@ It runs `planDeck`, then `resolveAssets`, then `renderDeck`.
 | `review` | `DeckReview` | none | A second look at every draft: design checks, a model that looks at pictures of the slides, or a function of your own. What it finds goes back to the model in the repair rounds. See [design-checks.md](design-checks.md). |
 | `composeLayouts` | number | 0 (off) | Up to this many new layouts may be made for the deck, in the template's own look, for slides that none of its layouts shows well. About 10 to 25 seconds more. None is made while free slides are on offer. See "New layouts for a deck" below. |
 | `free` | boolean | `true` | Whether a slide may be a free slide: one the software lays out itself from the parts the plan names, for content that no pattern shows. `false` turns them off. See "Free slides" below. |
+| `delivery` | `"present"` or `"read"` | `present` | How the decks are used. `read`, for decks that are mailed and read on their own: full sentences where a slot says nothing of how much to write, no closing slide of thanks or questions, and an agenda only in a deck of more than ten slides. Set it once for an app whose decks are read. From 0.7.0. |
+| `properties` | `DeckProperties` or `false` | `{}` | What the file says of itself: its title, language, number of slides and the version that made it, in place of the template's (see "File properties" in [rendering.md](rendering.md)). `false` keeps the template's. From 0.7.0. |
 | `countSpacing` | boolean | `true` | Whether the writer of a layout's slot of paragraphs is told what its box holds, the template's own spacing counted. `false` tells every slot its stored budget, as 0.6.7 did. See "What a writer is told a layout holds" below. |
 | `cache` | `Map<string, Uint8Array>` | none | Generated pictures by asset id. Pass the same map on later calls and pictures whose description did not change are reused. |
 | `imageConcurrency` | number | 3 | How many pictures to generate at once. |
@@ -581,8 +583,10 @@ held back unless the brief itself contains figures, and chart values that the br
 warnings such as `chart values not stated in the brief: 89`. Values worked out from the brief, such as a sum, are
 flagged too; treat the warning as a prompt to check.
 
-Contact details and names are not guarded. A model asked for a closing slide may invent an email address. State
-such details in the brief, or review the deck.
+From 0.7.0 every writer is told never to state the organisation's own procedures, terms, prices, contacts (people,
+phone numbers, email or web addresses), results or plans that the brief does not give, and never to write about
+the slide itself ("this slide is about") as slide text. A model may still invent a detail. State such details in
+the brief, or review the deck.
 
 ## The steps on their own
 
