@@ -675,7 +675,11 @@ export async function writeSlides(args: WriteArgs): Promise<{ deck: DeckSpec; is
   const { jobs, context } = args;
   // A free slide of many parts is written by calls of its own; every other slide in one call, as before.
   const together = jobs.filter((job) => !writtenApart(job));
-  const schema = contentSchema(together, context);
+  // A slide whose every slot code sets (a text from a document, its title the heading it opens
+  // under) is not asked for: a model is asked only where there is something to write, and an
+  // object with nothing in it is no schema every model takes.
+  const asking = together.filter((job) => job.pattern.slots.length > 0);
+  const schema = contentSchema(asking, context);
   // A free slide that is being changed and has a title is told to say it again unless the request
   // is about it, as a call that writes parts by themselves is told. Here the title may be left
   // out, which keeps it, and "" takes it off the slide.
@@ -683,7 +687,7 @@ export async function writeSlides(args: WriteArgs): Promise<{ deck: DeckSpec; is
     const slots = isFreeJob(job) && titled(job) ? ((schema.properties as Record<string, JsonSchema>)[`s${job.number}`]?.properties as Record<string, JsonSchema> | undefined) : undefined;
     if (slots?.title) slots.title = { ...slots.title, description: `${String(slots.title.description ?? 'Text').replace(/\.$/, '')}. ${REPEAT_TITLE}` };
   }
-  const numbers = new Set(together.map((job) => job.number));
+  const numbers = new Set(asking.map((job) => job.number));
 
   const check = (deck: DeckSpec): Issue[] => {
     const options: ValidateOptions = { layout: args.layout, assets: knownAssets(deck, context) };
@@ -732,15 +736,15 @@ export async function writeSlides(args: WriteArgs): Promise<{ deck: DeckSpec; is
   // slide kept as it was is not the writer's to mend.
   const freeJobs = new Map(together.filter(isFreeJob).map((job) => [job.number, job]));
   const asked = new Map([...freeJobs].map(([number, job]) => [number, new Set(job.pattern.slots.map((planned) => planned.slot.name))]));
-  // A text code set from a document is not the writer's to mend.
-  const filledSlots = new Map(together.flatMap((job) => (job.filled ? [[job.number, job.filled] as const] : [])));
+  // A slot code set (a text from a document, the title it opens under) and did not ask of the writer is not the writer's to mend.
+  const setByCode = new Map(together.map((job) => [job.number, new Set(Object.keys(job.carried ?? {}).filter((name) => name === job.filled || !job.pattern.slots.some((planned) => planned.slot.name === name)))] as const));
   // `sent` gathers, for each free slide, the slots a round's problems are about.
   const repairable = (draft: { issues: Issue[]; drafts: Map<number, FreeDraft> }, sent?: Map<number, Set<string>>): string[] =>
     draft.issues.flatMap((issue) => {
       if (issue.slide === undefined || !numbers.has(issue.slide)) return [];
       const free = draft.drafts.get(issue.slide);
       const slot = free ? plannedSlot(free, issue.slot) : issue.slot;
-      if (slot !== undefined && filledSlots.get(issue.slide) === slot) return [];
+      if (slot !== undefined && setByCode.get(issue.slide)?.has(slot)) return [];
       if (free && issue.slot && (!slot || !asked.get(issue.slide)?.has(slot))) return [];
       // Nor is a chart or a table that is as large as the slide had it.
       const job = freeJobs.get(issue.slide);
@@ -774,12 +778,12 @@ export async function writeSlides(args: WriteArgs): Promise<{ deck: DeckSpec; is
     return merged;
   };
 
-  const room = contentRoom(together, context);
-  // A deck whose every slide was written apart has nothing left to ask for here.
-  let answer: unknown = together.length > 0 ? await args.ask(args.request, schema, room) : {};
+  const room = contentRoom(asking, context);
+  // A deck whose every slide was written apart, or set by code, has nothing left to ask for here.
+  let answer: unknown = asking.length > 0 ? await args.ask(args.request, schema, room) : {};
   let round = 0;
   let draft = await build(answer, round);
-  for (let attempt = 1; attempt <= args.maxRepairs && together.length > 0; attempt++) {
+  for (let attempt = 1; attempt <= args.maxRepairs && asking.length > 0; attempt++) {
     const sent = new Map<number, Set<string>>();
     const problems = repairable(draft, sent);
     if (problems.length === 0) break;

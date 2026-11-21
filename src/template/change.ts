@@ -12,6 +12,7 @@ import type { PatternVariant } from './derive.ts';
 import { OVERLAP, detectRepeat, droppedShapes, movedRowSlots, rowFit, rowOnSlide, rowSpan } from './rows.ts';
 import { inspectTemplate } from './inspect.ts';
 import type { ShapeInfo, SlideInfo, TemplateInfo } from './inspect.ts';
+import { CHARACTER_WIDTH, LEAST_TEXT_SIZE, templateTextProblem } from './manifest.ts';
 import type { AlignPolicy, Direction, EmptyPolicy, ImageKind, PatternDef, SlideBox, SlotDef, TableTextStyle, TemplateManifest } from './manifest.ts';
 import { ROLES, boxCapacity, rolesFor, rowRoom, shapeText, slotFromShape, slotName, tableLimits } from './measure.ts';
 import type { Role } from './measure.ts';
@@ -70,6 +71,10 @@ export type ManifestChange =
       direction?: Direction;
       alignOnDirectionChange?: AlignPolicy;
       textScale?: number | null;
+      /** How wide PowerPoint sets a character of the template's running text, as a share of its size (`TemplateManifest.characterWidth`); `null` leaves it to the estimate. */
+      characterWidth?: number | null;
+      /** The least size, in points, of a long text set dense on a free slide (`TemplateManifest.leastTextSize`); `null` leaves it to the slide's width. */
+      leastTextSize?: number | null;
       /**
        * The template's main and second colour, as six hex digits; `null` leaves it to the software
        * to find them, and `false` keeps every deck in the template's own colours.
@@ -207,6 +212,26 @@ function apply(manifest: TemplateManifest, change: ManifestChange, info: Templat
           if (!(typeof change.textScale === 'number' && change.textScale >= 0.5 && change.textScale <= 3)) reject('a text scale is a factor between 0.5 and 3, such as 1.3');
           manifest.textScale = change.textScale;
           done.push(`shows body text at ${change.textScale} times its designed size in every deck, with budgets to match`);
+        }
+      }
+      if (change.characterWidth !== undefined) {
+        if (change.characterWidth === null) {
+          delete manifest.characterWidth;
+          done.push('counts the width of its text by the estimate that leaves room for any face');
+        } else {
+          if (templateTextProblem('characterWidth', change.characterWidth) !== undefined) reject(`a character width is a share of the size between ${CHARACTER_WIDTH.least} and ${CHARACTER_WIDTH.most}, such as 0.43, as PowerPoint sets the template's text`);
+          manifest.characterWidth = change.characterWidth;
+          done.push(`counts a character of its running text as ${change.characterWidth} of its size wide, as PowerPoint sets it`);
+        }
+      }
+      if (change.leastTextSize !== undefined) {
+        if (change.leastTextSize === null) {
+          delete manifest.leastTextSize;
+          done.push('sets the running text of free slides no smaller than its slide width allows to read well');
+        } else {
+          if (templateTextProblem('leastTextSize', change.leastTextSize) !== undefined) reject(`the least text size is a size in points between ${LEAST_TEXT_SIZE.least} and ${LEAST_TEXT_SIZE.most}, such as 10`);
+          manifest.leastTextSize = change.leastTextSize;
+          done.push(`sets a long text set dense on a free slide no smaller than ${Math.ceil(change.leastTextSize * 2 - 1e-9) / 2} pt`);
         }
       }
       if (change.colors === false) {

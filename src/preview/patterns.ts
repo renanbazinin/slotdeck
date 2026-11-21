@@ -23,7 +23,8 @@ export async function previewDeck(template: Template, deck: DeckSpec, preview: P
   if (options.assets) render.assets = options.assets;
   if (options.layout) render.layout = options.layout;
   const { pptx } = renderDeck(template, deck, render);
-  const previews = await preview.renderSlides(options.signal ? { pptx, signal: options.signal } : { pptx });
+  const direction = deck.direction ?? template.manifest.direction;
+  const previews = await preview.renderSlides(options.signal ? { pptx, direction, signal: options.signal } : { pptx, direction });
   return { pptx, previews };
 }
 

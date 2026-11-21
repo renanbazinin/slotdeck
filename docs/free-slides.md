@@ -236,6 +236,14 @@ and counts as crowded.
 - Texts take the template's own sizes. Like parts of like blocks share one size: every card text of a slide
   is the size the fullest card needs. Text that does not fit is set smaller, down to four fifths of its size;
   beyond that it is reported, like text over a slot's budget.
+- **Spacing gives way before size (from 0.6.9).** Running text and lists that fit at the template's own spacing,
+  and that closer spacing lets be set larger, are set larger. The space between their paragraphs closes up,
+  to no less than 0.7 of what it is. Lines set wider than single close up by up to a tenth, never closer than
+  single: 112% becomes 101% at the most, and a template at single gives none. It goes in steps, and the
+  loosest step that fits is used. Like texts of a slide share one spacing. What a writer is told, and what is
+  cut, reported or set whole, is counted at the template's own spacing, as before: closer spacing only sets
+  a text that fits larger. In PowerPoint's own rendering, paragraphs closer than 0.7 of the usual space
+  stopped reading as apart, and Hebrew lines stayed clear of each other at single spacing.
 - **Card and step text is drawn where PowerPoint holds it.** Its words are also counted one after another as
   PowerPoint most likely sets them, each letter by its kind (a capital or an m is wider than an i), at about
   0.85 of a generous width a letter, which ordinary text exceeds on one line in twenty. Text whose words do not
@@ -247,12 +255,15 @@ and counts as crowded.
   line fewer. The box of a card text is drawn as high as its last line may hang into the card's padding, so
   that what PowerPoint sets stays inside its own box.
 - A line of text is counted as high as the template sets it: 1.2 times its size, or more where the shape a
-  text is a copy of has a wider line spacing. With a line spacing of 130% a line is 1.56 times its size high.
+  text is a copy of has a wider line spacing. With a line spacing of 130% a line is 1.56 times its size high,
+  or up to a tenth less in running text and lists whose spacing gives way (see below).
   The last line of a text may hang a quarter of its size under its box, the space under its letters, and no
   more than 3 pt on a slide 13.33 inches wide.
 - How long a line is can only be estimated without the template's fonts: a character is taken to be 0.55 of
   its size wide, and a line that breaks at words 85% full. The estimate is generous on purpose, and every
-  budget is stated with it. On a template with wide line spacing the text of a card or a step is counted
+  budget is stated with it. A template that states how wide its text is set (`characterWidth`, from 0.6.7)
+  has its running text, texts and lists, counted with that width instead; see "How wide a template's text is
+  set" in [text-fit.md](text-fit.md). On a template with wide line spacing the text of a card or a step is counted
   twice, each time with the length and the height of a line taken the same way: by the estimate, with lines
   of the usual height, and as PowerPoint sets ordinary text (a character 0.42 of its size wide), with lines as
   high as the template sets them. It has to pass both. So card text on such a template is as large as on any
@@ -277,8 +288,9 @@ and counts as crowded.
   spacing of the shape it is a copy of. A template may set a heading of one line at 70%; two lines set so
   run into each other. A text of one line keeps the spacing of its source, and with it its place.
 - A list is fitted point by point: every point takes whole lines in the width its bullet leaves, and the
-  points stand half their size apart. Six points of a line and a half each take twelve lines, not the nine
-  their length alone comes to, and the list is set smaller, or reported, by that count.
+  points stand half their size apart, or closer where spacing gives way. Six points of a line and a half
+  each take twelve lines, not the nine their length alone comes to, and the list is set smaller, or
+  reported, by that count.
 - A **figure** is as large as its card and the number of figures allow. Six figures or more have the
   template's own size for a big number; fewer have more, by the square root of six over their number, up to
   2.4 times that size and never over two and a half times the title: on the demo template one figure is set
@@ -308,7 +320,10 @@ and counts as crowded.
   text. Text that is no smaller and does not fit at the larger size is reported on its slot, like any other.
   Where the manifest lets the renderer set text smaller to fit (`shrinkText`, on a template loaded with fonts),
   a text of a free slide is set no smaller than it is drawn without the wish: it is held at that size, and
-  reported when it still does not fit.
+  reported when it still does not fit. From 0.6.7 the size a text may not go under is counted as 0.6.6 counted
+  it, its headings on lines of their own and a character no narrower than the estimate: a text that the count
+  of headings run in, or of the template's width, sets larger without the wish does not cost the rest of the
+  slide what 0.6.6 gave it.
 - A slide **crowded** beyond what reads well is made all the same, in a larger part of the slide, and the deck
   is told (see "What the checks say").
 - A **chart** is drawn in as much detail as its box reads at. Its slot states how many categories and series
@@ -444,6 +459,21 @@ what its box holds at the size that ends on.
 
 ### A long text a person asked for
 
+From 0.6.6 the headings of a person's document in such a text are set in bold, each at the head of the
+paragraph under it, an em space between them (`SlideSpec.headings`, see [deck-format.md](deck-format.md)). A
+heading set so shares a line with its text, so no heading ends a column with its text in the next. The heading
+a slide's text opens under is its title. From 0.6.7 the count that sizes the text counts a heading set run in
+as it is set:
+- it takes no line of its own;
+- its bold letters and the em space go to the head of its paragraph, and its space after goes before it.
+
+The count asks of each heading the renderer's own question, for a line a character shorter. A heading over a
+list item, a table row or another heading, or too long for a line, is counted on a line of its own, as it is
+set. While a deck is planned, a document's text that code sets as it is carries its headings, so the plan
+counts it as the slide will be set, in either room. Whether a text needs the larger room is still decided as
+0.6.6 counted it, its headings on lines of their own. Counted run in, a text of short parts fits the first room
+more often, and kept there it came out smaller than in the larger room, where it is set in columns.
+
 A person may ask for an amount of text ("500 words on each slide") or give their own text for the slides. From
 0.6.2 such a text stays on the slide it was asked for, set smaller where it must. The switch is
 `arrange.dense`: a free slide of one text, with or without a heading, that carries a text someone asked to
@@ -469,14 +499,24 @@ have whole.
   smaller instead. Every other slide with the flag is laid out as if it had none.
 - **Down to the least size that reads.** Such a text is set as large as it fits, half a point at a time, down
   to 9 pt on a slide 13.33 inches wide, and less on a narrower one by its width, never under 5 pt: 7 pt on a
-  slide 10 inches wide. That is the size under which the checks say a slide's text is small.
+  slide 10 inches wide. That is the size under which the checks say a slide's text is small. From 0.6.7 a
+  template can set that size itself (`leastTextSize` in its manifest, see
+  [manifest-format.md](manifest-format.md)). Such a text is then set no smaller, also where the first room
+  would hold it at four fifths of the template's size, and is cut where it needs smaller. A value over the
+  template's own size of running text is taken as that size. A lower value also lowers the size under which
+  the checks say a slide's text is small.
 - **In the larger room, in columns.** It takes the larger part of the slide that a crowded slide takes, under
-  the title, in two columns, or three where two would make its lines longer than about 95 characters as
-  PowerPoint sets them.
+  the title. It is set in two columns, or three where two would make its lines longer than about 95 characters
+  as PowerPoint sets them. From 0.6.7 it also takes three where two do not hold it at a size, as long as a line
+  in three still holds 45 characters. Before, it went down half a point at a time in two columns, then jumped to
+  three with the last column part empty. Where it fits at no size, it is set at the least size, in the
+  columns its lines take there, as before.
 - **Counted as PowerPoint sets it.** A character of such a text is counted at 0.48 of its size wide, where other
   text is counted at a generous 0.55. In PowerPoint's own rendering of 3,035 lines of such text at 6 to 17.5 pt,
   in Hebrew and in English, a character took 0.41 of its size on a middling line, 0.44 on one line in twenty,
-  and never more than 0.47. Lines still break at words.
+  and never more than 0.47. Lines still break at words. A template that states how wide its own text is set
+  (`characterWidth`, from 0.6.7) has its running text counted with that width instead, set dense or not: see
+  "How wide a template's text is set" in [text-fit.md](text-fit.md).
 - **One rule says whether it fits** (from 0.6.3). Whether such a text fits, and how much it holds, is said by
   the same count when the slide is planned, when its writer is told a length, when code sets a document's text
   as it is, and when the deck is checked. It counts by length: each paragraph takes whole lines, as many as
@@ -559,7 +599,7 @@ Nothing has to be set up. When a template is loaded, the software reads from the
 | What | Where it comes from |
 | --- | --- |
 | The frame | The layout whose title sits where most of the template's titles sit, when it leaves room under that title. Its background, logo, header and footer texts, page number and title stay; its own content is taken off. |
-| Text styles | The shapes the template's patterns use for running text, headings, big numbers, captions, lists and quotations. Each text of a free slide is a copy of one of them: typeface, colour, weight and line spacing come with it. The space between paragraphs is the software's own. |
+| Text styles | The shapes the template's patterns use for running text, headings, big numbers, captions, lists and quotations. Each text of a free slide is a copy of one of them: typeface, colour, weight and line spacing come with it, the line spacing closed up a little where running text gives way. The space between paragraphs is the software's own. |
 | The card | A tinted or outlined box that the template sets text on. |
 | The note | A text the template sets on a box of its own (a takeaway line), or a strongly filled box with the text style used on it. It is set no larger than nine tenths of a heading: the bottom line is not the loudest text of the slide. |
 | The quotation | The template's own quotation. A template without one has it made from its heading: light, in the colour of running text, slanted when the template is read from the left and upright when it is read from the right, whose letters have no slant. |
@@ -631,7 +671,7 @@ its required parts and holds values of the right kind. It says nothing about fit
 | `a free slide cannot be made from this template: ...` | error | The template has no layout a free slide can stand on. The sentence says what is missing. |
 | `text is 310 characters; the slot fits about 120` on `b1Text` | warning | The text of that part is longer than its box holds at the smallest size it may be set in. |
 | `text is 38 characters; the slot fits about 1` on `b1Text` | warning | The box of that part is lower than one line of its text, even at the smallest size: a card among too many, one under the other. The text would be drawn across the card's edge. |
-| `slide 4 holds 60 blocks, as asked; its smallest text is set at 5.5 pt` | warning, on the deck | The slide was made as asked, and some of its text is under 9 pt, on a slide 13.33 inches wide (in proportion on a narrower one): smaller than anybody reads on a projected slide. |
+| `slide 4 holds 60 blocks, as asked; its smallest text is set at 5.5 pt` | warning, on the deck | The slide was made as asked, and some of its text is under 9 pt, on a slide 13.33 inches wide (in proportion on a narrower one), or under the template's own `leastTextSize`: smaller than anybody reads on a projected slide. |
 | `slide 4: 12 side by side were asked for; the slide holds 5` | warning, on the deck | `arrange.columns` would have left some block under its smallest size. The slide was set out with the nearest number that does not (see "How the blocks are set out"). |
 | `the chart has 10 categories; the slot fits 8` on `b1Chart` | warning | The chart has more categories, or more series, than read well at the size it is drawn at. It is drawn all the same. |
 | `slide 4 holds 200 blocks, as asked; 200 charts are drawn small, without axes, legend or labels` | warning, on the deck | The charts are too small for anything but their bars or lines. |
@@ -821,7 +861,10 @@ the conditions above decide only what a new slide may be.
   cannot carry free slides, and `validateDeck` says that too. A title in a placeholder is fine.
 - A line of text is counted from its size and the line spacing of the shape it is a copy of. A line spacing
   under 100% is counted as 100%, so such text leaves a little of its room unused. The space a shape sets
-  before and after its paragraphs is not copied: the paragraphs of a free slide are half their size apart.
+  before and after its paragraphs is not copied: the paragraphs of a free slide are half their size apart, in
+  whole points, or closer where spacing gives way (see "How large things are"). Where lines close up, the copy
+  states its line spacing in whole percents, or in whole points where its source states points, as PowerPoint
+  draws them.
 - A big number (a figure's value, the number of a step) is counted as one line of its own size, whatever line
   spacing its shape has.
 - Text is sized by character counts unless the template is loaded with fonts (see [text-fit.md](text-fit.md)).

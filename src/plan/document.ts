@@ -4,7 +4,9 @@
 // the writer writes the rest, and is held to the words of the text. Without a document nothing here
 // is used, and a plan and its writing are what they were.
 import { toParagraphs } from '../deck/spec.ts';
-import type { DeckSpec, SlotValue } from '../deck/spec.ts';
+import { ITEM, headingsOver, leadsInto } from '../deck/headings.ts';
+import type { HeadingOver } from '../deck/headings.ts';
+import type { DeckSpec, SlideSpec, SlotValue } from '../deck/spec.ts';
 import type { Issue } from '../deck/validate.ts';
 import type { JsonSchema } from '../llm/provider.ts';
 import { said } from '../messages/en.ts';
@@ -81,7 +83,6 @@ const BIDI = /[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
  * "o" or a "§" before a tab is a bullet too: a word processor writes the bullets of a list within a
  * list so, as plain text.
  */
-const ITEM = /^\s*(?:[-*•‣◦▪–·]|[o§](?=\t)|\(?\d{1,3}[.)]|\(?[a-z][.)]|\(?[א-ת][.)])\s+/u;
 /** The bullet of an item, where it has one rather than a number or a letter. */
 const BULLET = /^\s*(?:[-*•‣◦▪–·]|[o§](?=\t))\s+/u;
 /** The bullets a word processor writes as letters, as a slide shows them. */
@@ -633,6 +634,113 @@ function headingsIn(all: readonly DocumentPassage[], numbers: readonly number[])
   return headings;
 }
 
+/** The headings some passages stand under, each once, in their order. */
+export function sectionsOf(all: readonly DocumentPassage[], numbers: readonly number[]): string[] {
+  const sections: string[] = [];
+  for (const number of numbers) {
+    const section = all[number - 1]?.section;
+    if (section !== undefined && !sections.includes(section)) sections.push(section);
+  }
+  return sections;
+}
+
+/** The heading the first of some passages stands under: what a slide of them is titled, where code sets its text. */
+export const openingSection = (all: readonly DocumentPassage[], numbers: readonly number[]): string | undefined => (numbers[0] !== undefined ? all[numbers[0] - 1]?.section : undefined);
+
+/** A text as a title and a paragraph are compared: its letters and words, not its case, brackets, spaces or a stop at its end. */
+const comparable = (text: string): string =>
+  text
+    .normalize('NFC')
+    .toLocaleLowerCase()
+    .replace(/^\s*\[(.*)\]\s*$/, '$1')
+    .replace(/[\s:.]+$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+/**
+ * A written slide of a deck made from a document, settled with its passages:
+ * - a paragraph a writer wrote as a heading in brackets ("[Riders]"), the heading of one of the
+ *   slide's passages, loses its brackets;
+ * - a text of several paragraphs whose first says the slide's title again ("Background:" under
+ *   the title "Background"), and is no longer than a heading, loses it: its words are on the slide;
+ * - `headings` lists the paragraphs of its texts, the last of each aside, that are headings of its
+ *   passages, in their order, and is left out where there are none. A heading over a list whose
+ *   items lost their markers (a layout that draws bullets of its own) is not: set run in, it would
+ *   lead the first item alone.
+ * In a deck written in another language than its document (`translated`), the writer writes every
+ * text, and a paragraph it writes in brackets, of a heading's length, is a heading it translated:
+ * it loses its brackets and is marked.
+ * The slide's other fields and slots are as they were.
+ */
+export function settleDocumentSlide(slide: SlideSpec, all: readonly DocumentPassage[], numbers: readonly number[], options: { translated?: boolean } = {}): SlideSpec {
+  const sections = sectionsOf(all, numbers);
+  const { headings: _headings, ...rest } = slide;
+  if (sections.length === 0) return rest;
+  const { known, listed } = headingRule(all, numbers);
+  const title = typeof slide.slots.title === 'string' ? comparable(slide.slots.title) : '';
+  const slots: Record<string, SlotValue> = {};
+  const headings: string[] = [];
+  for (const [name, value] of Object.entries(slide.slots)) {
+    if (name === 'title' || !Array.isArray(value) || !value.every((item) => typeof item === 'string')) {
+      slots[name] = value;
+      continue;
+    }
+    const translated = new Set<string>();
+    let paragraphs = (value as string[]).map((paragraph, index, all) => {
+      const inner = /^\s*\[(.+)\]\s*$/.exec(paragraph)?.[1]?.trim();
+      if (inner === undefined) return paragraph;
+      if (known.has(inner)) return inner;
+      if (!options.translated || index === all.length - 1 || [...inner].length > HEADING_MOST) return paragraph;
+      translated.add(inner);
+      return inner;
+    });
+    const first = paragraphs[0];
+    if (title && first !== undefined && paragraphs.length > 1 && [...first.trim()].length <= HEADING_MOST && comparable(first) === title) paragraphs = paragraphs.slice(1);
+    for (const at of headingAt(paragraphs, known, listed, translated)) headings.push((paragraphs[at] as string).trim());
+    slots[name] = paragraphs;
+  }
+  return headings.length > 0 ? { ...rest, slots, headings } : { ...rest, slots };
+}
+
+/**
+ * What says which paragraphs of a slide's text from some passages are headings: the headings of
+ * the passages (`known`), and of those the ones whose first passage on the slide is a list or a
+ * table (`listed`), where what follows is an item or a row.
+ */
+function headingRule(all: readonly DocumentPassage[], numbers: readonly number[]): { known: Set<string>; listed: Set<string> } {
+  const sections = sectionsOf(all, numbers);
+  const listed = new Set(
+    sections.filter((section) => {
+      const first = numbers.map((number) => all[number - 1]).find((passage) => passage?.section === section);
+      return first !== undefined && first.kind !== 'text';
+    }),
+  );
+  return { known: new Set(sections.map((section) => section.trim())), listed };
+}
+
+/**
+ * The positions of the paragraphs of a text that are headings: a known one (or one a writer
+ * translated) over a paragraph; over a list or a table only where the next paragraph says it is an
+ * item or a row, or the heading is left plain.
+ */
+function headingAt(paragraphs: readonly string[], known: ReadonlySet<string>, listed: ReadonlySet<string>, translated: ReadonlySet<string> = new Set()): number[] {
+  const places: number[] = [];
+  paragraphs.forEach((paragraph, index) => {
+    const text = paragraph.trim();
+    const next = paragraphs[index + 1];
+    if (next === undefined || !(known.has(text) || translated.has(text))) return;
+    if (listed.has(text) && leadsInto(next)) return;
+    places.push(index);
+  });
+  return places;
+}
+
+/** The positions of the headings of a slide's text from some passages as code sets it (`fillParagraphs`), as the slide settles them (`settleDocumentSlide`). */
+export const documentHeadingPlaces = (paragraphs: readonly string[], all: readonly DocumentPassage[], numbers: readonly number[]): number[] => {
+  const { known, listed } = headingRule(all, numbers);
+  return headingAt(paragraphs, known, listed);
+};
+
 /** The words of some passages. */
 export const passageWords = (all: readonly DocumentPassage[], numbers: readonly number[]): number => numbers.reduce((sum, number) => sum + (all[number - 1] ? passageTokens(all[number - 1] as DocumentPassage).length : 0), 0);
 
@@ -666,15 +774,29 @@ export function needOf(doc: DocumentPlan, numbers: readonly number[], language: 
 export function shapeOf(doc: DocumentPlan, numbers: readonly number[], tables = true): TextShape {
   const running = runningOf(doc, numbers, tables);
   const shape: TextShape = { paragraphs: paragraphsOf(doc.passages, running) };
-  if (doc.same && running.length > 0) shape.asIs = { chars: needOf(doc, numbers, undefined, tables), each: fillParagraphs(doc.passages, running, { bullets: true }).map((paragraph) => paragraph.length) };
+  if (doc.same && running.length > 0) {
+    const paragraphs = fillParagraphs(doc.passages, running, { bullets: true });
+    const heads = headingsOver(paragraphs, documentHeadingPlaces(paragraphs, doc.passages, numbers));
+    shape.asIs = { chars: needOf(doc, numbers, undefined, tables), each: paragraphs.map((paragraph) => paragraph.length), ...(heads.length > 0 ? { heads } : {}) };
+  }
   return shape;
 }
 
 /** The paragraphs of a slide's text from a document: how many (see {@link shapeOf}), and, where code may set them as they are, how long each is. */
 export interface TextShape {
   paragraphs: number;
-  /** The lengths of the paragraphs code sets on a free slide, of a text of `chars` characters (`needOf`). Only a text of those characters is that text. */
-  asIs?: { chars: number; each: number[] };
+  /**
+   * The lengths of the paragraphs code sets on a free slide, of a text of `chars` characters
+   * (`needOf`), and the headings among them that stand over a paragraph (`heads`), which the slide
+   * sets as headings (`settleDocumentSlide`). Only a text of those characters is that text.
+   */
+  asIs?: { chars: number; each: number[]; heads?: HeadingOver[] };
+  /**
+   * `false` where code would not set `asIs` on a layout: the slide asks for its text shorter, or puts
+   * a table of it into the layout's table (see `asIsOf`). A layout is then judged by what its
+   * writer is told. A free slide is judged as before.
+   */
+  layoutAsIs?: false;
 }
 
 /** What a slide of a plan carries of its document, worked out from its passages and its words. */
@@ -1216,11 +1338,12 @@ export const documentWriteRule = (filled: boolean): string =>
   'Slides with text from the document say that text. Write it in its own words and order, and keep its terms, names and figures. ' +
   "Shorten it only where a slot's limit makes you: leave out the sentences that matter least, then clauses. Never sum it up, and add nothing it does not say. " +
   'Where a slot takes several strings, give one for each paragraph of the text, and join paragraphs where there are more than the slot takes. ' +
-  "A title is the text's heading in brackets, or a few of its own words. " +
+  "A title is the heading in brackets at the top of the slide's text. Where there is none there, it says in a few words what the text is about: never a heading in brackets further down, which the slide shows in its text, and not the words the text opens with. " +
+  'Keep a heading in brackets inside a text you write as a paragraph of its own, without the brackets. ' +
   "A short slot (a heading, a takeaway, a bottom line) takes its words from the slide's text too: leave an optional one out rather than say what the text does not. " +
   'A slide whose purpose ends in a number such as (2/3) goes on from the slide before it, under the same title. ' +
   'A slide without text from the document adds no facts of its own.' +
-  (filled ? ' A slide whose running text the software sets from the document asks you only for its title and short slots: take them from that text.' : '');
+  (filled ? ' A slide whose running text the software sets from the document asks you only for what the software does not set, such as its title and its short slots: take them from that text.' : '');
 
 /** The text of a slide from its document, as the writer is shown it under the slide's line. */
 export const slideText = (number: number, passage: { label: string; text: string }): string => `Text of s${number} from the document (${passage.label}):\n${passage.text}`;

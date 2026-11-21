@@ -1,4 +1,5 @@
 // Pictures of slides, made by a renderer the developer plugs in. slotdeck draws nothing itself.
+import type { Direction } from '../template/manifest.ts';
 
 /** A picture of one slide of a pptx. */
 export interface SlidePreview {
@@ -18,6 +19,12 @@ export interface PreviewRequest {
   pptx: Uint8Array;
   /** 1-based numbers of the slides wanted. All of them when left out. */
   slides?: number[];
+  /**
+   * The direction the deck reads, for a renderer that has to give a paragraph its direction
+   * itself: in a right-to-left deck a paragraph with any right-to-left letter reads right to
+   * left, as slotdeck writes it. slotdeck's own calls fill it.
+   */
+  direction?: Direction;
   signal?: AbortSignal;
 }
 

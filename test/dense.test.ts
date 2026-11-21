@@ -102,14 +102,17 @@ test('a dense text that fits at four fifths keeps its two columns, fitted column
     assert.ok(((drawn.box?.h ?? 0) * high) / 12700 >= Math.ceil(counted / count) * 1.2 * pt, `${chars}: ${JSON.stringify([drawn.box, pt, count, counted])}`);
   }
   // Twenty-four paragraphs of a line each: each column holds twelve lines and the space after
-  // each of them, and the box has a line more.
+  // each of them as it is drawn, and the box has a line more. That space gives way before the
+  // size (0.6.9), to no less than 0.7 of half the size.
   const lines = Array.from({ length: 24 }, (_, at) => `Point ${at + 1} of the plan, in a short line.`);
   const set = resolved(freeFor(demo, {}, slideOf(lines, { dense: true }))).plan;
   const slot = textSlot(set);
   const size = slot.fontSize ?? 0;
+  const between = slot.paragraphGap ?? 0;
   assert.equal(slot.drawn.columns, 2);
+  assert.ok(between >= Math.ceil(0.7 * Math.round(0.5 * size)) && between <= Math.round(0.5 * size), JSON.stringify([size, between]));
   const slideHeight = freeKit(demo)?.slideHeight ?? 0;
-  assert.ok(((slot.box?.h ?? 0) * slideHeight) / 12700 >= 13 * 1.2 * size + 12 * Math.round(0.5 * size) - 0.05, JSON.stringify([slot.box, size]));
+  assert.ok(((slot.box?.h ?? 0) * slideHeight) / 12700 >= 13 * 1.2 * size + 12 * between - 0.05, JSON.stringify([slot.box, size, between]));
 });
 
 test('a short dense text of many one-line paragraphs is not set down the slide, and is planned in the box it is drawn in', () => {

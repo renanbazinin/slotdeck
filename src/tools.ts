@@ -49,6 +49,11 @@ export interface PresentationToolsOptions {
   /** Deck-level values every deck gets, e.g. the unit shown in the header. */
   fields?: Record<string, string>;
   numberPatterns?: PlanOptions['numberPatterns'];
+  /**
+   * Whether the writer of a layout's slot of paragraphs is told what its box holds with the
+   * template's own paragraph spacing counted, as `countSpacing` of `planDeck`. On unless `false`.
+   */
+  countSpacing?: boolean;
   /** A second look at every draft the tools write, as for `planDeck`. Off unless set. */
   review?: PlanOptions['review'];
   /**
@@ -787,6 +792,7 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
     if (options.assets) plan.assets = options.assets;
     if (options.patterns) plan.patterns = options.patterns;
     if (options.numberPatterns) plan.numberPatterns = options.numberPatterns;
+    if (options.countSpacing !== undefined) plan.countSpacing = options.countSpacing;
     if (review) plan.review = review;
     if (options.composeLayouts && tool === TOOL_NAMES.plan) plan.composeLayouts = options.composeLayouts;
     if (options.free !== undefined) plan.free = options.free;
@@ -810,13 +816,14 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
   };
 
   // What a plan's slides hold is worked out with the options the planner has, and asks no model.
-  const fitOptions: Pick<PlanOptions, 'patterns' | 'free' | 'icons' | 'assets' | 'layout' | 'numberPatterns'> = {};
+  const fitOptions: Pick<PlanOptions, 'patterns' | 'free' | 'icons' | 'assets' | 'layout' | 'numberPatterns' | 'countSpacing'> = {};
   if (options.layout) fitOptions.layout = options.layout;
   if (options.icons) fitOptions.icons = options.icons;
   if (options.assets) fitOptions.assets = options.assets;
   if (options.patterns) fitOptions.patterns = options.patterns;
   if (options.numberPatterns) fitOptions.numberPatterns = options.numberPatterns;
   if (options.free !== undefined) fitOptions.free = options.free;
+  if (options.countSpacing !== undefined) fitOptions.countSpacing = options.countSpacing;
 
   /** Whether a setting turns free slides off for a plan. The plan stands without it: a plan that trips it is said to have them. */
   const freeOffFor = (plan: DeckPlan): boolean => {
@@ -977,7 +984,8 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
     let previews: SlidePreview[] | undefined;
     if (options.preview) {
       try {
-        previews = await options.preview.renderSlides(signal ? { pptx, signal } : { pptx });
+        const direction = deck.direction ?? template.manifest.direction;
+        previews = await options.preview.renderSlides(signal ? { pptx, direction, signal } : { pptx, direction });
         const keys = previews.map((picture) => storeKeys.preview(id, picture.slide, previewExtension(picture)));
         await Promise.all(previews.map((picture, index) => store.set(keys[index] as string, picture.data)));
         output.previews = keys;

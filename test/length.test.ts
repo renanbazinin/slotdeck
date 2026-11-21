@@ -81,7 +81,8 @@ test('the words of a slide are a whole number from 1 to 3000, and a description 
 });
 
 test('a slide whose layout holds the text asked keeps it, and the writer is told the length first', async () => {
-  // 45 words are 270 characters: within nine tenths of the 331 the layout holds, which is what an asked length may fill.
+  // 45 words are 270 characters. The count of the layout's spacing holds 263 in three paragraphs
+  // and all 331 in two: the writer chooses its paragraphs, and is told two.
   const { llm, requests } = scripted(outlineOf(entry('text-only', { words: 45 })));
   const plan = await planOutline(demo, brief, { llm, ...options });
   assert.deepEqual(plan.slides, [{ pattern: 'text-only', purpose: 'Keep the bike share', words: 45 }]);
@@ -92,8 +93,9 @@ test('a slide whose layout holds the text asked keeps it, and the writer is told
   const written = await writeDeck(demo, plan, { llm: writer.llm, ...options });
   const body = slotOf(writer.requests[0], 's1', 'body');
   const rest = withoutLength(textOnlyBody?.description);
-  assert.ok(body?.description?.startsWith(`Write 45 words, as was asked: 270 to 290 characters in all${rest ? `. ${rest}` : ''}`), String(body?.description));
-  // The limits are the slot's own. 50 words would not fit in nine tenths of them, and go to a free slide.
+  assert.ok(body?.description?.startsWith(`Write 45 words, as was asked: 270 to 310 characters in all${rest ? `. ${rest}` : ''}`), String(body?.description));
+  assert.match(String(body?.description), /at most 331 characters in total, at most 2 items$/);
+  // The limits are the slot's own: 56 words would not fit in two paragraphs, and go to a free slide.
   assert.equal(limitOf(body?.description), textOnlyBody?.maxChars);
   assert.ok(!written.warnings.some((issue) => /words were asked/.test(issue.message)));
 });
@@ -124,11 +126,17 @@ test('a text that no layout holds goes to a free slide set out for that length, 
 });
 
 test('a slide of plain text moves to the smallest layout of plain text that holds the text, before a free slide', async () => {
-  // A second layout of plain text that holds more: the text-only slide with a body of 900 characters.
+  // A second layout of plain text that holds more: the text-only slide with a body of 900 characters,
+  // in a box as wide as the slide and set smaller, where its spacing counted holds them all.
   const long = structuredClone(textOnly) as NonNullable<typeof textOnly>;
   long.id = 'text-long';
   long.description = 'A title over a long text.';
-  for (const slot of long.slots) if (slot.name === 'body' && slot.kind === 'text') slot.maxChars = 900;
+  for (const slot of long.slots) {
+    if (slot.name !== 'body' || slot.kind !== 'text') continue;
+    slot.maxChars = 900;
+    slot.fontSize = 14;
+    slot.box = { x: 0.0375, y: 0.4933, w: 0.925, h: 0.4667 };
+  }
   const roomy = loadTemplate(demoPptx, { ...demoManifest, patterns: [...demoManifest.patterns, long] });
   const { llm } = scripted(outlineOf(entry('text-only', { words: 100 })));
   const plan = await planOutline(roomy, brief, { llm, ...options });
@@ -137,11 +145,11 @@ test('a slide of plain text moves to the smallest layout of plain text that hold
 
 test('without free slides a slide holds what its layout holds, and the plan says so before writing', async () => {
   // Up to six slides, and still one: a text asked for a slide stays on it. 1200 characters, and
-  // the layout holds 297 of them, nine tenths of its 331.
+  // the layout holds all its 331 of them in two paragraphs, its spacing counted.
   const spread = scripted(outlineOf({ pattern: 'text-only', purpose: 'Keep the bike share', words: 200 }));
   const plan = await planOutline(demo, { ...brief, slideCount: { min: 1, max: 6 } }, { llm: spread.llm, ...options, free: false });
   assert.deepEqual(plan.slides, [{ pattern: 'text-only', purpose: 'Keep the bike share', words: 200 }]);
-  assert.deepEqual(planTextFit(demo, plan, { ...options, free: false }), [{ slide: 1, words: 200, holds: 49 }]);
+  assert.deepEqual(planTextFit(demo, plan, { ...options, free: false }), [{ slide: 1, words: 200, holds: 55 }]);
 
   // The slide holds what it can, the writer is told so, and the deck too, with why its text is not set smaller.
   const one = scripted(outlineOf({ pattern: 'text-only', purpose: 'Keep the bike share', words: 200 }));
@@ -150,10 +158,11 @@ test('without free slides a slide holds what its layout holds, and the plan says
   const writer = scripted({ s1: { title: 'Keep it', body: textOf(320) } });
   const written = await writeDeck(demo, single, { llm: writer.llm, ...options, free: false });
   const body = slotOf(writer.requests[0], 's1', 'body');
-  assert.ok(body?.description?.startsWith('Write 49 words, 260 to 290 characters: of the 200 words asked for this slide, the most it holds'), String(body?.description));
+  assert.ok(body?.description?.startsWith('Write 55 words, 290 to 330 characters: of the 200 words asked for this slide, the most it holds'), String(body?.description));
+  assert.match(String(body?.description), /at most 331 characters in total, at most 2 items$/);
   assert.deepEqual(
     withoutCodes(written.warnings.filter((issue) => /words were asked/.test(issue.message))),
-    [{ severity: 'warning', slide: 1, message: '200 words were asked for this slide, and it holds about 49: ask for the text over more slides, or for a shorter one; free slides are off, so its text is not set smaller' }],
+    [{ severity: 'warning', slide: 1, message: '200 words were asked for this slide, and it holds about 55: ask for the text over more slides, or for a shorter one; free slides are off, so its text is not set smaller' }],
   );
 });
 
@@ -187,7 +196,7 @@ test('a change to a deck that asks for an amount of text makes the room for it o
   assert.deepEqual(longer.rewritten, [1]);
   assert.deepEqual(
     withoutCodes(longer.warnings.filter((issue) => /words/.test(issue.message))),
-    [{ severity: 'warning', slide: 1, message: '200 words were asked for this slide, and it holds about 49: ask for the text over more slides, or for a shorter one; free slides are off, so its text is not set smaller' }],
+    [{ severity: 'warning', slide: 1, message: '200 words were asked for this slide, and it holds about 55: ask for the text over more slides, or for a shorter one; free slides are off, so its text is not set smaller' }],
   );
 });
 
@@ -207,7 +216,7 @@ test("with free slides off a cut says why its text is not set smaller: in the pl
     const { llm } = scripted(outlineOf({ pattern: 'text-only', purpose: 'Keep the bike share', words: 200 }));
     return presentationTools({ template: demo, llm, store: memoryStore(), fields, layout: 'adaptive', newId: (kind) => `${kind}_${++next}`, ...more });
   };
-  const said = 'Not all the text fits: slide 1 holds about 49 of its 200 words. The rest will be cut. Tell the user before creating the presentation, and offer more slides or a shorter text.';
+  const said = 'Not all the text fits: slide 1 holds about 55 of its 200 words. The rest will be cut. Tell the user before creating the presentation, and offer more slides or a shorter text.';
   // The option, or an app's list of layouts that does not name free.
   for (const more of [{ free: false }, { patterns: ['cover', 'text-only', 'closing'] }]) {
     const planned = await toolsOf(more).call(TOOL_NAMES.plan, { topic: 'Why the city should keep its bike share', language: 'en', slide_count: 1 });
@@ -217,17 +226,17 @@ test("with free slides off a cut says why its text is not set smaller: in the pl
   const change = { summary: 'Longer.', language: 'en', title: 'Bikes', slides: [{ from: 1, pattern: 'text-only', change: 'Make the text 200 words', images: false, words: 200, shows_main: 'auto', side_by_side: 0 }], text_size: 'normal', fields };
   await assert.rejects(planEdit(demo, deck, 'Make slide 1 200 words', { llm: scripted(change).llm, ...options, free: false, stopBeforeCut: true }), (error: unknown) => {
     assert.ok(error instanceof TextCutError);
-    assert.equal(error.message, 'Nothing was changed: slide 1 would hold about 49 of its 200 words. Ask for more slides or a shorter text, or accept that the rest is cut. Free slides are off, so the text is not set smaller.');
+    assert.equal(error.message, 'Nothing was changed: slide 1 would hold about 55 of its 200 words. Ask for more slides or a shorter text, or accept that the rest is cut. Free slides are off, so the text is not set smaller.');
     return true;
   });
 });
 
 test('a slide asked for words keeps them on one slide', async () => {
-  // 99 words on a layout that takes 49, in a deck that may have six slides: one slide, cut to what it holds.
+  // 99 words on a layout that takes 55, in a deck that may have six slides: one slide, cut to what it holds.
   const spread = scripted(outlineOf({ pattern: 'text-only', purpose: 'Keep the bike share', words: 99 }));
   const plan = await planOutline(demo, { ...brief, slideCount: { min: 1, max: 6 } }, { llm: spread.llm, ...options, free: false });
   assert.deepEqual(plan.slides, [{ pattern: 'text-only', purpose: 'Keep the bike share', words: 99 }]);
-  assert.deepEqual(planTextFit(demo, plan, { ...options, free: false }), [{ slide: 1, words: 99, holds: 49 }]);
+  assert.deepEqual(planTextFit(demo, plan, { ...options, free: false }), [{ slide: 1, words: 99, holds: 55 }]);
 
   // A slide with a chart keeps its chart, and the text it holds.
   const charted = scripted(outlineOf({ pattern: 'chart-native', purpose: 'Rides by quarter', words: 200 }));

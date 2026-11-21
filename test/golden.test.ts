@@ -126,15 +126,31 @@ const decks: Record<string, () => RenderResult> = {
     renderDeck(loadTemplate(fixture, tableManifest), { version: 1, slides: [{ pattern: 'table', slots: { title: 'T', table: { header: ['A', 'B'], rows: [['1', '2'], ['3', '4']] } } }] }),
 };
 
+/**
+ * Decks whose file was changed on purpose since 0.5.2: the version, what changed, and the hash
+ * the deck has since. Each is a decision written in docs/changelog.md, and the 0.5.2 hash stays
+ * in the fixture as the record of what was there before.
+ */
+const changedSince: Record<string, { version: string; change: string; parts: string }> = {
+  // The English title "First" is written into the template's run marked he-IL. One attribute
+  // changes, lang="he-IL" to lang="en-US"; the rest of the file is as 0.5.2 wrote it.
+  'fixture rtl': { version: '0.6.5', change: 'English text in a run the template marks Hebrew is marked English', parts: 'cd85de46fd310f5c' },
+  'fixture ltr': { version: '0.6.5', change: 'English text in a run the template marks Hebrew is marked English', parts: '87d825a0520d2578' },
+};
+
 test('the fixture holds the decks rendered here, and no other', () => {
   assert.deepEqual(Object.keys(decks).sort(), Object.keys(golden).sort());
+  for (const [name, changed] of Object.entries(changedSince)) assert.notEqual(changed.parts, golden[name]?.parts, `"${name}" is listed as changed but has its 0.5.2 hash`);
 });
 
 for (const [name, render] of Object.entries(decks)) {
   test(`renders as 0.5.2 did: ${name}`, () => {
     const { pptx: file, warnings } = render();
     const said = warnings.map((issue) => issue.message).join('; ');
-    assert.deepEqual({ parts: partsHash(file), warnings: warnings.length }, golden[name], `"${name}" is not what 0.5.2 rendered${said ? `; it warns: ${said}` : ''}`);
+    const changed = changedSince[name];
+    const expected = changed ? { parts: changed.parts, warnings: golden[name]?.warnings } : golden[name];
+    const what = changed ? `what ${changed.version} renders (${changed.change})` : 'what 0.5.2 rendered';
+    assert.deepEqual({ parts: partsHash(file), warnings: warnings.length }, expected, `"${name}" is not ${what}${said ? `; it warns: ${said}` : ''}`);
   });
 }
 
@@ -162,3 +178,21 @@ test('the demo manifest has nothing to report, and the template asks for the sam
     ['Calibri', 'Calibri italic', 'Calibri bold', 'Cambria italic', 'Cambria bold'],
   );
 });
+
+// Decks made from a person's document, as 0.6.5 wrote them (test/fixtures/documents-0.6.5.json):
+// dense text slides and a layout slide whose text code set from passages, a document heading
+// among its paragraphs as a line of plain text. A deck stored then renders the same after an
+// upgrade, as the decks above.
+const documentDecks = JSON.parse(readFileSync(join(root, 'test', 'fixtures', 'documents-0.6.5.json'), 'utf8')) as Record<string, DeckSpec>;
+const documentHashes: Record<string, string> = {
+  'document en dense x2': 'd2bff389bf5fdb32',
+  'document he dense': '4c92531341d3865b',
+  'document en text-only': '444161b5989321e0',
+};
+
+for (const [name, deck] of Object.entries(documentDecks)) {
+  test(`renders as 0.6.5 did: ${name}`, () => {
+    const { pptx: file, warnings } = renderDeck(demo(), deck, { layout: 'adaptive' });
+    assert.deepEqual({ parts: partsHash(file), warnings: warnings.length }, { parts: documentHashes[name], warnings: 0 }, `"${name}" is not what 0.6.5 rendered`);
+  });
+}

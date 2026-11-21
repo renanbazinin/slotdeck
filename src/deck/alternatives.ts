@@ -379,6 +379,8 @@ export function slideAlternatives(manifest: TemplateManifest, deck: DeckSpec, sl
       }
       const written: SlideSpec = { pattern: target.id, slots: draft.slots };
       if (draft.items !== undefined) written.items = draft.items;
+      // The headings of a document in its text stay headings: a paragraph no longer there is passed over.
+      if (Array.isArray(original.headings) && original.headings.length > 0) written.headings = [...original.headings];
       // The renderer's own rules decide whether the slide can be made: a required slot left empty is an error.
       const issues = validateDeck(manifest, { ...deck, slides: [written] }, { layout });
       if (issues.some((issue) => issue.severity === 'error')) continue;

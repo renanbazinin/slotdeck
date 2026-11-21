@@ -133,6 +133,7 @@ interface SlideSpec {
   base?: string;                // a free slide: the pattern whose frame it stands on
   colors?: DeckColors;          // colours for this slide alone, in place of the deck's
   passages?: number[];          // a deck made from a document: the passages of it this slide carries
+  headings?: string[];          // a deck made from a document: its headings in the slide's text, set bold, run in (from 0.6.6)
 }
 interface DeckColors {
   accent?: string;                  // takes the place of the template's main colour; six hex digits
@@ -222,7 +223,7 @@ in JSON.
 | `colors-kept-by-template` | none | The manifest says `"colors": false`, and the deck asks for colours. |
 | `columns-not-whole` | `slide`, `given` | A free slide's `arrange.columns` is no whole number of 1 or more. |
 | `columns-relaxed` | `slide`, `asked`, `columns` | A free slide holds fewer or more side by side than asked. |
-| `free-text-small` | `slide`, `blocks`, `size` | A free slide's smallest text is under 9 pt. |
+| `free-text-small` | `slide`, `blocks`, `size` | A free slide's smallest text is under 9 pt (on a slide 13.33 inches wide), or under the template's `leastTextSize` where that is lower. |
 | `free-larger-text` | `slide`, `blocks`, `half` | A free slide has room for half of the deck's larger text, or none. |
 | `free-charts-bare` | `slide`, `blocks`, `charts` | Charts of a free slide are drawn without axes, legend or labels. |
 | `free-blocks-low` | `slide`, `blocks`, `count` | Blocks of a free slide reach below its room. |
@@ -371,7 +372,7 @@ back under 0.85 of the least it was told is sent back once; still short, `warnin
 ### `planTextFit`
 
 ```ts
-function planTextFit(template: Template, plan: DeckPlan, options?: Pick<PlanOptions, 'patterns' | 'free' | 'icons' | 'assets' | 'layout' | 'numberPatterns'>): SlideTextFit[];
+function planTextFit(template: Template, plan: DeckPlan, options?: Pick<PlanOptions, 'patterns' | 'free' | 'icons' | 'assets' | 'layout' | 'numberPatterns' | 'countSpacing'>): SlideTextFit[];
 ```
 
 What each slide of a plan that has asked words or passages of a document will carry, worked out by code
@@ -537,6 +538,7 @@ interface PlanOptions {
   review?: DeckReview; // a second look at every draft; see "Design checks and reviews"
   composeLayouts?: number; // up to this many new layouts for the deck, in the template's own look; off (0) by default
   free?: boolean; // whether a slide may be a free slide, laid out by the software from the parts the plan names; on unless false
+  countSpacing?: boolean; // a writer of a layout's slot of paragraphs is told what its box holds, the template's spacing counted; on unless false
   onProgress?: (event: PlanProgress) => void;
   signal?: AbortSignal;
 }
@@ -697,7 +699,8 @@ interface FreeArrange { columns?: number; lead?: 'left' | 'right' | 'top' | 'non
 A slide is a free slide when it lists `blocks`; its `pattern` is then `FREE_PATTERN`. `FreeArrange` is the type
 of `SlideSpec.arrange`. `dense` is set by the planner on a free slide of one text that carries an amount of text
 a person asked for, or their own text: where that text is too long for four fifths of the template's size, it
-is set smaller, down to the least size that reads (9 pt on a slide 13.33 inches wide), in two or three columns
+is set smaller, down to the least size that reads (9 pt on a slide 13.33 inches wide, or the template's
+`leastTextSize`), in two or three columns
 in the most room the frame has. A text that fits is set as large as it fits, as without the flag, down to four
 fifths of the template's size. From 0.6.3 one rule says whether such a text fits and what it holds, when it is
 planned, written and checked: its paragraphs counted by length one by one, its columns filled line by line as
@@ -831,6 +834,7 @@ interface PresentationToolsOptions {
   review?: DeckReview; // a second look at every draft the tools write
   composeLayouts?: number; // new layouts for a new plan, as for planOutline; none while free slides are on offer
   free?: boolean; // whether a slide may be a free slide, as `free` of PlanOptions; on unless false
+  countSpacing?: boolean; // as `countSpacing` of PlanOptions; on unless false
   patterns?: string[]; // the only layouts the tools may use: the app's own list; a person may narrow it, not widen it
   colors?: boolean; // whether a person may ask for another colour; false leaves accent_color and color_slides out
   thumbnail?: (patternId: string) => string | undefined;
@@ -1131,7 +1135,7 @@ interface ManifestIssue { severity: 'error' | 'warning'; pattern?: string; slot?
 interface SampleOptions { fill?: number; items?: 'drawn' | 'max' | 'min'; fit?: 'budget' | 'box' }
 
 type ManifestChange =
-  | { op: 'setManifest'; name?: string; language?: string; direction?: Direction; alignOnDirectionChange?: AlignPolicy; textScale?: number | null }
+  | { op: 'setManifest'; name?: string; language?: string; direction?: Direction; alignOnDirectionChange?: AlignPolicy; textScale?: number | null; characterWidth?: number | null; leastTextSize?: number | null; colors?: { accent?: string | null; accent2?: string | null } | false | null; free?: boolean | null | { base?: string | null; styles?: Record<string, { slide: number; shape: string } | null> } }
   | { op: 'addPattern'; slide: number; id: string; description?: string }
   | { op: 'copyPattern'; pattern: string; id: string; description?: string }
   | { op: 'derivePattern'; pattern: string; variant: PatternVariant; slot?: string; id?: string; description?: string }
@@ -1377,6 +1381,7 @@ interface PreviewProvider {
 interface PreviewRequest {
   pptx: Uint8Array;
   slides?: number[]; // 1-based; every slide when left out
+  direction?: Direction; // the direction the deck reads, for a renderer that sets paragraph direction itself; slotdeck's own calls fill it
   signal?: AbortSignal;
 }
 interface SlidePreview {
@@ -1467,6 +1472,8 @@ interface FitOptions {
   textScale?: number;   // the factor on body text the deck is rendered with; default 1
   shrink?: ShrinkLimit; // allow the text to be set smaller when it does not fit
   items?: number;       // for a slot of a row of items: how many items the slide has
+  direction?: Direction; // the direction the deck reads; decides how a paragraph that mixes scripts is written and measured; the template's when left out
+  bold?: number[];       // paragraphs drawn in bold, by position: a slide's document headings (SlideSpec.headings), measured in the bold face; one over a paragraph of text is measured run in at its head, where the renderer sets it so
 }
 interface ShrinkLimit { to: number; minSize?: number } // the shape of the manifest's shrinkText
 interface TextFit {
@@ -1481,7 +1488,7 @@ interface TextFit {
   sizes: number[];     // font size of each paragraph
   scale: number;       // the factor the text was shrunk by; 1 when it was not
   fitsChars: number;   // about how many characters of such text the box holds
-  paragraphs: string[][]; // the lines of each paragraph
+  paragraphs: string[][]; // the lines of each paragraph; none for a heading measured run in, whose words open the first line of the next
   widths: number[][];     // the width of each of those lines, in points
   lineRoom: number[];     // the width a line of each paragraph may take, in points
   sampleLines: number;    // lines the template's own sample text takes in the slot; 0 when there is none to compare with
@@ -1511,6 +1518,8 @@ interface TemplateManifest {
   direction: Direction;
   alignOnDirectionChange?: AlignPolicy;
   textScale?: number; // enlarges body text in every deck made from the template
+  characterWidth?: number; // how wide PowerPoint sets a character of its running text, as a share of its size, measured (0.3 to 0.8); free slides count their running text with it, and from 0.6.8 a layout's slots of paragraphs what their writers are told
+  leastTextSize?: number; // the least size, in points, of a long text set dense on a free slide (5 to 24, up to a half point); left out, by the slide's width
   shrinkText?: { to: number; minSize?: number }; // lets text that does not fit be set smaller; needs fonts
   colors?: { accent?: string; accent2?: string } | false; // the main and second colour; false keeps every deck in the template's own
   free?: { base?: string; styles?: Record<string, { slide: number; shape: string }> } | false; // free slides; false stops them being offered

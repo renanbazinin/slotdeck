@@ -179,7 +179,7 @@ test('Hebrew paragraphs are marked right to left, so a browser puts their punctu
         slots: {
           title: 'כותרת בעברית',
           subtitle: 'An English line',
-          body: ['שאלות: hello@example.org.', '2025 היה שנה טובה.'],
+          body: ['שאלות: hello@example.org.', '2025 היה שנה טובה.', 'AI בשירות הלקוחות.'],
         },
       },
     ],
@@ -191,6 +191,8 @@ test('Hebrew paragraphs are marked right to left, so a browser puts their punctu
   assert.ok(direction('שאלות: hello@example\\.org\\.'), 'Hebrew followed by an address');
   // A paragraph that starts with a number takes its direction from its first letter.
   assert.ok(direction('2025 '), 'a paragraph that starts with digits');
+  // In a deck that reads right to left, a Hebrew line that starts with a Latin word reads right to left, as in the pptx.
+  assert.ok(direction('AI בשירות'), 'a Hebrew line that starts with a Latin word');
   assert.match(svg, /<p (?!dir=)[^>]*>(?:<[^>]+>)*An English line/);
 });
 
@@ -208,4 +210,15 @@ test('the adapter passes its options on and stops when the caller gives up', asy
   const stopped = new AbortController();
   stopped.abort();
   await assert.rejects(pagus.renderSlides({ pptx: readFileSync(join(root, 'templates', 'demo.pptx')), signal: stopped.signal }), /abort/i);
+});
+
+test('a heading set run in keeps the space after it in a preview, which Pagus would trim', async () => {
+  const pagus = pagusPreviews(pagusCore, pagusRenderer);
+  const decks = JSON.parse(readFileSync(join(root, 'test', 'fixtures', 'documents-0.6.5.json'), 'utf8')) as Record<string, DeckSpec>;
+  const deck = structuredClone(decks['document en dense x2'] as DeckSpec);
+  deck.slides = [{ ...(deck.slides[0] as DeckSpec['slides'][number]), headings: ['Riders'] }];
+  const { previews } = await previewDeck(demo, deck, pagus, { layout: 'adaptive' });
+  const words = text(previews[0]?.data as Uint8Array).replace(/<[^>]+>/g, '');
+  assert.match(words, /Riders[\u2060\s]+Students and commuters/);
+  assert.doesNotMatch(words, /RidersStudents/);
 });

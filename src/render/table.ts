@@ -3,6 +3,7 @@ import { NS, childElement, childElements, descendants, escapeXmlAttr, removeNode
 import type { Element } from '../pptx/xml.ts';
 import type { Direction, TableSlotDef } from '../template/manifest.ts';
 import { setBodyText } from './text.ts';
+import type { TextOptions } from './text.ts';
 
 /**
  * Rebuilds a table from the sample table's own rows and cells, so borders, fills and banding
@@ -15,7 +16,7 @@ import { setBodyText } from './text.ts';
  * `aligns` sets the cells of single columns otherwise: `'r'` for a column of numbers, which are
  * read by their last digits. A column it does not name starts where reading starts.
  */
-export function setTable(frame: Element, table: TableValue, slot: TableSlotDef, direction: Direction, aligns?: ReadonlyArray<'l' | 'r' | undefined>): void {
+export function setTable(frame: Element, table: TableValue, slot: TableSlotDef, direction: Direction, aligns?: ReadonlyArray<'l' | 'r' | undefined>, language?: string): void {
   const tbl = descendants(frame, NS.a, 'tbl')[0];
   if (frame.localName !== 'graphicFrame' || !tbl) throw new Error('table slots must point at a table');
   const grid = childElement(tbl, NS.a, 'tblGrid');
@@ -58,7 +59,8 @@ export function setTable(frame: Element, table: TableValue, slot: TableSlotDef, 
       const cell = (sampleCells[index] ?? lastSample).cloneNode(true) as Element;
       const body = childElement(cell, NS.a, 'txBody');
       const cellAlign = aligns?.[index] ?? align;
-      if (body) setBodyText(body, [text], style ? { flipAlign: false, align: cellAlign, style } : { flipAlign: false, align: cellAlign });
+      const writing: TextOptions = language ? { flipAlign: false, align: cellAlign, direction, language } : { flipAlign: false, align: cellAlign, direction };
+      if (body) setBodyText(body, [text], style ? { ...writing, style } : writing);
       row.insertBefore(cell, childElement(row, NS.a, 'extLst') ?? null);
     });
     return row;

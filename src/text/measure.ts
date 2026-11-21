@@ -2,13 +2,14 @@
 // size, and whether they fit the box. Works from font files, with no PowerPoint and no browser.
 import type { PptxPackage } from '../pptx/package.ts';
 import type { Template } from '../render/render.ts';
-import { detectDirection, marksRightToLeft } from '../render/text.ts';
+import { detectDirection, filledLanguage, headingRoom, paragraphDirection, runsIn } from '../render/text.ts';
+import { isRtlLanguage } from '../util/language.ts';
 import type { FreeDrawn } from '../free/plan.ts';
 import { inspectTemplate } from '../template/inspect.ts';
 import type { ShapeInfo, TemplateInfo } from '../template/inspect.ts';
 import { rowTextIds } from '../render/repeat.ts';
-import { COPY_ID_STEP, effectiveSlots, itemCount, scalesWithText, widenFactor } from '../template/manifest.ts';
-import type { PatternDef, TextSlotDef } from '../template/manifest.ts';
+import { COPY_ID_STEP, effectiveSlots, itemCount, scalesWithText, templateTextSetting, widenFactor } from '../template/manifest.ts';
+import type { Direction, PatternDef, TextSlotDef } from '../template/manifest.ts';
 import { scriptClass, textWidth, themeScript } from './fonts.ts';
 import type { FontFace, FontMetrics, FontStyle, ScriptClass } from './fonts.ts';
 import { breakLines } from './layout.ts';
@@ -30,6 +31,21 @@ export interface FitOptions {
   shrink?: ShrinkLimit;
   /** For a slot of a row of items: how many items the slide has, which can decide how wide an item is. */
   items?: number;
+  /**
+   * The direction the deck reads, which decides the direction and language of a paragraph that
+   * mixes scripts, as the renderer writes them. Defaults to the template's direction, which is
+   * what the renderer uses for a deck that states none.
+   */
+  direction?: Direction;
+  /**
+   * Paragraphs set in bold, by position among the text's paragraphs: the headings of a document in
+   * it (`SlideSpec.headings`), measured in the bold face they are drawn in. A heading over a
+   * paragraph of text is measured as the renderer sets it (`setHeadings`): run in at the head of
+   * that paragraph, an em space between them, its space after it before the paragraph, where its
+   * letters take no more than a line (`runsIn`, for a line a character shorter, as the plans of
+   * free slides count it); otherwise on a line of its own.
+   */
+  bold?: readonly number[];
 }
 
 /** How a text sits in a slot. */
@@ -55,7 +71,7 @@ export interface TextFit {
   scale: number;
   /** About how many characters of text like this the box holds. */
   fitsChars: number;
-  /** The lines of each paragraph, as they break. */
+  /** The lines of each paragraph, as they break. A heading set run in has none: it opens the first line of the paragraph under it. */
   paragraphs: string[][];
   /** The width of each of those lines in points, without the space that hangs at its end. */
   widths: number[][];
@@ -107,6 +123,42 @@ interface Shared {
 
 const shared = new WeakMap<PptxPackage, Shared>();
 
+/** A shape of a slide by id: a copied item's shapes exist only once the row is rendered, and are set like the shape they copy. */
+function shapeIn(entry: Shared, slide: number, id: string): ShapeInfo | undefined {
+  let byId = entry.shapes.get(slide);
+  if (!byId) {
+    byId = new Map((entry.info.slides[slide - 1]?.shapes ?? []).map((shape) => [shape.id, shape]));
+    entry.shapes.set(slide, byId);
+  }
+  return byId.get(id) ?? byId.get(String(Number(id) % COPY_ID_STEP));
+}
+
+/**
+ * The frame a template's own slot is set in, read without fonts: the shape's size, the box the slot
+ * states, or, for an item of a row that widens with fewer items, the box the renderer gives it.
+ * The measurer and the count of what a writer is told (`template/told.ts`) read the same box.
+ * A slot copied onto a free slide (`styleOf`) is not one: the measurer frames it itself.
+ */
+export function slotFrame(pkg: PptxPackage, pattern: PatternDef, slot: TextSlotDef, items?: number): TextFrame | undefined {
+  const entry = sharedFor(pkg);
+  const { styles } = entry;
+  const shape = shapeIn(entry, pattern.sourceSlide, slot.shapeId);
+  if (!shape) return undefined;
+  // The shape's own size is read exactly from the slide; a slot that moves its box states another.
+  const box = slot.box;
+  const size = box && box.w > 0 && box.h > 0 ? { width: box.w * styles.slideWidth, height: box.h * styles.slideHeight } : undefined;
+  const repeat = pattern.repeat;
+  if (!size && repeat && items !== undefined) {
+    const count = itemCount(pattern, items);
+    const texts = rowTextIds(pattern);
+    if (texts?.has(slot.shapeId) && widenFactor(repeat, count) > 1) {
+      const widened = styles.rowFrame(pattern.sourceSlide, slot.shapeId, slot.styleRun ?? 'first', { key: pattern.id, repeat, count, texts });
+      if (widened) return widened;
+    }
+  }
+  return styles.frame(pattern.sourceSlide, shape.id, slot.styleRun ?? 'first', size);
+}
+
 function sharedFor(pkg: PptxPackage): Shared {
   let entry = shared.get(pkg);
   if (!entry) {
@@ -135,7 +187,6 @@ function typefaceName(run: RunStyle, cls: ScriptClass, char: string): string {
   return (script && face.scripts?.get(script)) || run.latin.name;
 }
 
-const RTL_LANGUAGE = /^(he|iw|yi|ar|fa|ur|ps|ug|sd|ckb|syr|dv)(-|$)/i;
 const DIGIT = /\p{Nd}/u;
 const LAST_LETTER = /(\p{L})[^\p{L}]*$/u;
 
@@ -230,17 +281,9 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
   if (!fonts) throw new Error('textMeasurer needs font metrics: pass them, or load the template with fonts');
   const metrics = fonts;
   const { manifest, pkg } = template;
-  const { styles, info, shapes } = sharedFor(pkg);
+  const { styles } = sharedFor(pkg);
   const missing = new Map<string, TemplateFont>();
-  const shapeOf = (slide: number, id: string): ShapeInfo | undefined => {
-    let byId = shapes.get(slide);
-    if (!byId) {
-      byId = new Map((info.slides[slide - 1]?.shapes ?? []).map((shape) => [shape.id, shape]));
-      shapes.set(slide, byId);
-    }
-    // A copied item's shapes exist only once the row is rendered; they are set like the shape they copy.
-    return byId.get(id) ?? byId.get(String(Number(id) % COPY_ID_STEP));
-  };
+  const shapeOf = (slide: number, id: string): ShapeInfo | undefined => shapeIn(sharedFor(pkg), slide, id);
 
   /**
    * The frame a slot's text is measured in. This is the one place that decides the box: every
@@ -260,8 +303,8 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
       // look for every paragraph, and does not shrink by itself.
       const drawn = (slot as { drawn?: FreeDrawn }).drawn ?? { inset: 0, wrap: true };
       // The copy states no space before or after its paragraphs: what there is between two of
-      // them is the slot's own gap.
-      const first: ParagraphStyle = { ...(copied.paragraphs[0] as ParagraphStyle), before: { points: 0 }, after: { points: 0 } };
+      // them is the slot's own gap. Lines the plan closed up are as close as it drew them.
+      const first: ParagraphStyle = { ...(copied.paragraphs[0] as ParagraphStyle), before: { points: 0 }, after: { points: 0 }, ...(drawn.lineSpacing ? { lineSpacing: drawn.lineSpacing } : {}) };
       const paragraph: ParagraphStyle = drawn.hang === undefined ? first : { ...first, bullet: drawn.hang > 0, marginStart: drawn.hang, indent: -drawn.hang };
       const columns = drawn.columns ?? 1;
       const side = drawn.inset + copied.clear.x;
@@ -276,39 +319,53 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
         fontScale: 1,
         lineReduction: 0,
         columns,
+        columnGap: 0,
+        placed: true,
         vertical: false,
         wrap: drawn.wrap,
       };
     }
-    const shape = shapeOf(pattern.sourceSlide, slot.shapeId);
-    if (!shape) return undefined;
-    // The shape's own size is read exactly from the slide; a slot that moves its box states another.
-    const box = slot.box;
-    const size = box && box.w > 0 && box.h > 0 ? { width: box.w * styles.slideWidth, height: box.h * styles.slideHeight } : undefined;
-    const repeat = pattern.repeat;
-    if (!size && repeat && items !== undefined) {
-      const count = itemCount(pattern, items);
-      const texts = rowTextIds(pattern);
-      if (texts?.has(slot.shapeId) && widenFactor(repeat, count) > 1) {
-        const widened = styles.rowFrame(pattern.sourceSlide, slot.shapeId, slot.styleRun ?? 'first', { key: pattern.id, repeat, count, texts });
-        if (widened) return widened;
-      }
-    }
-    return styles.frame(pattern.sourceSlide, shape.id, slot.styleRun ?? 'first', size);
+    return slotFrame(pkg, pattern, slot, items);
   };
 
-  /** Lays text out in a frame. `size` gives the font size of a paragraph style; `gap` overrides the space after paragraphs. */
-  const lay = (frame: TextFrame, paragraphs: string[], size: (style: ParagraphStyle) => number, gap: number | undefined, flags: { approximate: boolean }, spare = 0): Laid => {
+  /**
+   * Lays text out in a frame. `size` gives the font size of a paragraph style; `gap` overrides the
+   * space after paragraphs; `deckDirection` is the direction the deck reads (see FitOptions).
+   */
+  const lay = (frame: TextFrame, paragraphs: string[], size: (style: ParagraphStyle) => number, gap: number | undefined, flags: { approximate: boolean }, spare = 0, deckDirection?: Direction, bold?: ReadonlySet<number>, stated: (style: ParagraphStyle) => boolean = () => true): Laid => {
     const inner = (frame.vertical ? frame.height - frame.insets.top - frame.insets.bottom : frame.width - frame.insets.left - frame.insets.right) / frame.columns - spare;
     const laid: Laid = { lines: [], widths: [], lineRoom: [], height: 0, gaps: 0, lastPitch: 0, widest: 0, firstSize: 0 };
+    const styleAt = (index: number): ParagraphStyle => frame.paragraphs[Math.min(index, frame.paragraphs.length - 1)] as ParagraphStyle;
+    // The headings set run in, by position: over a paragraph that is no heading and draws no bullet,
+    // where the renderer sets them so, counted at the size it writes and the column it counts, the
+    // space between columns taken off. The renderer reads the size and the width the slide states:
+    // a heading whose run states no size (`stated`), in a shape the slide does not place, keeps a
+    // line of its own.
+    const joined = new Set<number>();
+    const characterWidth = templateTextSetting(manifest, 'characterWidth');
+    for (const at of bold ?? []) {
+      const next = paragraphs[at + 1];
+      if (next === undefined || bold?.has(at + 1) || styleAt(at + 1).bullet || frame.vertical || !frame.placed || !stated(styleAt(at))) continue;
+      const column = (frame.width - frame.insets.left - frame.insets.right - (frame.columns - 1) * frame.columnGap) / frame.columns - styleAt(at + 1).marginStart;
+      if (runsIn(paragraphs[at] ?? '', next, deckDirection, headingRoom(column, size(styleAt(at)), characterWidth) - 1)) joined.add(at);
+    }
     paragraphs.forEach((text, index) => {
-      const style = frame.paragraphs[Math.min(index, frame.paragraphs.length - 1)] as ParagraphStyle;
+      if (index === 0) laid.firstSize = size(styleAt(0)) * frame.fontScale;
+      // A heading set run in is laid out with the paragraph under it: it has no line of its own.
+      if (joined.has(index)) {
+        laid.lines.push([]);
+        laid.widths.push([]);
+        laid.lineRoom.push(Math.round((inner - styleAt(index).marginStart - styleAt(index).marginEnd) * 100) / 100);
+        return;
+      }
+      const head = joined.has(index - 1) ? index - 1 : undefined;
+      const style = styleAt(index);
       const points = size(style) * frame.fontScale;
-      if (index === 0) laid.firstSize = points;
-      // The renderer marks a paragraph that starts with a right-to-left letter, or is mostly
-      // right-to-left letters, with such a language.
-      const direction = detectDirection(text);
-      const measure = runMeasure(metrics, style.run, points, marksRightToLeft(text) || RTL_LANGUAGE.test(style.run.lang), flags);
+      // The language and direction the renderer writes the paragraph in (see filledLanguage):
+      // a run left to state none keeps the language it inherits.
+      const direction = paragraphDirection(text, deckDirection);
+      const language = filledLanguage(text, style.run.ownLang, deckDirection ? { direction: deckDirection } : {}) || style.run.lang;
+      const measure = runMeasure(metrics, bold?.has(index) ? { ...style.run, bold: true } : style.run, points, isRtlLanguage(language), flags);
       const rest = inner - style.marginStart - style.marginEnd;
       const first = rest - (style.bullet && style.indent < 0 ? 0 : style.indent);
       // The space after a line hangs outside it, unless it sits inside text that runs against the paragraph.
@@ -320,17 +377,29 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
         const before = detectDirection(last);
         return before !== direction && (detectDirection(next) ?? before) === before;
       };
-      const lines = frame.wrap ? breakLines(text, Math.max(first, 1), Math.max(rest, 1), measure, against) : [text];
+      // A heading set run in opens the first line: its letters in bold, and the em space in the paragraph's own face.
+      const heading = head === undefined ? '' : (paragraphs[head] ?? '').trim();
+      const lead = head === undefined ? 0 : runMeasure(metrics, { ...styleAt(head).run, bold: true }, size(styleAt(head)) * frame.fontScale, isRtlLanguage(language), flags)(heading) + measure('\u2003');
+      const lines = frame.wrap ? breakLines(text, head === undefined ? Math.max(first, 1) : Math.max(first - lead, 0), Math.max(rest, 1), measure, against, head !== undefined) : [text];
+      if (head !== undefined && lines.length > 0) lines[0] = `${heading}\u2003${lines[0]}`;
       laid.lines.push(lines);
       laid.lineRoom.push(Math.round(rest * 100) / 100);
-      const widths = lines.map((line) => measure(line.trimEnd()));
+      const widths = lines.map((line, at) => (head !== undefined && at === 0 ? lead + measure(line.slice(heading.length + 1).trimEnd()) : measure(line.trimEnd())));
       laid.widths.push(widths.map((width) => Math.round(width * 100) / 100));
       for (const width of widths) laid.widest = Math.max(laid.widest, width / Math.max(rest, 1));
       const pitch = 'points' in style.lineSpacing ? style.lineSpacing.points : LINE * points * Math.max(0.1, style.lineSpacing.percent - frame.lineReduction);
-      laid.height += lines.length * pitch;
+      // A line is as high as its largest run: the first line under a heading set run in that is
+      // larger than its paragraph is as high as the heading's.
+      const opening = head === undefined || 'points' in style.lineSpacing ? pitch : LINE * Math.max(points, size(styleAt(head)) * frame.fontScale) * Math.max(0.1, style.lineSpacing.percent - frame.lineReduction);
+      laid.height += opening + Math.max(0, lines.length - 1) * pitch;
       laid.lastPitch = pitch;
-      // The space before the first paragraph and after the last is not drawn.
-      const between = (index > 0 ? spacing(style.before, points) : 0) + (index < paragraphs.length - 1 ? (gap ?? spacing(style.after, points)) : 0);
+      // The space before the first paragraph and after the last is not drawn. A paragraph led by a
+      // heading set run in has the heading's space before it and after it before it, as the
+      // renderer moves it.
+      const opens = head ?? index;
+      const headPoints = head === undefined ? points : size(styleAt(head)) * frame.fontScale;
+      const above = head === undefined ? spacing(style.before, points) : spacing(styleAt(head).before, headPoints) + (gap ?? spacing(styleAt(head).after, headPoints));
+      const between = (opens > 0 ? above : 0) + (index < paragraphs.length - 1 ? (gap ?? spacing(style.after, points)) : 0);
       laid.height += between;
       laid.gaps += between;
     });
@@ -389,10 +458,10 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
           try {
             // An item that widens keeps its height, so the room below the first line, and how
             // full the designer drew the box, are those of the box as drawn.
-            const laid = lay(drawn, sample, (style) => style.run.size, undefined, { approximate: false });
+            const laid = lay(drawn, sample, (style) => style.run.size, undefined, { approximate: false }, 0, manifest.direction);
             room = Math.max(room, laid.height);
             sampleLines = laid.lines.reduce((sum, entry) => sum + entry.length, 0);
-            const wide = frame === drawn ? laid : lay(frame, sample, (style) => style.run.size, undefined, { approximate: false });
+            const wide = frame === drawn ? laid : lay(frame, sample, (style) => style.run.size, undefined, { approximate: false }, 0, manifest.direction);
             roomWidth = Math.max(roomWidth, wide.widest);
           } catch (error) {
             note(error);
@@ -403,7 +472,9 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
       const measured = (shrink: number): TextFit => {
         // A size chosen because the text just fits at it sits on the edge by construction, so a
         // shrunk text is asked to fit with a little width to spare.
-        const laid = lay(frame, paragraphs, sizeAt(shrink), chosen.paragraphGap, flags, shrink === 1 ? 0 : SPARE);
+        // The renderer writes a size on a run that states one, of a slot that sets one, or of text it shrinks.
+        const stated = (style: ParagraphStyle): boolean => chosen.fontSize !== undefined || style.run.ownSize || shrink !== 1;
+        const laid = lay(frame, paragraphs, sizeAt(shrink), chosen.paragraphGap, flags, shrink === 1 ? 0 : SPARE, options.direction ?? manifest.direction, options.bold?.length ? new Set(options.bold) : undefined, stated);
         const lines = laid.lines.reduce((sum, entry) => sum + entry.length, 0);
         const slack = SLACK * laid.lastPitch;
         const over = laid.height - room - slack;

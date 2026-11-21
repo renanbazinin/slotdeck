@@ -1,0 +1,52 @@
+// The headings of a person's document that stand in a slide's text as paragraphs of their own
+// (`SlideSpec.headings`): which paragraphs of a text they are, and how each is set.
+
+/** A line that is an item of a list: a bullet or a number, then a space. */
+export const ITEM = /^\s*(?:[-*•‣◦▪–·]|[o§](?=\t)|\(?\d{1,3}[.)]|\(?[a-z][.)]|\(?[א-ת][.)])\s+/u;
+
+/**
+ * Which paragraphs of a text are the slide's headings (`SlideSpec.headings`), by position. The
+ * entries are matched in order, each to the first paragraph after the one before it that says
+ * exactly that, spaces at the ends aside; an entry that matches nothing is passed over. A text of
+ * one paragraph has none, and neither has the last paragraph of a text: a heading stands over
+ * text. Anything but a list of strings names none.
+ */
+export function headingPlaces(paragraphs: readonly string[], headings: unknown): number[] {
+  if (!Array.isArray(headings) || !headings.every((entry) => typeof entry === 'string') || paragraphs.length < 2) return [];
+  const places: number[] = [];
+  let from = 0;
+  for (const entry of headings as string[]) {
+    const wanted = entry.trim();
+    if (!wanted) continue;
+    for (let at = from; at < paragraphs.length - 1; at++) {
+      if ((paragraphs[at] as string).trim() !== wanted) continue;
+      places.push(at);
+      from = at + 1;
+      break;
+    }
+  }
+  return places;
+}
+
+/**
+ * Whether a heading is set at the head of the paragraph under it: not over an item of a list or a
+ * row of a table, which keep the line they start with, the heading then on a line of its own.
+ */
+export const leadsInto = (next: string): boolean => !ITEM.test(next) && !next.includes(' | ');
+
+/** A heading of a text over a paragraph that is no heading itself: where it stands among the text's paragraphs, its text and the text of the paragraph under it. */
+export interface HeadingOver {
+  at: number;
+  heading: string;
+  next: string;
+}
+
+/**
+ * The headings of a text, by their positions among its paragraphs (`headingPlaces`), that stand
+ * over a paragraph that is no heading itself: those the renderer may set run in. The plans of
+ * free slides count each as it is set: run in, or on a line of its own (`runsIn` in render/text.ts).
+ */
+export function headingsOver(paragraphs: readonly string[], places: readonly number[]): HeadingOver[] {
+  const marked = new Set(places);
+  return places.filter((at) => at + 1 < paragraphs.length && !marked.has(at + 1)).map((at) => ({ at, heading: paragraphs[at] as string, next: paragraphs[at + 1] as string }));
+}

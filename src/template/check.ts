@@ -4,7 +4,7 @@ import type { Template } from '../render/render.ts';
 import { measurerFor } from '../text/measure.ts';
 import { inspectTemplate } from './inspect.ts';
 import type { ShapeInfo, TemplateInfo } from './inspect.ts';
-import { effectiveSlots, templateScaleProblem, textBudget, widenFactor } from './manifest.ts';
+import { effectiveSlots, templateScaleProblem, templateTextProblem, textBudget, widenFactor } from './manifest.ts';
 import type { SlotDef } from './manifest.ts';
 import { filler } from './sample.ts';
 
@@ -160,6 +160,11 @@ export function checkManifest(template: Template, inspected?: TemplateInfo): Man
   // slides. A manifest written by hand may hold anything here; null is a setting that is not given.
   const scaleProblem = templateScaleProblem(manifest.textScale);
   if (scaleProblem) issues.push({ severity: 'error', message: scaleProblem });
+  // How wide its text is set and the least size its running text takes: a setting that is wrong is not used.
+  for (const name of ['characterWidth', 'leastTextSize'] as const) {
+    const problem = templateTextProblem(name, manifest[name]);
+    if (problem) issues.push({ severity: 'warning', message: problem });
+  }
   const colors: unknown = manifest.colors;
   if (colors !== undefined && colors !== null && colors !== false) {
     if (typeof colors !== 'object' || Array.isArray(colors)) {

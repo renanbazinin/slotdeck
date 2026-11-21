@@ -57,13 +57,19 @@ function units(text: string): Unit[] {
  * end with the given text, with the given word to follow, stays inside the line and so needs
  * room. PowerPoint keeps it inside when the text on both sides of that space runs against the
  * paragraph's direction.
+ *
+ * `opened` says the first line already holds text, a heading set run in, and `first` is what is
+ * left of it: a word that does not fit there starts the next line, as after any word, and is cut
+ * only where it is wider than a whole line. The first line is then `''`.
  */
-export function breakLines(text: string, first: number, rest: number, measure: (text: string) => number, inside?: (line: string, next: string) => boolean): string[] {
+export function breakLines(text: string, first: number, rest: number, measure: (text: string) => number, inside?: (line: string, next: string) => boolean, opened = false): string[] {
   const lines: string[] = [];
   let line = '';
   let width = 0;
   let gap = '';
   const limit = () => (lines.length === 0 ? first : rest);
+  /** Whether the line being filled holds text: its own, or the heading that opens the first. */
+  const holds = () => line !== '' || (opened && lines.length === 0);
 
   const all = units(text);
   for (let index = 0; index < all.length; index++) {
@@ -73,11 +79,11 @@ export function breakLines(text: string, first: number, rest: number, measure: (
     const gapWidth = line !== '' && gap !== '' ? measure(gap) : 0;
     const next = all[index + 1]?.word;
     const tail = inside && line !== '' && unit.gap !== '' && next !== undefined && inside(line + gap + word, next) ? measure(unit.gap) : 0;
-    if (line !== '' && width + gapWidth + wordWidth + tail <= limit()) {
+    if (holds() && width + gapWidth + wordWidth + tail <= limit()) {
       line += gap + word;
       width += gapWidth + wordWidth;
     } else {
-      if (line !== '') {
+      if (holds()) {
         lines.push(line + gap);
         line = '';
         width = 0;

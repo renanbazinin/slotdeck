@@ -260,13 +260,15 @@ the layout stays:
 
 ![A Hebrew deck on the left-to-right demo template](docs/hebrew.png)
 
-- Every paragraph gets the direction of its own text, so a Hebrew deck may hold an English line.
+- Every paragraph gets the direction of its own text: a Hebrew deck may hold an English line, and a Hebrew line
+  that opens with an English word still reads right to left.
 - Alignment mirrors (`alignOnDirectionChange: 'flip'`, for the whole template or per slot). Templates whose text
   boxes share one edge but not the other can `keep` it.
 - Rows and grids of items are filled mirror-wise, so the deck's first card is where its readers start.
 - Tables and charts run in the deck's direction.
-- Right-to-left runs are marked with their language, because PowerPoint places punctuation by the language of a
-  run: without it, the colon in "contact: name@example.org" lands on the wrong side of the address.
+- Each run is marked with the language of its text, because PowerPoint places punctuation and figures by the
+  language of a run: without it, the colon in "contact: name@example.org" lands on the wrong side of the address,
+  and English on a Hebrew template has its figures moved.
 - Shapes do not move. A photo on the right stays on the right.
 
 ## Templates

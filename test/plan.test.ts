@@ -86,7 +86,8 @@ test('the content schema holds exactly the chosen slides and the slots the model
   assert.deepEqual(outlineSchema.properties.slides?.items?.properties.pattern?.enum, ['content', 'closing', 'free']);
 
   const schema = schemaOf(requests[1]);
-  assert.deepEqual(Object.keys(schema.properties), ['s1', 's2']);
+  // The closing title comes from a deck field, so that slide has nothing left to write, and is not asked for.
+  assert.deepEqual(Object.keys(schema.properties), ['s1']);
   const s1 = schema.properties.s1 as Schema;
   // `icon` keeps the template's own picture, so the model is not asked for it.
   assert.deepEqual(Object.keys(s1.properties), ['title', 'body', 'photo', 'note']);
@@ -94,8 +95,6 @@ test('the content schema holds exactly the chosen slides and the slots the model
   assert.equal(s1.properties.body?.type, 'array');
   assert.equal(s1.properties.body?.maxItems, 3);
   assert.deepEqual(s1.properties.photo?.required, ['prompt', 'alt']);
-  // The closing title comes from a deck field, so that slide has nothing left to write.
-  assert.deepEqual(Object.keys((schema.properties.s2 as Schema).properties), []);
   assert.ok(!JSON.stringify(schema).includes('anyOf'));
 });
 

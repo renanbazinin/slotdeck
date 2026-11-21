@@ -72,7 +72,7 @@ function unfitted(plan: FreePlan, slots: SlideSpec['slots'] | undefined): Map<st
  * same frame whatever else the deck holds. A sentence instead when the template cannot carry
  * a free slide.
  */
-export function freeFor(template: Template, deck: Pick<DeckSpec, 'direction' | 'textScale'>, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 'slots' | 'base'>, planning?: FreeContext['planning']): FreeResolved | string {
+export function freeFor(template: Template, deck: Pick<DeckSpec, 'direction' | 'textScale'>, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 'slots' | 'base' | 'headings'>, planning?: FreeContext['planning']): FreeResolved | string {
   // Blocks that are no blocks give no slide to work out. The deck's check says what is wrong
   // with them; whoever asks without that check (the design checks, the pictures of a deck) is
   // told here, in a sentence, and passes the slide over.
@@ -85,41 +85,54 @@ export function freeFor(template: Template, deck: Pick<DeckSpec, 'direction' | '
   // A number written as text is read as that number; null is a size that is not set.
   if (deck.textScale !== undefined && deck.textScale !== null) context.textScale = Number(deck.textScale);
   if (planning) context.planning = planning;
-  const resolved: FreeResolved = { kit, plan: freePlan(kit, slide, context) };
+  const resolved: Omit<FreeResolved, 'plan'> = { kit };
   // A frame that is gone needs no reason; one that is there and cannot carry a free slide has one.
   if (slide.base !== undefined && kit.base !== slide.base && template.manifest.patterns.some((pattern) => pattern.id === slide.base)) {
     const refused = freeBaseRefusal(template, slide.base);
     if (refused !== undefined) resolved.refused = refused;
   }
   const asked = context.textScale ?? 1;
-  if (planning || !(asked > 1)) return resolved;
+  if (planning || !(asked > 1)) return { ...resolved, plan: freePlan(kit, slide, context) };
   // A deck that asks for larger text must not get smaller text for it. Larger text takes room
   // from its neighbours, and a part that is then fitted to what is left can end up under the
   // size it has without the wish. So the slide is also planned without the wish, and that plan
   // says the least every text may be. The slide takes all of what was asked, or half of it, or
-  // none: the most at which no text is smaller.
-  const plain = freePlan(kit, slide, { ...context, textScale: 1 });
+  // none: the most at which no text is smaller. That least is counted as 0.6.6 counted
+  // (`FreeContext.asThen`): a text that the count of headings run in, or of the template's own
+  // width, sets larger without the wish would otherwise cost the rest of the slide the wish that
+  // 0.6.6 gave it. Where none is given, the slide is set as without the wish, counted as now.
+  //
+  // How much of the wish it takes is chosen as 0.6.8 chose it, every plan counted at the
+  // template's own spacing (`FreeContext.ownSpacing`): where spacing gives way (0.6.9), a text lifted
+  // just to the least let the slide take the whole wish, and left that text, or a note beside it,
+  // smaller than 0.6.8 set it. The share chosen is then made with spacing that gives way, no text
+  // under the size it has in the plan chosen (`atLeast`): closer spacing only sets a text larger.
+  const own: FreeContext = { ...context, ownSpacing: true };
+  const plain = freePlan(kit, slide, { ...own, textScale: 1 });
   resolved.plain = plain;
-  const least = textSizes(plain);
+  const least = textSizes(freePlan(kit, slide, { ...own, textScale: 1, asThen: true }));
   const smaller = (plan: FreePlan): boolean => [...textSizes(plan)].some(([name, size]) => size < (least.get(name) ?? 0) - 1e-6);
-  if (!smaller(resolved.plan)) return resolved;
-  for (const [scale, enlarged] of [[asked, undefined], [1 + (asked - 1) / 2, 'half']] as const) {
-    const plan = scale === asked ? resolved.plan : freePlan(kit, slide, { ...context, textScale: scale });
-    if (!smaller(plan)) return { ...resolved, plan, ...(enlarged ? { enlarged } : {}) };
-    // Often all that is smaller is a half point lost to rounding, or to a block that got a
-    // little narrower in the larger room a fuller slide takes. That must not cost the slide its
-    // larger text: such a text is held at the size it has without the wish (`atLeast`), and
-    // the slide is made so when nothing is then left with less room than it needs, measured
-    // against the plan as it was and against the plan without the wish.
-    const held = freePlan(kit, slide, { ...context, textScale: scale, atLeast: least });
-    const before = [unfitted(plan, slide.slots), unfitted(plain, slide.slots)];
-    const crowded = [...unfitted(held, slide.slots)].some(([name, has]) => !before.some((other) => {
-      const had = other.get(name);
-      return had !== undefined && had.chars <= has.chars && had.paragraphs <= has.paragraphs;
-    }));
-    if (!smaller(held) && !crowded) return { ...resolved, plan: held, ...(enlarged ? { enlarged } : {}) };
-  }
-  return { ...resolved, plan: plain, enlarged: 'none' };
+  const chosen = ((): { scale: number; plan: FreePlan; enlarged?: 'half' | 'none' } => {
+    for (const [scale, enlarged] of [[asked, undefined], [1 + (asked - 1) / 2, 'half']] as const) {
+      const plan = freePlan(kit, slide, { ...own, textScale: scale });
+      if (!smaller(plan)) return { scale, plan, ...(enlarged ? { enlarged } : {}) };
+      // Often all that is smaller is a half point lost to rounding, or to a block that got a
+      // little narrower in the larger room a fuller slide takes. That must not cost the slide its
+      // larger text: such a text is held at the size it has without the wish (`atLeast`), and
+      // the slide is made so when nothing is then left with less room than it needs, measured
+      // against the plan as it was and against the plan without the wish.
+      const held = freePlan(kit, slide, { ...own, textScale: scale, atLeast: least });
+      const before = [unfitted(plan, slide.slots), unfitted(plain, slide.slots)];
+      const crowded = [...unfitted(held, slide.slots)].some(([name, has]) => !before.some((other) => {
+        const had = other.get(name);
+        return had !== undefined && had.chars <= has.chars && had.paragraphs <= has.paragraphs;
+      }));
+      if (!smaller(held) && !crowded) return { scale, plan: held, ...(enlarged ? { enlarged } : {}) };
+    }
+    return { scale: 1, plan: plain, enlarged: 'none' };
+  })();
+  const plan = freePlan(kit, slide, { ...context, textScale: chosen.scale, atLeast: textSizes(chosen.plan) });
+  return { ...resolved, plan, ...(chosen.enlarged ? { enlarged: chosen.enlarged } : {}) };
 }
 
 /**

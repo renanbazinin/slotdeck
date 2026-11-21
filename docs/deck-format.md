@@ -109,6 +109,7 @@ A deck without `colors`, `patterns` and free slides renders to the same bytes as
 | `arrange` | `{ columns?, lead?, dense? }` | no | A free slide only: wishes about how its blocks are set out. `dense: true`, set by the planner, marks a long text a person asked to have whole: where it is too long for the template's size it is set smaller, down to the least size that reads. See "A long text a person asked for" in [free-slides.md](free-slides.md). |
 | `base` | string | no | A free slide only: the id of the pattern whose frame it stands on. Left out, the template's usual one. |
 | `passages` | integer[] | no | A deck made from a document: the passages of it this slide carries, by number from 1, as `documentPassages` numbers them. Rendering does not read it. |
+| `headings` | string[] | no | A deck made from a document: the headings of the document that stand in the slide's text as paragraphs of their own, word for word, in the order of the text. Each is set in bold at the head of the paragraph under it (run in), an em space opening the paragraph's text, or on a line of its own over a list item, a table row or another heading, over a paragraph it would turn the other way, or where it is too long to run in. Set by the planner; a paragraph no entry names is plain text, and a value that is not a list of strings names none (from 0.6.6). |
 
 ## Slot values
 

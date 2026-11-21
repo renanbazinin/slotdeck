@@ -77,10 +77,12 @@ pagusPreviews(pagusCore, pagusRenderer, {
 ### Right-to-left text
 
 Pagus leaves the direction of a paragraph to the browser, which takes a paragraph to run left to right unless
-told otherwise. The adapter therefore marks every paragraph that starts with a right-to-left letter as running
-right to left, the same rule slotdeck's renderer uses when it writes the pptx. Without this, a Hebrew sentence
-gets its full stop on the wrong side and a line that mixes Hebrew with an address or a number comes out in the
-wrong order.
+told otherwise. The adapter therefore marks a paragraph as running right to left by the rule slotdeck's
+renderer writes the pptx by: a paragraph that starts with a right-to-left letter, and in a deck that reads
+right to left, one with any right-to-left letter. It learns which way the deck reads from
+`PreviewRequest.direction`, which `previewDeck`, `patternPreviews`, the chat tools and `visionReview` fill; asked
+without it, it goes by the first letter. Without this, a Hebrew sentence gets its full stop on the wrong side
+and a line that mixes Hebrew with an address or a number comes out in the wrong order.
 
 ## Thumbnails of a template's patterns
 

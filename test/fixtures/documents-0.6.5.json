@@ -1,0 +1,144 @@
+{
+  "document en dense x2": {
+    "version": 1,
+    "language": "en",
+    "direction": "ltr",
+    "brief": "A deck from the review",
+    "slides": [
+      {
+        "pattern": "free",
+        "blocks": [
+          "text"
+        ],
+        "arrange": {
+          "lead": "none",
+          "dense": true
+        },
+        "base": "list-with-photo",
+        "slots": {
+          "title": "Background",
+          "b1Text": [
+            "The city opened its bike share in 2019 with forty stations and four hundred bikes. Riders took more trips every year, and the busiest month was always June. Students and commuters make up most members, while visitors buy day passes. Each station has room for twelve bikes and a screen that shows the nearest dock.",
+            "The council pays for the docks, and a private firm runs the fleet on contract. Repairs take two days on average, and a van moves bikes from full stations at night. Electric bikes were added in 2022 and now make up a third of all trips. A yearly pass costs sixty euros, and a single ride costs one euro.",
+            "Riders",
+            "Students and commuters make up most members, while visitors buy day passes. Each station has room for twelve bikes and a screen that shows the nearest dock. The council pays for the docks, and a private firm runs the fleet on contract. Repairs take two days on average, and a van moves bikes from full stations at night.",
+            "Electric bikes were added in 2022 and now make up a third of all trips. A yearly pass costs sixty euros, and a single ride costs one euro. Surveys show that nine in ten riders would recommend the service to a friend. The main complaint is that docks near the station are often full in the morning. Crime is low: fewer than twenty bikes a year are stolen or lost."
+          ]
+        },
+        "passages": [
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      {
+        "pattern": "free",
+        "blocks": [
+          "text"
+        ],
+        "arrange": {
+          "lead": "none",
+          "dense": true
+        },
+        "base": "list-with-photo",
+        "slots": {
+          "title": "Costs",
+          "b1Text": [
+            "A yearly pass costs sixty euros, and a single ride costs one euro. Surveys show that nine in ten riders would recommend the service to a friend. The main complaint is that docks near the station are often full in the morning. Crime is low: fewer than twenty bikes a year are stolen or lost. The firm proposes forty new stations in the outer districts by 2027.",
+            "The main complaint is that docks near the station are often full in the morning. Crime is low: fewer than twenty bikes a year are stolen or lost. The firm proposes forty new stations in the outer districts by 2027. The city opened its bike share in 2019 with forty stations and four hundred bikes. Riders took more trips every year, and the busiest month was always June.",
+            "Plans",
+            "The firm proposes forty new stations in the outer districts by 2027. The city opened its bike share in 2019 with forty stations and four hundred bikes. Riders took more trips every year, and the busiest month was always June. Students and commuters make up most members, while visitors buy day passes.",
+            "Riders took more trips every year, and the busiest month was always June. Students and commuters make up most members, while visitors buy day passes. Each station has room for twelve bikes and a screen that shows the nearest dock. The council pays for the docks, and a private firm runs the fleet on contract.",
+            "Repairs take two days on average, and a van moves bikes from full stations at night. Electric bikes were added in 2022 and now make up a third of all trips. A yearly pass costs sixty euros, and a single ride costs one euro. Surveys show that nine in ten riders would recommend the service to a friend."
+          ]
+        },
+        "passages": [
+          5,
+          6,
+          7,
+          8,
+          9
+        ]
+      }
+    ],
+    "title": "Review",
+    "fields": {
+      "organizationDepartment": "Retail"
+    },
+    "document": "Background\nThe city opened its bike share in 2019 with forty stations and four hundred bikes. Riders took more trips every year, and the busiest month was always June. Students and commuters make up most members, while visitors buy day passes. Each station has room for twelve bikes and a screen that shows the nearest dock.\nThe council pays for the docks, and a private firm runs the fleet on contract. Repairs take two days on average, and a van moves bikes from full stations at night. Electric bikes were added in 2022 and now make up a third of all trips. A yearly pass costs sixty euros, and a single ride costs one euro.\n\nRiders\nStudents and commuters make up most members, while visitors buy day passes. Each station has room for twelve bikes and a screen that shows the nearest dock. The council pays for the docks, and a private firm runs the fleet on contract. Repairs take two days on average, and a van moves bikes from full stations at night.\nElectric bikes were added in 2022 and now make up a third of all trips. A yearly pass costs sixty euros, and a single ride costs one euro. Surveys show that nine in ten riders would recommend the service to a friend. The main complaint is that docks near the station are often full in the morning. Crime is low: fewer than twenty bikes a year are stolen or lost.\n\nCosts\nA yearly pass costs sixty euros, and a single ride costs one euro. Surveys show that nine in ten riders would recommend the service to a friend. The main complaint is that docks near the station are often full in the morning. Crime is low: fewer than twenty bikes a year are stolen or lost. The firm proposes forty new stations in the outer districts by 2027.\nThe main complaint is that docks near the station are often full in the morning. Crime is low: fewer than twenty bikes a year are stolen or lost. The firm proposes forty new stations in the outer districts by 2027. The city opened its bike share in 2019 with forty stations and four hundred bikes. Riders took more trips every year, and the busiest month was always June.\n\nPlans\nThe firm proposes forty new stations in the outer districts by 2027. The city opened its bike share in 2019 with forty stations and four hundred bikes. Riders took more trips every year, and the busiest month was always June. Students and commuters make up most members, while visitors buy day passes.\nRiders took more trips every year, and the busiest month was always June. Students and commuters make up most members, while visitors buy day passes. Each station has room for twelve bikes and a screen that shows the nearest dock. The council pays for the docks, and a private firm runs the fleet on contract.\nRepairs take two days on average, and a van moves bikes from full stations at night. Electric bikes were added in 2022 and now make up a third of all trips. A yearly pass costs sixty euros, and a single ride costs one euro. Surveys show that nine in ten riders would recommend the service to a friend."
+  },
+  "document he dense": {
+    "version": 1,
+    "language": "he",
+    "direction": "rtl",
+    "brief": "A deck from the review",
+    "slides": [
+      {
+        "pattern": "free",
+        "blocks": [
+          "text"
+        ],
+        "arrange": {
+          "lead": "none",
+          "dense": true
+        },
+        "base": "list-with-photo",
+        "slots": {
+          "title": "רקע",
+          "b1Text": [
+            "הצוות עובד יחד כל שבוע כדי לשפר את השירות לכל מי שגר בעיר ובסביבתה. הלקוחות מקבלים מענה מהיר יותר בזכות המערכת החדשה שהותקנה בכל הסניפים. בשנה הבאה נפתח שלושה סניפים חדשים בצפון ונגייס עשרים עובדים נוספים. התקציב לשנה הבאה גדל בעשרה אחוזים ויוקדש בעיקר להדרכה ולמחשוב. הסקר האחרון מראה ששמונה מכל עשרה לקוחות מרוצים מהיחס שקיבלו. הסיכון העיקרי הוא מחסור בעובדים מנוסים בתקופת החגים העמוסה.",
+            "הלקוחות מקבלים מענה מהיר יותר בזכות המערכת החדשה שהותקנה בכל הסניפים. בשנה הבאה נפתח שלושה סניפים חדשים בצפון ונגייס עשרים עובדים נוספים. התקציב לשנה הבאה גדל בעשרה אחוזים ויוקדש בעיקר להדרכה ולמחשוב. הסקר האחרון מראה ששמונה מכל עשרה לקוחות מרוצים מהיחס שקיבלו. הסיכון העיקרי הוא מחסור בעובדים מנוסים בתקופת החגים העמוסה. הצוות עובד יחד כל שבוע כדי לשפר את השירות לכל מי שגר בעיר ובסביבתה.",
+            "תוכנית",
+            "התקציב לשנה הבאה גדל בעשרה אחוזים ויוקדש בעיקר להדרכה ולמחשוב. הסקר האחרון מראה ששמונה מכל עשרה לקוחות מרוצים מהיחס שקיבלו. הסיכון העיקרי הוא מחסור בעובדים מנוסים בתקופת החגים העמוסה. הצוות עובד יחד כל שבוע כדי לשפר את השירות לכל מי שגר בעיר ובסביבתה. הלקוחות מקבלים מענה מהיר יותר בזכות המערכת החדשה שהותקנה בכל הסניפים. בשנה הבאה נפתח שלושה סניפים חדשים בצפון ונגייס עשרים עובדים נוספים.",
+            "הסקר האחרון מראה ששמונה מכל עשרה לקוחות מרוצים מהיחס שקיבלו. הסיכון העיקרי הוא מחסור בעובדים מנוסים בתקופת החגים העמוסה. הצוות עובד יחד כל שבוע כדי לשפר את השירות לכל מי שגר בעיר ובסביבתה. הלקוחות מקבלים מענה מהיר יותר בזכות המערכת החדשה שהותקנה בכל הסניפים. בשנה הבאה נפתח שלושה סניפים חדשים בצפון ונגייס עשרים עובדים נוספים. התקציב לשנה הבאה גדל בעשרה אחוזים ויוקדש בעיקר להדרכה ולמחשוב.",
+            "סיכונים",
+            "הלקוחות מקבלים מענה מהיר יותר בזכות המערכת החדשה שהותקנה בכל הסניפים. בשנה הבאה נפתח שלושה סניפים חדשים בצפון ונגייס עשרים עובדים נוספים. התקציב לשנה הבאה גדל בעשרה אחוזים ויוקדש בעיקר להדרכה ולמחשוב. הסקר האחרון מראה ששמונה מכל עשרה לקוחות מרוצים מהיחס שקיבלו. הסיכון העיקרי הוא מחסור בעובדים מנוסים בתקופת החגים העמוסה. הצוות עובד יחד כל שבוע כדי לשפר את השירות לכל מי שגר בעיר ובסביבתה.",
+            "הסיכון העיקרי הוא מחסור בעובדים מנוסים בתקופת החגים העמוסה. הצוות עובד יחד כל שבוע כדי לשפר את השירות לכל מי שגר בעיר ובסביבתה. הלקוחות מקבלים מענה מהיר יותר בזכות המערכת החדשה שהותקנה בכל הסניפים. בשנה הבאה נפתח שלושה סניפים חדשים בצפון ונגייס עשרים עובדים נוספים. התקציב לשנה הבאה גדל בעשרה אחוזים ויוקדש בעיקר להדרכה ולמחשוב. הסקר האחרון מראה ששמונה מכל עשרה לקוחות מרוצים מהיחס שקיבלו."
+          ]
+        },
+        "passages": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      }
+    ],
+    "title": "Review",
+    "fields": {
+      "organizationDepartment": "צוות"
+    },
+    "document": "רקע\nהצוות עובד יחד כל שבוע כדי לשפר את השירות לכל מי שגר בעיר ובסביבתה. הלקוחות מקבלים מענה מהיר יותר בזכות המערכת החדשה שהותקנה בכל הסניפים. בשנה הבאה נפתח שלושה סניפים חדשים בצפון ונגייס עשרים עובדים נוספים. התקציב לשנה הבאה גדל בעשרה אחוזים ויוקדש בעיקר להדרכה ולמחשוב. הסקר האחרון מראה ששמונה מכל עשרה לקוחות מרוצים מהיחס שקיבלו. הסיכון העיקרי הוא מחסור בעובדים מנוסים בתקופת החגים העמוסה.\nהלקוחות מקבלים מענה מהיר יותר בזכות המערכת החדשה שהותקנה בכל הסניפים. בשנה הבאה נפתח שלושה סניפים חדשים בצפון ונגייס עשרים עובדים נוספים. התקציב לשנה הבאה גדל בעשרה אחוזים ויוקדש בעיקר להדרכה ולמחשוב. הסקר האחרון מראה ששמונה מכל עשרה לקוחות מרוצים מהיחס שקיבלו. הסיכון העיקרי הוא מחסור בעובדים מנוסים בתקופת החגים העמוסה. הצוות עובד יחד כל שבוע כדי לשפר את השירות לכל מי שגר בעיר ובסביבתה.\n\nתוכנית\nהתקציב לשנה הבאה גדל בעשרה אחוזים ויוקדש בעיקר להדרכה ולמחשוב. הסקר האחרון מראה ששמונה מכל עשרה לקוחות מרוצים מהיחס שקיבלו. הסיכון העיקרי הוא מחסור בעובדים מנוסים בתקופת החגים העמוסה. הצוות עובד יחד כל שבוע כדי לשפר את השירות לכל מי שגר בעיר ובסביבתה. הלקוחות מקבלים מענה מהיר יותר בזכות המערכת החדשה שהותקנה בכל הסניפים. בשנה הבאה נפתח שלושה סניפים חדשים בצפון ונגייס עשרים עובדים נוספים.\nהסקר האחרון מראה ששמונה מכל עשרה לקוחות מרוצים מהיחס שקיבלו. הסיכון העיקרי הוא מחסור בעובדים מנוסים בתקופת החגים העמוסה. הצוות עובד יחד כל שבוע כדי לשפר את השירות לכל מי שגר בעיר ובסביבתה. הלקוחות מקבלים מענה מהיר יותר בזכות המערכת החדשה שהותקנה בכל הסניפים. בשנה הבאה נפתח שלושה סניפים חדשים בצפון ונגייס עשרים עובדים נוספים. התקציב לשנה הבאה גדל בעשרה אחוזים ויוקדש בעיקר להדרכה ולמחשוב.\n\nסיכונים\nהלקוחות מקבלים מענה מהיר יותר בזכות המערכת החדשה שהותקנה בכל הסניפים. בשנה הבאה נפתח שלושה סניפים חדשים בצפון ונגייס עשרים עובדים נוספים. התקציב לשנה הבאה גדל בעשרה אחוזים ויוקדש בעיקר להדרכה ולמחשוב. הסקר האחרון מראה ששמונה מכל עשרה לקוחות מרוצים מהיחס שקיבלו. הסיכון העיקרי הוא מחסור בעובדים מנוסים בתקופת החגים העמוסה. הצוות עובד יחד כל שבוע כדי לשפר את השירות לכל מי שגר בעיר ובסביבתה.\nהסיכון העיקרי הוא מחסור בעובדים מנוסים בתקופת החגים העמוסה. הצוות עובד יחד כל שבוע כדי לשפר את השירות לכל מי שגר בעיר ובסביבתה. הלקוחות מקבלים מענה מהיר יותר בזכות המערכת החדשה שהותקנה בכל הסניפים. בשנה הבאה נפתח שלושה סניפים חדשים בצפון ונגייס עשרים עובדים נוספים. התקציב לשנה הבאה גדל בעשרה אחוזים ויוקדש בעיקר להדרכה ולמחשוב. הסקר האחרון מראה ששמונה מכל עשרה לקוחות מרוצים מהיחס שקיבלו."
+  },
+  "document en text-only": {
+    "version": 1,
+    "language": "en",
+    "direction": "ltr",
+    "brief": "A deck from the review",
+    "slides": [
+      {
+        "pattern": "text-only",
+        "slots": {
+          "title": "Background",
+          "body": [
+            "The city opened its bike share in 2019 with forty stations and four hundred bikes. Riders took more trips every year, and the busiest month was always June.",
+            "Riders",
+            "Students and commuters make up most members, while visitors buy day passes. Each station has room for twelve bikes and a screen that shows the nearest dock."
+          ]
+        },
+        "passages": [
+          1,
+          2
+        ]
+      }
+    ],
+    "title": "Review",
+    "fields": {
+      "organizationDepartment": "Retail"
+    },
+    "document": "Background\nThe city opened its bike share in 2019 with forty stations and four hundred bikes. Riders took more trips every year, and the busiest month was always June.\n\nRiders\nStudents and commuters make up most members, while visitors buy day passes. Each station has room for twelve bikes and a screen that shows the nearest dock."
+  }
+}

@@ -58,6 +58,8 @@ export interface RunStyle {
   caps: boolean;
   /** The language the run is marked with, e.g. `he-IL`; `''` when nothing states one. */
   lang: string;
+  /** The language the run states itself, not by inheritance; `''` when it states none. */
+  ownLang: string;
 }
 
 /** A length in points, or a share of the line height. */
@@ -93,6 +95,18 @@ export interface TextFrame {
   /** Text runs top to bottom, so the box's height is the length of a line. */
   vertical: boolean;
   columns: number;
+  /** The space between two columns, in points (`spcCol`). */
+  columnGap: number;
+  /**
+   * Whether PowerPoint draws the first paragraph's space before and the last one's space after
+   * (`spcFirstLastPara`). Without it, only the space between paragraphs is drawn.
+   */
+  firstLast: boolean;
+  /**
+   * Whether the slide states the shape's size, or the renderer gives it a box: where neither does, the
+   * renderer cannot tell how wide a line of it is, and sets no heading run in (`setHeadings`).
+   */
+  placed: boolean;
   /** One entry for each paragraph of the sample text, styled as the renderer will style new text. */
   paragraphs: ParagraphStyle[];
   /** The sample text, paragraph by paragraph. */
@@ -346,6 +360,9 @@ export class TextStyles {
       lineReduction: fit?.localName === 'normAutofit' ? Number(fit.getAttribute('lnSpcReduction') ?? 0) / 100000 : 0,
       vertical: vert !== null && vert !== 'horz',
       columns: Math.max(1, Number(bodyAttr('numCol') ?? 1) || 1),
+      columnGap: points(bodyAttr('spcCol'), 0),
+      firstLast: /^(1|true)$/.test(bodyAttr('spcFirstLastPara') ?? ''),
+      placed: box !== undefined || !!path(shape, [NS.p, 'spPr'], [NS.a, 'xfrm'], [NS.a, 'ext']),
       paragraphs: paragraphs.map((paragraph) => readParagraph(paragraph, styleRun, lists, theme)),
       sample: paragraphs.map((paragraph) =>
         descendants(paragraph, NS.a, 't')
@@ -531,6 +548,7 @@ function readParagraph(paragraph: Element, styleRun: 'first' | 'last', lists: El
       spacing: Number(runAttr('spc') ?? 0) / 100,
       caps: runAttr('cap') === 'all',
       lang: runAttr('lang') ?? lists.map((list) => path(list, [NS.a, 'defPPr'], [NS.a, 'defRPr'])?.getAttribute('lang')).find(Boolean) ?? '',
+      ownLang: ownRun?.getAttribute('lang') ?? '',
     },
   };
 }

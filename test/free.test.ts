@@ -1931,17 +1931,20 @@ test('a slide whose smallest text is under 9 pt is told so', () => {
 test('a list is fitted point by point: each point in whole lines behind its bullet, with the space between two of them', () => {
   // Six points of 60 characters beside a text. A point takes two lines in the width its bullet leaves, so the
   // list takes twelve lines and five gaps, where its 360 characters alone come to nine lines. At 18 pt
-  // PowerPoint set it 26 pt higher than its box, and nothing was said. It is now set at 16.5 pt, where it fits.
+  // PowerPoint set it 26 pt higher than its box, and nothing was said. It is set at 16.5 pt with the
+  // usual space of 8 between its points, or, the space between them giving way first (0.6.9), at
+  // 17 pt with 7.
   const beside = (points: number) => freeSlide({ title: 'A list of six', blocks: [{ list: Array.from({ length: points }, (_, index) => wordsOf(60, index)), heading: wordsOf(12) }, { text: wordsOf(260), heading: wordsOf(12, 3) }] });
   const six = planOf(beside(6));
   const list = six.shape('Block 1 list');
   const slot = six.slot('b1Items') as FreeTextSlot;
-  assert.deepEqual([list.size, slot.paragraphGap], [16.5, 8]);
-  // Twelve lines of 1.2 times the size and five gaps end inside the box.
-  assert.ok(12 * 1.2 * 16.5 + 5 * 8 <= list.box.h * H + 0.1, `a box ${(list.box.h * H).toFixed(1)} pt high`);
-  assert.ok(12 * 1.2 * 18 + 5 * 9 > list.box.h * H + 4.5, 'at 18 pt it would not');
+  assert.deepEqual([list.size, slot.paragraphGap], [17, 7]);
+  // Twelve lines of 1.2 times the size and five gaps end inside the box, its last line within the
+  // part of a line that may hang under it (a quarter of the size, at most 3 pt).
+  assert.ok(12 * 1.2 * 17 + 5 * 7 <= list.box.h * H + Math.min(3, 0.25 * 17) + 0.1, `a box ${(list.box.h * H).toFixed(1)} pt high`);
+  assert.ok(12 * 1.2 * 18 + 5 * 7 > list.box.h * H + 4.5, 'at 18 pt it would not, even with the gaps closed up');
   // A line of the list is counted in the width its bullet leaves.
-  assert.equal(slot.drawn.hang, 1.1 * 16.5);
+  assert.equal(slot.drawn.hang, 1.1 * 17);
   assert.deepEqual(validateDeck(template, deckOf([beside(6)])), []);
   // Measured with the template's fonts it fits too: the count and the measure agree.
   const measured = loadTemplate(demoPptx, manifest, { fonts: fontkitMetrics(fontkit, openFonts()) });

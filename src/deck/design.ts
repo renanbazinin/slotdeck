@@ -129,7 +129,7 @@ export function checkDesign(template: Template, deck: DeckSpec, options: DesignO
       const resolved = resolveSlot(slot, { ...slide, slots: slide.slots ?? {} }, deck, free ? 'adaptive' : layout, source);
       if ('error' in resolved || resolved.action.type !== 'text') continue;
       const { paragraphs } = resolved.action;
-      const fit = measure.fit(pattern, slot, paragraphs, fitOptions(manifest, deck, slide, freeTextFloor(typeof free === 'string' ? undefined : free, slot, paragraphs, manifest, slide, measure)));
+      const fit = measure.fit(pattern, slot, paragraphs, fitOptions(manifest, deck, slide, freeTextFloor(typeof free === 'string' ? undefined : free, slot, paragraphs, manifest, slide, measure, deck.direction), paragraphs));
       if (!fit) continue;
       const entry: Measured = { source, slot, fit, chars: paragraphs.reduce((sum, paragraph) => sum + paragraph.length, 0), paragraphs: paragraphs.length };
       measured.set(source, entry);
