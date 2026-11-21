@@ -60,8 +60,9 @@ So it is a setting, off unless set:
 
 A chart that reads right to left has the first category of its columns and lines on the right and its value axis
 on the right; its horizontal bars grow from the right, with their names on the right, the first one still at the
-top. A chart whose place the software works out (on a free slide) keeps its room for the value axis and its legend
-mirrored with it. The data behind it (Edit Data) is a sheet that reads right to left. A pie is drawn as it is. A
+top. A chart whose place the software works out (on a free slide) keeps its room for the value axis mirrored with
+it. A legend of its own stands upright at the left, first series at the top: PowerPoint sets a legend under a
+chart from the left whatever direction the chart reads, while the bars of a group follow the chart. The data behind it (Edit Data) is a sheet that reads right to left. A pie is drawn as it is. A
 deck that reads left to right has charts that read left to right, whatever the manifest says.
 
 ## Why runs are marked with a language

@@ -292,8 +292,9 @@ export interface ChartWriting {
   /**
    * The chart reads right to left: the first category stands on the right of columns and lines,
    * with their value axis on the right, and horizontal bars grow from the right, with their names
-   * on the right. The room kept around the plot, and the legend, are mirrored with it. A pie is
-   * drawn as it is. Left out, a chart reads left to right, whatever direction its text reads.
+   * on the right. The room kept around the plot is mirrored with it, and a legend of its own stands
+   * upright at the left, first series at the top. A pie is drawn as it is. Left out, a chart reads
+   * left to right, whatever direction its text reads.
    */
   mirrored?: boolean;
   /** The deck's language, which names the language of a chart whose names are left to right (see {@link chartLanguage}). */
@@ -353,6 +354,12 @@ export function buildChartXml(chart: ChartValue, slot: ChartSlotDef, workbookRel
   const upright = `<c:txPr><a:bodyPr rot="0" vert="horz"/><a:lstStyle/><a:p><a:pPr${direction === 'rtl' ? ' rtl="1"' : ''}><a:defRPr${ownTag}/></a:pPr><a:endParaRPr lang="${escapeXmlAttr(tag)}"/></a:p></c:txPr>`;
   // A chart whose slide shows one legend for all its charts draws none of its own.
   const ownLegend = !spark && drawn?.legend !== false && (several || chart.type === 'pie');
+  // PowerPoint sets a legend under a chart from the left whatever direction the chart reads, while
+  // the bars of a group follow the chart. In a chart that reads right to left the legend stands
+  // upright at the left, opposite the value axis, its first series at the top, as either reader reads it.
+  const sideLegend = ownLegend && mirrored;
+  /** About how wide the legend's longest entry is, a key and a name, in points. */
+  const legendWide = chart.series.reduce((most, series) => Math.max(most, ((chart.type === 'line' ? 3.2 : 1.6) + series.name.length * 0.5 + 0.8) * size), 0);
   const widestOf = (list: readonly number[], decimals?: number) => (look ? list.reduce((most, value) => Math.max(most, shownAs(value, look, decimals).length), 1) : 1);
   /** The room around the plot of a chart whose place is known: see `plotMargins`. A chart that reads right to left has it mirrored, and its legend follows. */
   const room =
@@ -364,10 +371,10 @@ export function buildChartXml(chart: ChartValue, slot: ChartSlotDef, workbookRel
           // The longest label of the axis: of those the plan gave it, and a character more than the longest value where PowerPoint picks them.
           axis: drawn.valueAxis !== false ? (end ? widestOf(axisLabels(end), stepDecimals) : widestOf(values) + 1) : undefined,
           numbers: numbers && chart.type !== 'line' ? widestOf(values) : undefined,
-          legend: ownLegend,
+          legend: ownLegend && !sideLegend,
         })
       : undefined;
-  const margins = room && mirrored ? { ...room, left: room.right, right: room.left } : room;
+  const margins = room && mirrored ? { ...room, left: room.right + (sideLegend ? legendWide + 0.6 * size : 0), right: room.left } : room;
   /**
    * Every how many categories one is named under columns: as many as have room side by side.
    * Each has the width of its place in the plot, which is what PowerPoint gives a name before
@@ -455,7 +462,12 @@ export function buildChartXml(chart: ChartValue, slot: ChartSlotDef, workbookRel
     const h = drawn.height - margins.top - margins.bottom;
     // A frame too small for what stands around the plot is left to PowerPoint.
     if (!(w >= 0.3 * drawn.width && h >= 0.25 * drawn.height)) return undefined;
-    if (ownLegend) {
+    if (sideLegend) {
+      // Upright at the left, in the middle of the plot's height: a line for each series.
+      const high = chart.series.length * 1.4 * size;
+      const y = Math.max(0, margins.top + (h - high) / 2);
+      legendAt = `<c:layout><c:manualLayout><c:xMode val="edge"/><c:yMode val="edge"/><c:x val="${share((0.2 * size) / drawn.width)}"/><c:y val="${share(y / drawn.height)}"/></c:manualLayout></c:layout>`;
+    } else if (ownLegend) {
       // A key and a name for each series: about how wide the legend is, to set it under the middle of the plot.
       const wide = chart.series.reduce((sum, series) => sum + ((chart.type === 'line' ? 3.2 : 1.6) + series.name.length * 0.5 + 0.8) * size, 0);
       const x = Math.max(0, Math.min(drawn.width - wide, margins.left + (w - wide) / 2));
@@ -467,7 +479,7 @@ export function buildChartXml(chart: ChartValue, slot: ChartSlotDef, workbookRel
   const plotLayout = spark
     ? '<c:layout><c:manualLayout><c:layoutTarget val="inner"/><c:xMode val="edge"/><c:yMode val="edge"/><c:x val="0.04"/><c:y val="0.06"/><c:w val="0.92"/><c:h val="0.88"/></c:manualLayout></c:layout>'
     : (counted() ?? '<c:layout/>');
-  const legend = ownLegend ? `<c:legend><c:legendPos val="b"/>${legendAt}<c:overlay val="0"/></c:legend>` : '';
+  const legend = ownLegend ? `<c:legend><c:legendPos val="${sideLegend ? 'l' : 'b'}"/>${legendAt}<c:overlay val="0"/></c:legend>` : '';
   const style = slot.text ?? {};
   const font = style.font ? `<a:latin typeface="${escapeXmlAttr(style.font)}"/><a:ea typeface="${escapeXmlAttr(style.font)}"/><a:cs typeface="${escapeXmlAttr(style.font)}"/>` : '';
   const defaults =

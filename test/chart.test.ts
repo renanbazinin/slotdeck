@@ -382,14 +382,20 @@ test('a chart that reads right to left starts at the right, and is told so by th
     assert.ok(found);
     return [Number(found[1]), Number(found[2])] as const;
   };
-  const legendX = (xml: string) => Number(/<c:legend><c:legendPos val="b"\/><c:layout><c:manualLayout><c:xMode val="edge"\/><c:yMode val="edge"\/><c:x val="([\d.]+)"\//.exec(xml)?.[1]);
+  const legendX = (xml: string) => Number(/<c:legend><c:legendPos val="\w"\/><c:layout><c:manualLayout><c:xMode val="edge"\/><c:yMode val="edge"\/><c:x val="([\d.]+)"\//.exec(xml)?.[1]);
   const left = buildChartXml(pair, { ...slot, drawn }, 'rId1', 'rtl');
   const right = buildChartXml(pair, { ...slot, drawn }, 'rId1', 'rtl', { mirrored: true });
   const [x, w] = plotX(left);
   const [mx, mw] = plotX(right);
-  assert.ok(Math.abs(mw - w) < 1e-3 && Math.abs(mx - (1 - x - w)) < 2e-3, `the plot is mirrored: ${x},${w} and ${mx},${mw}`);
-  assert.ok(x > mx, 'the value axis takes its room on the left, and then on the right');
-  assert.ok(Math.abs(legendX(right) - (legendX(left) + mx - x)) < 2e-3, 'the legend moves with the plot');
+  // The value axis keeps on the right the room it took on the left.
+  assert.ok(Math.abs(1 - mx - mw - x) < 2e-3, `the plot is mirrored: ${x},${w} and ${mx},${mw}`);
+  // PowerPoint sets a legend under a chart from the left whatever the chart reads: in one that reads
+  // right to left it stands upright at the left instead, first series at the top, and the plot keeps
+  // room for it there and none under it.
+  assert.ok(left.includes('<c:legendPos val="b"/>') && right.includes('<c:legendPos val="l"/>'));
+  assert.ok(legendX(right) < 0.05 && mx > legendX(right) + 0.05, `${legendX(right)} then ${mx}`);
+  const plotHigh = (xml: string) => Number(/<c:plotArea><c:layout><c:manualLayout>(?:(?!<\/c:manualLayout>).)*<c:h val="([\d.]+)"\/>/.exec(xml)?.[1]);
+  assert.ok(plotHigh(right) > plotHigh(left), 'no line is kept for a legend under the plot');
 
   // Rendered: the template's setting reaches a deck that reads right to left; a deck states its own; a deck that reads left to right reads so.
   const template = (chartDirection?: 'rtl' | 'ltr') => loadTemplate(pptx, { ...chartManifest(), ...(chartDirection ? { chartDirection } : {}) });

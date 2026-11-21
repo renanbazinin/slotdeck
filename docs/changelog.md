@@ -16,8 +16,9 @@ short rate limit instead of failing.
 
 - **Charts that read right to left** (`chartDirection` on the manifest, for decks that read right to left, or on
   the deck). The first category of columns and lines stands on the right, with the value axis; horizontal bars
-  grow from the right with their names on the right; the room around a free slide's chart and its legend are
-  mirrored; the data behind it (Edit Data) is a sheet that reads right to left. A pie is drawn as it is. Off
+  grow from the right with their names on the right; the room around a free slide's chart is mirrored, and a
+  legend of its own stands upright at the left, first series at the top (PowerPoint sets a legend under a chart
+  from the left whatever the chart reads); the data behind it (Edit Data) is a sheet that reads right to left. A pie is drawn as it is. Off
   unless set: many Hebrew charts of time read from the left. See "Charts that read right to left" in
   [languages.md](languages.md). `changeManifest` sets it with `{ op: 'setManifest', chartDirection: 'rtl' }`.
 - **An item drawn to stand out keeps its place in a deck that reads the other way** (`repeat.emphasis`). In an
@@ -111,7 +112,6 @@ call to fail on the first 503, see the new behaviour. Decks are now told the new
 
 - The highlighted item is found only where exactly one item of three or more looks unlike the rest; two unlike
   items do not say which stands out, and a pair of columns (`sequences`) is not moved.
-- A legend still lists its series from the left in a chart that reads right to left, as PowerPoint orders it.
 - A chart's `null` values are not asked of a model: a chart slide written again in an edit may fill a gap with a
   number. Check a chart with gaps after an edit.
 - Counting capitals and wide letters against character budgets without fonts was tried and left out: an
