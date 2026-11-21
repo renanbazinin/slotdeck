@@ -58,7 +58,7 @@ test('a rate limit waits as long as the service asks, in its header or its Retry
   assert.equal(told.calls(), 2);
   // A picture that failed once is made on the second try; before 0.7.0 the call failed.
   const images = answers([503, { error: { message: 'overloaded' } }, { 'retry-after': '0' }], [200, picture]);
-  assert.deepEqual(await geminiImages({ model: 'i', fetch: images.fetch }).generateImage({ prompt: 'a dog', aspectRatio: 1 }), new TextEncoder().encode('png'));
+  assert.deepEqual(await geminiImages({ model: 'i', fetch: images.fetch }).generateImage({ prompt: 'a dog', kind: 'photo', aspectRatio: 1 }), new TextEncoder().encode('png'));
   assert.equal(images.calls(), 2);
   // A spending cap is not tried again, whatever wait it names.
   const capped = answers([429, { error: { message: 'Your project has exceeded its monthly spending cap' } }, { 'retry-after': '0' }], [200, text]);

@@ -1,5 +1,5 @@
 import { parseHex } from '../color/space.ts';
-import { unstatedChartValues } from '../deck/numbers.ts';
+import { unstatedChartValues, unstatedDetails } from '../deck/numbers.ts';
 import { DeckValidationError } from '../deck/validate.ts';
 import type { Issue, LayoutMode } from '../deck/validate.ts';
 import { FREE_PATTERN } from '../deck/spec.ts';
@@ -2025,7 +2025,7 @@ export async function writeDeck(loaded: Template, plan: DeckPlan, options: PlanO
   const issues = draft.issues.filter((issue) => !sent.has(issue));
   const shortWritten = writtenUnder(draft.deck, told).map((under) => writtenShort(under, language));
   const keptLeft = doc ? keptWarnings(doc, kept, draft.deck) : [];
-  return { deck: draft.deck, warnings: [...issues, ...unstatedChartValues(template.manifest, draft.deck), ...short, ...keptLeft, ...shortWritten], outline: plan.slides };
+  return { deck: draft.deck, warnings: [...issues, ...unstatedChartValues(template.manifest, draft.deck), ...unstatedDetails(draft.deck), ...short, ...keptLeft, ...shortWritten], outline: plan.slides };
 }
 
 /** Brief to deck spec in one go: {@link planOutline}, then {@link writeDeck}. */

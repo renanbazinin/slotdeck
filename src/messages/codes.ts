@@ -44,6 +44,12 @@ export interface IssueValues {
   'chart-format-unknown': { format: string };
   /** `numbers` are the values, joined with ", ". */
   'chart-values-unstated': { numbers: string; count: number };
+  /** Contact details and figures in a text that the brief does not give, as they stand on the slide. */
+  'text-details-unstated': { details: string; count: number };
+  /** Text that stands where a value belongs, such as "XX%" or "[name]". */
+  'text-stand-in': { found: string };
+  /** Words in which a text speaks about the slide, such as "this slide". */
+  'text-about-slide': { found: string };
   /** `word` is the lone word as the message quotes it: in JSON, cut at 30 characters. */
   'text-orphan': { lines: number; word: string; chars: number };
   /** One of `sampleLines` (the lines the template's own text takes) and `capacity` (the lines the box holds). */
@@ -122,6 +128,9 @@ export const ISSUE_CODES: readonly IssueCode[] = [
   'chart-over-series',
   'chart-format-unknown',
   'chart-values-unstated',
+  'text-details-unstated',
+  'text-stand-in',
+  'text-about-slide',
   'text-orphan',
   'text-empty',
   'row-uneven',

@@ -1,6 +1,6 @@
 import { DeckValidationError, validateDeck } from '../deck/validate.ts';
 import type { Issue } from '../deck/validate.ts';
-import { unstatedChartValues } from '../deck/numbers.ts';
+import { unstatedChartValues, unstatedDetails } from '../deck/numbers.ts';
 import { FREE_PATTERN, isChartValue, isFreeSlide, isImageRef, toParagraphs } from '../deck/spec.ts';
 import type { DeckColors, DeckSpec, FreeArrange, FreeBlockKind, SlideSpec, SlotValue } from '../deck/spec.ts';
 import { isFreeBlockKind } from '../free/blocks.ts';
@@ -1530,5 +1530,7 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
     return kept !== undefined && !kept.has(JSON.stringify(draft.deck.slides[(issue.slide as number) - 1]?.slots[issue.slot ?? '']));
   });
   const rewritten = [...jobs.map((job) => job.number).filter((number) => !same.has(number)), ...reshaped].sort((a, b) => a - b);
-  return result(draft.deck, rewritten, [...draft.issues.filter((issue) => !sent.has(issue)), ...unstated]);
+  // The details of the slides written now, as their chart numbers.
+  const details = unstatedDetails(draft.deck, new Set(rewritten));
+  return result(draft.deck, rewritten, [...draft.issues.filter((issue) => !sent.has(issue)), ...unstated, ...details]);
 }

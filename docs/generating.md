@@ -585,8 +585,13 @@ flagged too; treat the warning as a prompt to check.
 
 From 0.7.0 every writer is told never to state the organisation's own procedures, terms, prices, contacts (people,
 phone numbers, email or web addresses), results or plans that the brief does not give, and never to write about
-the slide itself ("this slide is about") as slide text. A model may still invent a detail. State such details in
-the brief, or review the deck.
+the slide itself ("this slide is about") as slide text. A model may still invent a detail, so the planner also
+checks what the slides say, by code, as it checks chart numbers: an email or web address, a phone number, "24/7"
+or a percentage that the brief, the document and the deck's fields do not give comes back as a warning
+(`text-details-unstated`), and so do stand-ins where a value belongs, such as "XX%" or "[name]"
+(`text-stand-in`), and text about the slide itself, such as "this slide" or "בשקף זה" (`text-about-slide`).
+These are warnings for a person, not problems for the model to repair: a detail the brief gives in other words is
+told too. State such details in the brief or the deck's fields, or review the deck.
 
 ## The steps on their own
 
