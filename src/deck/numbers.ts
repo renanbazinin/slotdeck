@@ -1,7 +1,7 @@
 import type { TemplateManifest } from '../template/manifest.ts';
 import { freeSlots, isFreeBlockKind } from '../free/blocks.ts';
 import { isChartValue, isFreeSlide, isTableValue, isTextValue, knownValues, toParagraphs } from './spec.ts';
-import type { DeckSpec } from './spec.ts';
+import type { ChartValue, DeckSpec, SlideSpec } from './spec.ts';
 import type { Issue } from './validate.ts';
 import { said } from '../messages/en.ts';
 
@@ -127,4 +127,32 @@ export function unstatedDetails(deck: DeckSpec, slides?: ReadonlySet<number>): I
     }
   });
   return issues;
+}
+
+/**
+ * A slide written again in a change, with the gaps of its charts kept. A writer is given numbers
+ * only, so where a chart had a value that is not known (`null`), it writes a number: that value
+ * stays a gap unless `stated` (the numbers of the request, the brief and the document) has the new
+ * number. The chart is matched by its slot, its categories and series by their place where it has
+ * as many as before (a translated chart renames them), else its series by their names.
+ */
+export function keptGaps(before: SlideSpec, after: SlideSpec, stated: ReadonlySet<number>): SlideSpec {
+  let changed = false;
+  const slots = { ...after.slots };
+  for (const [name, value] of Object.entries(after.slots ?? {})) {
+    const old = before.slots?.[name];
+    if (!isChartValue(value) || !isChartValue(old) || old.categories.length !== value.categories.length) continue;
+    const byPlace = old.series.length === value.series.length;
+    const series = value.series.map((entry, index): ChartValue['series'][number] => {
+      const was = byPlace ? old.series[index] : old.series.find((candidate) => candidate.name === entry.name);
+      if (!was || !Array.isArray(was.values) || !Array.isArray(entry.values)) return entry;
+      const values = entry.values.map((number, at) => (was.values[at] === null && typeof number === 'number' && !stated.has(number) ? null : number));
+      return values.some((number, at) => number !== entry.values[at]) ? { ...entry, values } : entry;
+    });
+    if (series.some((entry, index) => entry !== value.series[index])) {
+      slots[name] = { ...value, series };
+      changed = true;
+    }
+  }
+  return changed ? { ...after, slots } : after;
 }

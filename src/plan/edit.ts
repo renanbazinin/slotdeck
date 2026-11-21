@@ -1,6 +1,6 @@
 import { DeckValidationError, validateDeck } from '../deck/validate.ts';
 import type { Issue } from '../deck/validate.ts';
-import { unstatedChartValues, unstatedDetails } from '../deck/numbers.ts';
+import { keptGaps, statedNumbers, unstatedChartValues, unstatedDetails } from '../deck/numbers.ts';
 import { FREE_PATTERN, isChartValue, isFreeSlide, isImageRef, toParagraphs } from '../deck/spec.ts';
 import type { DeckColors, DeckSpec, FreeArrange, FreeBlockKind, SlideSpec, SlotValue } from '../deck/spec.ts';
 import { isFreeBlockKind } from '../free/blocks.ts';
@@ -1509,6 +1509,12 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
 
   const errors = draft.issues.filter((issue) => issue.severity === 'error');
   if (errors.length > 0) throw new DeckValidationError(errors);
+  // A chart's values that were not known stay so where the request gives no number for them.
+  const statedNow = statedNumbers([instruction, deck.brief ?? '', deck.document ?? ''].join('\n'));
+  for (const job of jobs) {
+    const now = draft.deck.slides[job.number - 1];
+    if (now && job.source) draft.deck.slides[job.number - 1] = keptGaps(job.source, now, statedNow);
+  }
   if (doc) notes.push(...keptWarnings(doc, keptChecks, draft.deck));
   notes.push(...writtenUnder(draft.deck, told).map((under) => writtenShort(under, language)));
   // A slide the plan had words for and named no part of to write: its title was offered. Where

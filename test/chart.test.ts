@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { strFromU8, unzipSync } from 'fflate';
 import { DeckValidationError, PptxPackage, changeManifest, checkManifest, editManifest, loadTemplate, planDeck, renderDeck, validateDeck } from '../src/index.ts';
 import type { ChartValue, DeckSpec, JsonRequest, LlmProvider, SlideSpec, TemplateManifest } from '../src/index.ts';
-import { statedNumbers } from '../src/deck/numbers.ts';
+import { keptGaps, statedNumbers } from '../src/deck/numbers.ts';
 import { readRels, resolveTarget } from '../src/pptx/package.ts';
 import { NS, descendants, parseXml, path, rootElement } from '../src/pptx/xml.ts';
 import { chartAlt } from '../src/render/alt.ts';
@@ -487,4 +487,20 @@ test('a studio sets the direction of charts, and clears it; a value that is no d
   const back = await editManifest(loadTemplate(pptx, asked.manifest), 'Draw charts left to right again.', { llm });
   assert.equal('chartDirection' in back.manifest, false);
   assert.match(requests[1]?.prompt ?? '', /the charts of a deck that reads right to left are drawn from the right/);
+});
+
+test('keptGaps: a gap stays where the chart keeps its shape and the request gives no number for it', () => {
+  const before: SlideSpec = { pattern: 'chart', slots: { title: 'T', chart: { type: 'line', categories: ['a', 'b', 'c'], series: [{ name: 'x', values: [1, null, 3] }, { name: 'y', values: [null, 5, 6] }] } } };
+  const after = (values: Array<Array<number | null>>, categories = ['A', 'B', 'C'], names = ['X', 'Y']): SlideSpec => ({ pattern: 'chart', slots: { title: 'T', chart: { type: 'line', categories, series: names.map((name, at) => ({ name, values: values[at] ?? [] })) } } });
+  const valuesOf = (slide: SlideSpec) => (slide.slots.chart as ChartValue).series.map((series) => series.values);
+  // Renamed (translated): matched by place.
+  assert.deepEqual(valuesOf(keptGaps(before, after([[1, 0, 3], [9, 5, 6]]), new Set([9]))), [[1, null, 3], [9, 5, 6]]);
+  // Fewer series: matched by name, and one that is new is left as it is.
+  assert.deepEqual(valuesOf(keptGaps(before, after([[1, 7, 3]], ['a', 'b', 'c'], ['x']), new Set())), [[1, null, 3]]);
+  assert.deepEqual(valuesOf(keptGaps(before, after([[1, 7, 3]], ['a', 'b', 'c'], ['z']), new Set())), [[1, 7, 3]]);
+  // Another number of categories is another chart; nothing changed gives the same slide.
+  const longer = after([[1, 2, 3, 4], [5, 6, 7, 8]], ['a', 'b', 'c', 'd']);
+  assert.equal(keptGaps(before, longer, new Set()), longer);
+  const same = after([[1, null, 3], [null, 5, 6]]);
+  assert.equal(keptGaps(before, same, new Set()), same);
 });
