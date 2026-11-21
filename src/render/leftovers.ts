@@ -33,7 +33,13 @@ export function dropLeftovers(root: Element): void {
     let step: Element | undefined;
     let nearest: Element | undefined;
     for (let node = target.parentNode as Element | null; node && node !== timing; node = node.parentNode as Element | null) {
-      if (node.localName !== 'par' || node.namespaceURI !== NS.p) continue;
+      if (node.namespaceURI !== NS.p) continue;
+      // A shape that starts a sequence when clicked, or that a video or a sound plays in: that sequence or that node goes.
+      if (node.localName === 'seq' || node.localName === 'video' || node.localName === 'audio') {
+        step = node;
+        break;
+      }
+      if (node.localName !== 'par') continue;
       nearest ??= node;
       if (childElement(node, NS.p, 'cTn')?.hasAttribute('presetClass')) {
         step = node;
@@ -43,10 +49,11 @@ export function dropLeftovers(root: Element): void {
     const gone = step ?? nearest;
     if (gone?.parentNode) removeNode(gone);
   }
-  // Steps left with nothing in them, from the inside out.
+  // Steps and sequences left with nothing in them, from the inside out: a list of steps may not be
+  // empty, and a sequence of clicks whose shapes are all gone is one.
   for (let removed = true; removed; ) {
     removed = false;
-    for (const step of descendants(timing, NS.p, 'par')) {
+    for (const step of [...descendants(timing, NS.p, 'par'), ...descendants(timing, NS.p, 'seq')]) {
       const children = path(step, [NS.p, 'cTn'], [NS.p, 'childTnLst']);
       if (children && childElements(children).length === 0 && step.parentNode) {
         removeNode(step);
@@ -62,4 +69,27 @@ export function dropLeftovers(root: Element): void {
     if (childElements(list).length === 0) removeNode(list);
   }
   if (descendants(timing, NS.p, 'spTgt').length === 0) removeNode(timing);
+}
+
+const NS_DIAGRAM = 'http://schemas.openxmlformats.org/drawingml/2006/diagram';
+/**
+ * Kinds of relationship of a slide that the template's sample may leave unused, by the last part of
+ * their type: pictures, links, comments, add-in tags, charts, embedded files, sound and film, the
+ * parts of a diagram, another slide, notes. Unused, they go with their parts; a kind not named here
+ * is kept, as it was before 0.7.0.
+ */
+const LEFT_BEHIND = new Set(['image', 'hyperlink', 'comments', 'tags', 'chart', 'oleObject', 'package', 'audio', 'video', 'media', 'diagramData', 'diagramLayout', 'diagramQuickStyle', 'diagramColors', 'slide', 'notesSlide']);
+
+/**
+ * Whether a slide keeps a relationship that its XML does not name with an `r:` attribute: one a
+ * part it shows needs all the same. A diagram's drawing is named in the diagram's data, not in the
+ * slide; the drawing of an embedded object or a control is found by its kind. A relationship of a
+ * kind that a template's sample may leave behind (`LEFT_BEHIND`) is not kept by this: unused, it goes.
+ * `free`: the slide is a free slide, which keeps nothing of its base slide but what it shows.
+ */
+export function keptUnnamed(type: string, root: Element, free: boolean): boolean {
+  const kind = type.slice(type.lastIndexOf('/') + 1);
+  if (kind === 'diagramDrawing') return descendants(root, NS_DIAGRAM, 'relIds').length > 0;
+  if (kind === 'vmlDrawing') return descendants(root, NS.p, 'oleObj').length > 0 || descendants(root, NS.p, 'control').length > 0;
+  return !free && !LEFT_BEHIND.has(kind);
 }

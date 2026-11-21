@@ -22,12 +22,15 @@ test('retryDelay: passing failures wait a doubling step with chance in it, or wh
     [401, 'API key not valid'],
     [501, 'Not implemented'],
     [429, 'Your project has exceeded its monthly spending cap'],
-    [429, 'You exceeded your current quota, please check your plan and billing details.'],
     [429, 'Quota exceeded for metric: generate_content_requests_per_day, limit: 0'],
     [429, 'Quota exceeded for quota metric GenerateRequestsPerDayPerProjectPerModel'],
   ] as const) {
     assert.equal(retryDelay(new GeminiError(message, status), 1, fixed), undefined, message);
   }
+  // Gemini's limit per minute mentions billing too: what tells it from a lasting one is the quota it names.
+  const perMinute = 'You exceeded your current quota, please check your plan and billing details.';
+  assert.equal(retryDelay(new GeminiError(perMinute, 429, { quotas: ['GenerateRequestsPerMinutePerProjectPerModel-FreeTier'] }), 1, fixed), 750);
+  assert.equal(retryDelay(new GeminiError(perMinute, 429, { quotas: ['GenerateRequestsPerDayPerProjectPerModel-FreeTier'] }), 1, fixed), undefined);
   assert.equal(retryDelay(new DOMException('stopped', 'AbortError'), 1, fixed), undefined);
   assert.equal(retryDelay(new Error('anything else'), 1, fixed), undefined);
   // The service's own wait: as asked, and no more tries where it asks for more than a minute.
@@ -60,6 +63,19 @@ test('a rate limit waits as long as the service asks, in its header or its Retry
   const images = answers([503, { error: { message: 'overloaded' } }, { 'retry-after': '0' }], [200, picture]);
   assert.deepEqual(await geminiImages({ model: 'i', fetch: images.fetch }).generateImage({ prompt: 'a dog', kind: 'photo', aspectRatio: 1 }), new TextEncoder().encode('png'));
   assert.equal(images.calls(), 2);
+  // The service's own answer to too many requests in a minute: its quota and its wait in the details.
+  const minute = answers(
+    [429, { error: { code: 429, message: 'You exceeded your current quota, please check your plan and billing details.', status: 'RESOURCE_EXHAUSTED', details: [
+      { '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [{ quotaMetric: 'generativelanguage.googleapis.com/generate_content_free_tier_requests', quotaId: 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier' }] },
+      { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '0s' },
+    ] } }],
+    [200, text],
+  );
+  assert.deepEqual(await gemini({ model: 'm', fetch: minute.fetch }).generateJson(request), { ok: true });
+  assert.equal(minute.calls(), 2);
+  const day = answers([429, { error: { message: 'You exceeded your current quota.', details: [{ violations: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' }] }, { retryDelay: '0s' }] } }], [200, text]);
+  await assert.rejects(gemini({ model: 'm', fetch: day.fetch }).generateJson(request), /exceeded your current quota/);
+  assert.equal(day.calls(), 1);
   // A spending cap is not tried again, whatever wait it names.
   const capped = answers([429, { error: { message: 'Your project has exceeded its monthly spending cap' } }, { 'retry-after': '0' }], [200, text]);
   await assert.rejects(gemini({ model: 'm', fetch: capped.fetch }).generateJson(request), /spending cap/);
@@ -85,4 +101,34 @@ test('a deadline ends a call, its tries and its waits together, and a stop ends 
   const before = Date.now();
   await assert.rejects(gemini({ model: 'm', fetch: hanging, deadlineMs: 300 }).generateJson(request), /did not answer/);
   assert.ok(Date.now() - before < 2000, String(Date.now() - before));
+});
+
+test('a request that timed out is sent again only within a deadline, and one deadline covers the whole call', async () => {
+  // A request that hangs: without a deadline, its timeout ends the call at the first try.
+  let hangs = 0;
+  const hanging = (async (_url: string, init: RequestInit) => {
+    hangs++;
+    return new Promise<Response>((_resolve, reject) => init.signal?.addEventListener('abort', () => reject(init.signal?.reason)));
+  }) as unknown as typeof globalThis.fetch;
+  await assert.rejects(gemini({ model: 'm', fetch: hanging, timeoutMs: 100 }).generateJson(request), /did not answer within/);
+  assert.equal(hangs, 1);
+  // Within a deadline, a try that timed out is followed by another while time is left.
+  hangs = 0;
+  await assert.rejects(gemini({ model: 'm', fetch: hanging, timeoutMs: 100, deadlineMs: 2000 }).generateJson(request), /did not answer/);
+  assert.ok(hangs >= 2, String(hangs));
+  // An answer cut off at its limit is sent again, within the same deadline: here no time is left for it.
+  let sent = 0;
+  const slow = (async (_url: string, init: RequestInit) => {
+    sent++;
+    // As fetch does, it stops when its signal does.
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(resolve, 400);
+      init.signal?.addEventListener('abort', () => (clearTimeout(timer), reject(init.signal?.reason)));
+    });
+    const body = sent === 1 ? { status: 'incomplete', steps: [] } : text;
+    return new Response(JSON.stringify(body), { status: 200 });
+  }) as unknown as typeof globalThis.fetch;
+  const started = Date.now();
+  await assert.rejects(gemini({ model: 'm', fetch: slow, deadlineMs: 600 }).generateJson(request), /did not answer/);
+  assert.ok(Date.now() - started < 1000, String(Date.now() - started));
 });

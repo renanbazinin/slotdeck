@@ -99,13 +99,16 @@ function setRootPart(pkg: PptxPackage, types: ContentTypes, type: string, part: 
  */
 export function writeProperties(pkg: PptxPackage, types: ContentTypes, presentationPart: string, deck: DeckSpec, slides: number, properties: DeckProperties, defaults: { language?: string | undefined }, pictures: ReadonlyArray<PlacedPicture>): void {
   // The core properties: fresh, so that nothing of the template's (its title, its author, its dates) is left.
-  const title = properties.title ?? deck.title ?? firstTitle(deck);
-  const language = properties.language ?? deck.language ?? defaults.language;
+  // A stored deck may hold anything in its fields: only text is written.
+  const textOf = (value: unknown): string | undefined => (typeof value === 'string' && value.trim() !== '' ? value : undefined);
+  const title = textOf(properties.title) ?? textOf(deck.title) ?? firstTitle(deck);
+  const language = textOf(properties.language) ?? textOf(deck.language) ?? defaults.language;
+  const author = textOf(properties.author);
   const date = properties.date === undefined ? undefined : w3cdtf(properties.date);
   const core =
     `${XML_HEADER}<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">` +
     (title ? `<dc:title>${text(title)}</dc:title>` : '') +
-    (properties.author ? `<dc:creator>${text(properties.author)}</dc:creator><cp:lastModifiedBy>${text(properties.author)}</cp:lastModifiedBy>` : '') +
+    (author ? `<dc:creator>${text(author)}</dc:creator><cp:lastModifiedBy>${text(author)}</cp:lastModifiedBy>` : '') +
     (language ? `<dc:language>${text(language)}</dc:language>` : '') +
     '<cp:revision>1</cp:revision>' +
     (date ? `<dcterms:created xsi:type="dcterms:W3CDTF">${date}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${date}</dcterms:modified>` : '') +
@@ -155,11 +158,12 @@ export function writeProperties(pkg: PptxPackage, types: ContentTypes, presentat
   if (properties.embedDeck) embedDeck(pkg, types, presentationPart, deck, pictures);
 }
 
-/** A picture of the deck in its file: the asset, the slide it is on (from 1) and the id of its shape. */
+/** A picture of the deck in its file: the asset, the slide it is on (from 1), the id of its shape, and whether it is drawn in other colours than the asset. */
 export interface PlacedPicture {
   asset: string;
   slide: number;
   shape: string;
+  recolored?: boolean;
 }
 
 /**
@@ -169,8 +173,17 @@ export interface PlacedPicture {
  */
 function embedDeck(pkg: PptxPackage, types: ContentTypes, presentationPart: string, deck: DeckSpec, pictures: ReadonlyArray<PlacedPicture>): void {
   const { brief: _brief, document: _document, ...kept } = deck;
+  // Each asset by a picture of it as it is, or where there is none, by one in other colours: an icon
+  // recoloured again from those colours stays as it is drawn.
   const assets: Record<string, { slide: number; shape: string }> = {};
-  for (const picture of pictures) assets[picture.asset] ??= { slide: picture.slide, shape: picture.shape };
+  for (const picture of [...pictures.filter((entry) => !entry.recolored), ...pictures.filter((entry) => entry.recolored)]) assets[picture.asset] ??= { slide: picture.slide, shape: picture.shape };
+  // A deck the template itself kept (a template made from a rendered deck) is not this deck: it goes.
+  const others = readRels(pkg, presentationPart).filter((rel) => {
+    if (rel.type !== CUSTOM_XML_REL || rel.external) return true;
+    const part = resolveTarget(presentationPart, rel.target);
+    return !(pkg.has(part) && rootElement(parseXml(pkg.readText(part))).namespaceURI === EMBEDDED_DECK_NS);
+  });
+  writeRels(pkg, presentationPart, others);
   const payload = JSON.stringify({ slotdeck: SLOTDECK_VERSION, deck: kept, assets });
   let index = 1;
   while (pkg.has(`customXml/item${index}.xml`) || pkg.has(`customXml/itemProps${index}.xml`)) index++;

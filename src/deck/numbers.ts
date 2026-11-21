@@ -66,19 +66,21 @@ const digitsOf = (text: string): string => text.replace(/\D/g, '');
  * starts with + or 0, as numbers to dial do, and has at least eight digits), "24/7", a percentage.
  * Each with how to tell that the given text states it.
  */
-const DETAILS: Array<{ find: RegExp; stated: (found: string, given: string) => boolean }> = [
+const DETAILS: Array<{ find: RegExp; stated: (found: string, given: string) => boolean; is?: (found: string) => boolean }> = [
   { find: /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g, stated: (found, given) => given.toLowerCase().includes(found.toLowerCase()) },
   { find: /\b(?:https?:\/\/|www\.)[^\s,;)"'<>]+/gi, stated: (found, given) => given.toLowerCase().includes(found.replace(/[.!?]+$/, '').toLowerCase()) },
   {
     find: /(?<![\w+])(?:\+|0)\d[\d\s().-]{6,}\d(?!\d)/g,
     stated: (found, given) => [...given.matchAll(/(?<![\w+])(?:\+|0)\d[\d\s().-]{6,}\d(?!\d)/g)].some((match) => digitsOf(match[0]) === digitsOf(found)),
+    // A number to dial has nine digits or more; a date (05.11.2026, 01-12-2026) is none.
+    is: (found) => digitsOf(found).length >= 9 && !/^\d{1,2}[./-]\d{1,2}[./-]\d{2,4}$/.test(found.trim()),
   },
   { find: /\b24\s*\/\s*7\b/g, stated: (_found, given) => /\b24\s*\/\s*7\b/.test(given) },
   { find: /(?<![\d.,])\d+(?:\.\d+)?\s?%/g, stated: (found, given) => statedNumbers(given).has(Number(found.replace(/[\s%]/g, ''))) },
 ];
 
 /** Text that stands where a real value belongs: "XX%", "[name]", "TBD", "lorem ipsum", "???", "____", "John Doe", "ישראל ישראלי". */
-const STAND_INS = /(?<![A-Za-z])X{2,}(?![A-Za-z])|\[[^\]\d]*\p{L}[^\]]{0,30}\]|\bTB[DA]\b|lorem ipsum|\?{3,}|_{3,}|\b(?:John|Jane) Doe\b|ישראל ישראלי|פלוני(?: אלמוני)?/giu;
+const STAND_INS = /(?<![A-Za-z])X{2,}(?![A-Za-z])|\[[^\]\d]*\p{L}[^\]\d]{0,30}\]|\bTB[DA]\b|lorem ipsum|\?{3,}|_{3,}|\b(?:John|Jane) Doe\b|ישראל ישראלי|פלוני(?: אלמוני)?/giu;
 
 /** Text that speaks about the slide where it should say its content: "this slide", "the chart below", "בשקף זה". */
 const ABOUT_SLIDE =
@@ -113,7 +115,7 @@ export function unstatedDetails(deck: DeckSpec, slides?: ReadonlySet<number>): I
       for (const detail of DETAILS) {
         for (const match of text.matchAll(detail.find)) {
           const value = match[0].trim().replace(/[.,;:!?]+$/, '');
-          if (!detail.stated(value, given)) seen.push({ at: match.index ?? 0, value });
+          if ((detail.is?.(value) ?? true) && !detail.stated(value, given)) seen.push({ at: match.index ?? 0, value });
         }
       }
       const unknown = new Set(seen.sort((a, b) => a.at - b.at).map((entry) => entry.value));

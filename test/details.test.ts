@@ -47,3 +47,9 @@ test('stand-ins and text about the slide are told, in English and in Hebrew', ()
   // In the order the text has them; the list is isolated, so that its brackets and Latin letters keep their places.
   assert.equal(formatIssue(stand, 'he'), 'במקום ערך מופיע ממלא מקום: ⁨[שם הלקוח], XX⁩. כדאי לכתוב במקומו את הערך האמיתי, או להשמיט אותו.');
 });
+
+test('a date is no phone number, and a bracket with a number in it is a reference, not a stand-in', () => {
+  assert.deepEqual(found(unstatedDetails(deckOf('The fair opens on 05.11.2026 and closes 01-12-2026 [Smith 2020].'))), []);
+  // A number to dial is told where the brief does not give it, in any of its forms.
+  assert.deepEqual(found(unstatedDetails(deckOf('Call 03-555-9876.'))), ['1:text-details-unstated:{"details":"03-555-9876","count":1}']);
+});

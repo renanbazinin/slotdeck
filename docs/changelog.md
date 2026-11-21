@@ -35,7 +35,7 @@ short rate limit instead of failing.
   their `properties` is `false`). The file has the deck's title, language, real number of slides and the
   version of slotdeck that made it (custom property `slotdeck`), and no longer shows the template's sample
   cover as its thumbnail in Outlook and Explorer. The template's other custom properties, such as a
-  confidentiality label, stay. `embedDeck: true` keeps the deck (without its brief and document) in the file;
+  confidentiality label, stay. A title that is no text is not written. `embedDeck: true` keeps the deck (without its brief and document) in the file;
   `readEmbeddedDeck(pptx)` takes it out with its pictures, also after PowerPoint saved the file again. See
   "File properties" in [rendering.md](rendering.md).
 - **`tools.instructions`**: the lines the chat model's system prompt needs for the tools, made from the same
@@ -45,8 +45,8 @@ short rate limit instead of failing.
   sentences, no closing slide of thanks or questions, and an agenda only in decks of more than ten slides.
 - **Retries** on `gemini()` and `geminiImages()`: `retries` (default 2) and `deadlineMs`. A rate limit that is no
   spending cap or daily quota, 408, 500, 502, 503, 504, the recitation filter, a network that failed and a
-  timeout are tried again after a doubling wait with chance in it, or the wait the service asks for. Pictures
-  are retried too. `retryDelay(error, attempt)` is the rule, for a provider of your own.
+  timeout within a `deadlineMs` are tried again after a doubling wait with chance in it, or the wait the service
+  asks for; one deadline covers a whole call. Pictures are retried too. `retryDelay(error, attempt)` is the rule, for a provider of your own.
 - **Warnings a person should check** (planner only, with codes and Hebrew sentences, never sent back to the
   model): contact details and figures the brief does not give (`text-details-unstated`: an email or web
   address, a phone number, "24/7", a percentage), stand-ins such as "XX%" or "[name]" (`text-stand-in`), and
@@ -112,6 +112,8 @@ call to fail on the first 503, see the new behaviour. Decks are now told the new
 - The highlighted item is found only where exactly one item of three or more looks unlike the rest; two unlike
   items do not say which stands out, and a pair of columns (`sequences`) is not moved.
 - A legend still lists its series from the left in a chart that reads right to left, as PowerPoint orders it.
+- A chart's `null` values are not asked of a model: a chart slide written again in an edit may fill a gap with a
+  number. Check a chart with gaps after an edit.
 - Counting capitals and wide letters against character budgets without fonts was tried and left out: an
   ordinary sentence near its budget came out a few hundredths over, and the count is not checked against
   PowerPoint for that use.

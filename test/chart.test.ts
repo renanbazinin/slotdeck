@@ -399,6 +399,8 @@ test('a chart that reads right to left starts at the right, and is told so by th
   const rtlDeck = renderDeck(template('rtl'), deckOf(slide(column))).pptx;
   assert.equal(fixtureManifest.direction, 'rtl');
   assert.ok(mirroredIn(rtlDeck) && sheetOf(rtlDeck).includes('<sheetView rightToLeft="1" workbookViewId="0"/>'));
+  // The view the sheet names is the workbook's own.
+  assert.ok(strFromU8(unzipSync(unzipSync(rtlDeck)['ppt/embeddings/Microsoft_Excel_Sheet1.xlsx'] as Uint8Array)['xl/workbook.xml'] as Uint8Array).includes('<bookViews><workbookView/></bookViews><sheets>'));
   const plainDeck = renderDeck(template(), deckOf(slide(column))).pptx;
   assert.ok(!mirroredIn(plainDeck) && !sheetOf(plainDeck).includes('sheetView'), 'left out, charts read left to right');
   assert.ok(!mirroredIn(renderDeck(template('rtl'), { ...deckOf(slide(column)), direction: 'ltr' }).pptx), 'a deck that reads left to right');

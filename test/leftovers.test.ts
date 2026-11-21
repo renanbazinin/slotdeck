@@ -8,6 +8,8 @@ import { placeholderPhoto } from '../examples/placeholder.ts';
 import { PptxPackage, loadTemplate, renderDeck } from '../src/index.ts';
 import type { DeckSpec, SlideSpec } from '../src/index.ts';
 import { readRels } from '../src/pptx/package.ts';
+import { parseXml, rootElement, serializeXml } from '../src/pptx/xml.ts';
+import { dropLeftovers, keptUnnamed } from '../src/render/leftovers.ts';
 import { buildFixturePptx, fixtureManifest } from './fixture.ts';
 
 const P = 'http://schemas.openxmlformats.org/presentationml/2006/main';
@@ -106,4 +108,43 @@ test('animations of shapes or paragraphs that are gone are taken out, and the re
   assert.ok(!render(zipSync(files), content({})).slide.includes('p:timing'));
   // A template without animations is drawn as before.
   assert.ok(!render(leftoverFixture(false), content({})).slide.includes('p:timing'));
+});
+
+test('a sequence left empty goes, and a missing trigger takes only its own sequence', () => {
+  const P = 'http://schemas.openxmlformats.org/presentationml/2006/main';
+  const shape = (id: number) => `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="S${id}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr/></p:sp>`;
+  const interactive = (trigger: string, id: number, target: string) =>
+    `<p:seq concurrent="1" nextAc="seek"><p:cTn id="${id}" restart="whenNotActive" fill="hold" evtFilter="cancelBubble" nodeType="interactiveSeq"><p:stCondLst><p:cond evt="onClick" delay="0"><p:tgtEl><p:spTgt spid="${trigger}"/></p:tgtEl></p:cond></p:stCondLst><p:childTnLst>${click(id + 1, target)}</p:childTnLst></p:cTn><p:nextCondLst><p:cond evt="onClick" delay="0"><p:tgtEl><p:spTgt spid="${trigger}"/></p:tgtEl></p:cond></p:nextCondLst></p:seq>`;
+  const slideWith = (sequences: string) =>
+    `<p:sld xmlns:p="${P}" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>${shape(2)}${shape(3)}${shape(4)}</p:spTree></p:cSld>` +
+    `<p:timing><p:tnLst><p:par><p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot"><p:childTnLst>${sequences}</p:childTnLst></p:cTn></p:par></p:tnLst></p:timing></p:sld>`;
+  const main = (target: string) => `<p:seq concurrent="1" nextAc="seek"><p:cTn id="2" dur="indefinite" nodeType="mainSeq"><p:childTnLst>${click(3, target)}</p:childTnLst></p:cTn></p:seq>`;
+  const clean = (xml: string) => {
+    const doc = parseXml(xml);
+    dropLeftovers(rootElement(doc));
+    return serializeXml(doc);
+  };
+  // The main sequence animates a shape that is gone; a click on #4 shows #3: only the click is left, and no list is empty.
+  const kept = clean(slideWith(main('9') + interactive('4', 20, '3')));
+  assert.ok(kept.includes('nodeType="interactiveSeq"') && !kept.includes('nodeType="mainSeq"') && !kept.includes('<p:childTnLst/>'), kept);
+  // The shape that is clicked is gone: its sequence goes, and the main one stays.
+  const trigger = clean(slideWith(main('2') + interactive('9', 20, '3')));
+  assert.ok(trigger.includes('nodeType="mainSeq"') && !trigger.includes('interactiveSeq'), trigger);
+});
+
+test('a relationship the slide does not name stays where what it shows needs it, and a leftover of the sample goes', () => {
+  const D = 'http://schemas.openxmlformats.org/drawingml/2006/diagram';
+  const R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  const slide = (body: string) => rootElement(parseXml(`<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="${R}"><p:cSld><p:spTree>${body}</p:spTree></p:cSld></p:sld>`));
+  const diagram = slide(`<p:graphicFrame><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData><dgm:relIds xmlns:dgm="${D}" r:dm="rId2" r:lo="rId3" r:qs="rId4" r:cs="rId5"/></a:graphicData></a:graphic></p:graphicFrame>`);
+  const plain = slide('');
+  const drawing = 'http://schemas.microsoft.com/office/2007/relationships/diagramDrawing';
+  // A diagram's drawing is named in the diagram's data: it stays while the slide shows a diagram.
+  assert.deepEqual([keptUnnamed(drawing, diagram, false), keptUnnamed(drawing, plain, false)], [true, false]);
+  const vml = `${R}/vmlDrawing`;
+  assert.deepEqual([keptUnnamed(vml, slide('<p:graphicFrame><p:oleObj/></p:graphicFrame>'), false), keptUnnamed(vml, plain, false)], [true, false]);
+  // The sample's link, comments and tags go; a kind not known to be a leftover stays, except on a free slide.
+  for (const kind of ['hyperlink', 'comments', 'tags', 'image', 'chart']) assert.equal(keptUnnamed(`${R}/${kind}`, plain, false), false, kind);
+  assert.equal(keptUnnamed('http://schemas.microsoft.com/office/2018/10/relationships/comments', plain, false), false);
+  assert.deepEqual([keptUnnamed(`${R}/someAddIn`, plain, false), keptUnnamed(`${R}/someAddIn`, plain, true)], [true, false]);
 });

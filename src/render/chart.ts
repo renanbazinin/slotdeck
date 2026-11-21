@@ -520,7 +520,7 @@ export function buildChartWorkbook(chart: ChartValue, options: { rightToLeft?: b
       `${XML_HEADER}<Relationships xmlns="${packageRels}">` +
       `<Relationship Id="rId1" Type="${NS_R}/officeDocument" Target="xl/workbook.xml"/></Relationships>`,
     'xl/workbook.xml':
-      `${XML_HEADER}<workbook xmlns="${main}" xmlns:r="${NS_R}"><sheets><sheet name="${SHEET}" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+      `${XML_HEADER}<workbook xmlns="${main}" xmlns:r="${NS_R}">${options.rightToLeft ? '<bookViews><workbookView/></bookViews>' : ''}<sheets><sheet name="${SHEET}" sheetId="1" r:id="rId1"/></sheets></workbook>`,
     'xl/_rels/workbook.xml.rels':
       `${XML_HEADER}<Relationships xmlns="${packageRels}">` +
       `<Relationship Id="rId1" Type="${NS_R}/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,

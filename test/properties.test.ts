@@ -108,3 +108,31 @@ test('a deck kept in its file comes out again with its pictures, and renders to 
   assert.equal(readEmbeddedDeck(renderDeck(template, asked, { assets: { p: photo }, properties: {} }).pptx), undefined);
   assert.equal(readEmbeddedDeck(renderDeck(template, asked, { assets: { p: photo } }).pptx), undefined);
 });
+
+test('a deck in other colours keeps its pictograms in the file, and a deck the template kept is not taken for this one', () => {
+  // The demo's sample deck has icons; in another main colour they are drawn recoloured.
+  const { deck: sample, assets: pictures } = sampleDeck(demo);
+  const coloured = { ...sample, colors: { accent: '1565C0' } };
+  const file = renderDeck(demo, coloured, { assets: pictures, layout: 'adaptive', properties: { embedDeck: true } }).pptx;
+  const found = readEmbeddedDeck(file);
+  assert.ok(found);
+  const named = new Set(found.deck.slides.flatMap((slide) => Object.values(slide.slots).flatMap((value) => (value && typeof value === 'object' && 'asset' in value ? [(value as { asset: string }).asset] : []))));
+  assert.deepEqual([...named].filter((asset) => !found.assets[asset]), [], 'every picture the deck names comes back');
+  assert.doesNotThrow(() => renderDeck(demo, found.deck, { assets: found.assets, layout: 'adaptive' }));
+
+  // A file that kept a deck, used as a template, keeps the new deck only.
+  const fixture = loadTemplate(buildFixturePptx(), fixtureManifest);
+  const first: DeckSpec = { version: 1, title: 'First', slides: [{ pattern: 'content', slots: { title: 'שלום', body: 'גוף', photo: { asset: 'p' }, note: 'הערה' } }] };
+  const kept = renderDeck(fixture, first, { assets: { p: photo }, properties: { embedDeck: true } }).pptx;
+  const again = loadTemplate(kept, { ...fixtureManifest, patterns: fixtureManifest.patterns.filter((pattern) => pattern.id === 'content') });
+  const second = renderDeck(again, { ...first, title: 'Second' }, { assets: { p: photo }, properties: { embedDeck: true } }).pptx;
+  assert.equal(readEmbeddedDeck(second)?.deck.title, 'Second');
+  assert.equal(Object.keys(unzipSync(second)).filter((name) => /^customXml\/item\d+\.xml$/.test(name)).length, 1);
+});
+
+test('a title or a language that is no text is not written: the title of the first slide stands in', () => {
+  const template = loadTemplate(buildFixturePptx(), fixtureManifest);
+  const odd = { version: 1, title: 2026, language: ['he'], slides: [{ pattern: 'content', slots: { title: 'שלום', body: 'גוף', photo: { asset: 'p' }, note: 'הערה' } }] } as unknown as DeckSpec;
+  const core = strFromU8(unzipSync(renderDeck(template, odd, { assets: { p: photo }, properties: {} }).pptx)['docProps/core.xml'] as Uint8Array);
+  assert.ok(core.includes('<dc:title>שלום</dc:title>') && !core.includes('2026'), core);
+});

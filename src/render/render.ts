@@ -38,7 +38,7 @@ import { setPicture } from './picture.ts';
 import type { PictureFill } from './picture.ts';
 import { fitTable, numberAligns, setTable, tableArea } from './table.ts';
 import { applyRepeat, moveShape, placeShape, rowTextIds } from './repeat.ts';
-import { dropLeftovers } from './leftovers.ts';
+import { dropLeftovers, keptUnnamed } from './leftovers.ts';
 import type { FontMetrics } from '../text/fonts.ts';
 import { measurerFor } from '../text/measure.ts';
 import { lineRoomOf } from '../text/wide.ts';
@@ -229,7 +229,7 @@ ${colors?.key}` : assetId;
   };
   const usedSlideParts = new Set<string>();
   /** Where each picture of the deck stands, by slide and shape: what a deck kept in its file names its pictures by. */
-  const placed: Array<{ asset: string; slide: number; shape: string }> = [];
+  const placed: Array<{ asset: string; slide: number; shape: string; recolored: boolean }> = [];
 
   const newSlideParts: string[] = [];
   deck.slides.forEach((slide, index) => {
@@ -325,8 +325,8 @@ ${colors?.key}` : assetId;
           };
         }
         setPicture(shape, fill);
-        // A pictogram in other colours is not the picture the deck names.
-        if (media.get(action.image.asset) === image) placed.push({ asset: action.image.asset, slide: number, shape: slot.shapeId });
+        // A pictogram in other colours is not the picture the deck names; it stands in for it where nothing else does.
+        placed.push({ asset: action.image.asset, slide: number, shape: slot.shapeId, recolored: media.get(action.image.asset) !== image });
       } else if (action.type === 'table' && slot.kind === 'table') {
         // The colours of its text are written onto the slide, and change with the slide below.
         const box = (slot as { box?: SlideBox }).box;
@@ -383,12 +383,12 @@ ${colors?.key}` : assetId;
     }
 
     // What the template's sample brought along goes: its add-ins' data, animations of shapes that
-    // are gone. Then the slide keeps its layout and what it still points at: pictures that were
-    // replaced, the sample's links, its comments and its add-ins' tags are left behind, and so are
-    // their parts.
+    // are gone. Then the slide keeps its layout, what it still points at, and what a part it shows
+    // needs without naming it (a diagram's drawing): pictures that were replaced, the sample's
+    // links, its comments and its add-ins' tags are left behind, and so are their parts.
     dropLeftovers(root);
     const used = usedRelationshipIds(root);
-    rels = rels.filter((rel) => isRelType(rel, 'slideLayout') || used.has(rel.id));
+    rels = rels.filter((rel) => isRelType(rel, 'slideLayout') || used.has(rel.id) || keptUnnamed(rel.type, root, free !== undefined));
 
     out.write(part, openableSizes(serializeXml(doc)));
     writeRels(out, part, rels);

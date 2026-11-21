@@ -64,8 +64,11 @@ describe the template's own slides.
 From 0.7.0 a slide also leaves behind what the template's sample brought along: a link on the sample's text,
 which made the person's whole paragraph a link to the template's page, its comments, the data its add-ins keep
 on it (tags), and animations of shapes or paragraphs the slide no longer has, for which PowerPoint asked to
-repair the file. A slide keeps its layout and what its own shapes point at; a link of the design, such as a logo
-that links to a website, stays. An animation that has nothing left to animate is taken out whole.
+repair the file. A slide keeps its layout, what its own shapes point at, and what they need without naming it (a
+diagram's drawing, the drawing of an embedded object); a link of the design, such as a logo that links to a
+website, stays, and so does a relationship of a kind slotdeck does not know. An animation that has nothing left
+to animate is taken out, a sequence started by a shape that is gone with it, and a timeline with nothing left goes
+whole.
 
 ### File properties
 
@@ -84,7 +87,7 @@ renderDeck(template, deck, { assets, properties: { author: 'Dana Levi', date: ne
 | `language` | The deck's `language`, else the template's. |
 | `author` | No one is named. |
 | `date` | No date is written, so that the same deck always gives the same file. |
-| `embedDeck` | Off. `true` keeps the deck's JSON in the file, without its `brief` and `document`; `readEmbeddedDeck(pptx)` takes it out again with its pictures, also after PowerPoint saved the file. |
+| `embedDeck` | Off. `true` keeps the deck's JSON in the file, without its `brief` and `document`; `readEmbeddedDeck(pptx)` takes it out again with its pictures, also after PowerPoint saved the file. An icon the deck drew in other colours comes back in those colours. A deck kept in the template itself is replaced. |
 
 The file also gets its real number of slides, and the version of slotdeck that made it as the custom property
 `slotdeck` (File > Info > Properties > Advanced > Custom). The template's thumbnail, its sample slide titles and
