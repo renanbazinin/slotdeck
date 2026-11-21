@@ -929,8 +929,20 @@ const GEMINI_DEVELOPER_ENDPOINT: string;
 ```ts
 class GeminiError extends Error {
   readonly status: number | undefined;
+  readonly retryAfterMs: number | undefined; // from 0.7.0: the wait the service asked for
+  readonly timedOut: boolean;                // from 0.7.0: no answer within timeoutMs
 }
 ```
+
+### `retryDelay`
+
+```ts
+function retryDelay(error: unknown, attempt: number, random?: () => number): number | undefined;
+```
+
+From 0.7.0. How long to wait, in milliseconds, before trying a model call again that failed with `error` on try
+number `attempt` (from 1), as the Gemini adapters wait; `undefined` where another try is not worth it (a bad
+request or key, a spending cap or a daily quota, a stop). See `retries` in [providers.md](providers.md).
 
 ### Types
 
@@ -957,6 +969,8 @@ interface GeminiOptions {
   headers?: Record<string, string> | (() => Record<string, string> | Promise<Record<string, string>>);
   fetch?: typeof fetch;
   timeoutMs?: number;
+  retries?: number;    // from 0.7.0: tries after a passing failure; default 2
+  deadlineMs?: number; // from 0.7.0: the most a call takes, its tries and waits together
   thinkingLevel?: 'minimal' | 'low' | 'medium' | 'high';
   maxOutputTokens?: number;
 }
@@ -967,6 +981,8 @@ interface GeminiImageOptions {
   headers?: Record<string, string> | (() => Record<string, string> | Promise<Record<string, string>>);
   fetch?: typeof fetch;
   timeoutMs?: number;
+  retries?: number;    // from 0.7.0: tries after a passing failure; default 2
+  deadlineMs?: number; // from 0.7.0: the most a call takes, its tries and waits together
   imageSize?: '512' | '1K' | '2K' | '4K';
   style?: string;
 }

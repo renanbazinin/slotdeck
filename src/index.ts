@@ -29,7 +29,7 @@ export { SLOTDECK_VERSION } from './version.ts';
 
 // Model providers.
 export type { ImageProvider, ImageRequest, JsonRequest, JsonSchema, LlmProvider } from './llm/provider.ts';
-export { GEMINI_DEVELOPER_ENDPOINT, GeminiError, gemini, geminiImages, vertexEndpoint } from './llm/gemini.ts';
+export { GEMINI_DEVELOPER_ENDPOINT, GeminiError, gemini, geminiImages, retryDelay, vertexEndpoint } from './llm/gemini.ts';
 export type { GeminiImageOptions, GeminiOptions } from './llm/gemini.ts';
 
 // Decks.
