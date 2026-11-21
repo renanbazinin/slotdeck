@@ -237,7 +237,7 @@ ${colors?.key}` : assetId;
     let rels = readRels(source, sourceSlide.part).filter((rel) => !isRelType(rel, 'notesSlide'));
     const part = `${slideDir}/slide${number}.xml`;
     // A row of items is first brought to the number the slide asks for; the shapes it copies get new ids.
-    if (pattern.repeat) applyRepeat(indexShapes(root), pattern.repeat, itemCount(pattern, slide.items), pres.slideWidth, rowTextIds(pattern));
+    if (pattern.repeat) applyRepeat(indexShapes(root), pattern.repeat, itemCount(pattern, slide.items), pres.slideWidth, rowTextIds(pattern), directionChanged);
     const shapes = indexShapes(root);
     const sources = slotSources(pattern, directionChanged, slide.items);
     const textScale = bodyTextScale(template.manifest, deck.textScale);
@@ -314,7 +314,7 @@ ${colors?.key}` : assetId;
         const box = (slot as { box?: SlideBox }).box;
         // A table of a free slide states its sizes itself and takes the box it was given.
         const planned = slot as { rowHeights?: number[]; columnWidths?: number[]; columnAligns?: Array<'l' | 'r' | undefined> };
-        setTable(shape, action.table, tableAtScale(slot, textScale), deck.direction ?? manifest.direction, box ? planned.columnAligns : undefined, writing.language);
+        setTable(shape, action.table, tableAtScale(slot, textScale), deck.direction ?? manifest.direction, box ? planned.columnAligns : undefined, writing);
         // Rows whose cells take more lines than their neighbours' are higher, and columns are as wide as what is written in them asks, as the plan worked out.
         if (box) fitTable(shape, { x: box.x * pres.slideWidth, y: box.y * pres.slideHeight, cx: box.w * pres.slideWidth, cy: box.h * pres.slideHeight }, planned.rowHeights, planned.columnWidths);
       } else if (action.type === 'chart' && slot.kind === 'chart') {

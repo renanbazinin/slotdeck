@@ -7,7 +7,7 @@ import { slotSources } from '../src/template/manifest.ts';
 import { NS, childElement, childElements, descendants, parseXml, path, rootElement } from '../src/pptx/xml.ts';
 import { fitTable, setTable, tableFrameXml } from '../src/render/table.ts';
 import type { Element } from '../src/pptx/xml.ts';
-import { buildFixturePptx, fixtureManifest, tableManifest } from './fixture.ts';
+import { buildFixturePptx, fixtureManifest, fixtureWithSlide, tableManifest } from './fixture.ts';
 
 const pptx = buildFixturePptx();
 const template = loadTemplate(pptx, tableManifest);
@@ -282,4 +282,21 @@ test('the columns of a placed table share its width as they are told to, single 
   // The columns always take the whole width, and widths that do not match the columns are not followed.
   assert.equal(placed([1, 1, 1.0001]).columns.reduce((sum, width) => sum + width, 0), 6000000);
   assert.deepEqual(placed([2, 1]).columns, [2000000, 2000000, 2000000]);
+});
+
+test('a cell of a figure without letters reads left to right in a deck that reads left to right from a template that reads right to left', () => {
+  const directions = (sample: string, deck: Partial<DeckSpec>) => {
+    // The sample table's cells read right to left (rtl="1"), or state no direction and take the template's.
+    const hebrew = loadTemplate(fixtureWithSlide(3, (xml) => xml.replaceAll(' rtl="0"', sample)), tableManifest);
+    const file = renderDeck(hebrew, { version: 1, ...deck, slides: [tableSlide(['Station', 'Change'], [['Tram Square', '+12%'], ['River Gate', '4.6 / 5']])] }).pptx;
+    const tbl = descendants(rootElement(parseXml(PptxPackage.load(file).readText('ppt/slides/slide1.xml'))), NS.a, 'tbl')[0] as Element;
+    return rowsOf(tbl).flatMap((row) => cellsOf(row).map((cell) => `${cellText(cell)}:${path(cell, [NS.a, 'txBody'], [NS.a, 'p'], [NS.a, 'pPr'])?.getAttribute('rtl') ?? '-'}`));
+  };
+  // "+12%" in a paragraph that reads right to left shows as "12%+".
+  for (const sample of [' rtl="1"', '']) {
+    assert.deepEqual(directions(sample, { direction: 'ltr' }), ['Station:0', 'Change:0', 'Tram Square:0', '+12%:0', 'River Gate:0', '4.6 / 5:0'], sample);
+  }
+  // In a deck that reads as the template does, a figure keeps the direction the template gives it.
+  assert.deepEqual(directions(' rtl="1"', {}), ['Station:0', 'Change:0', 'Tram Square:0', '+12%:1', 'River Gate:0', '4.6 / 5:1']);
+  assert.deepEqual(directions('', {}), ['Station:0', 'Change:0', 'Tram Square:0', '+12%:-', 'River Gate:0', '4.6 / 5:-']);
 });

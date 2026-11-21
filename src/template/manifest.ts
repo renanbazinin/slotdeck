@@ -213,6 +213,15 @@ export interface RepeatDef {
    * and text boxes widen; pictures keep their size and their side. Left out, items keep their size.
    */
   widen?: number;
+  /**
+   * The item, by its number from 1 in reading order, that the template draws to stand out from the
+   * others: a card in another colour, an option marked as recommended. In a deck that reads the
+   * other way, the items of each line then change places, each with its look, where otherwise
+   * their values do: so the item that stands out is the same one for the deck's readers (the first
+   * card of an English deck made from a Hebrew template is the one on the left, still in green).
+   * `suggestChanges` finds it (kind `row-emphasis`). From 0.7.0.
+   */
+  emphasis?: number;
 }
 
 /**
@@ -252,7 +261,8 @@ export function slotSources(pattern: PatternDef, mirrored: boolean, items?: numb
   const sources = new Map<string, string>(effectiveSlots(pattern, items).map((slot) => [slot.name, slot.name]));
   if (!mirrored) return sources;
   const rows = [...(pattern.sequences ?? [])];
-  if (pattern.repeat) {
+  // A row with an item that stands out moves its items, not their values (see `RepeatDef.emphasis`).
+  if (pattern.repeat && pattern.repeat.emphasis === undefined) {
     // Each row of items is mirrored on its own, so a grid keeps its rows.
     const repeat = pattern.repeat;
     let next = 1;

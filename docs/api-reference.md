@@ -1026,7 +1026,7 @@ not exist. See [template-studio.md](template-studio.md).
 
 ```ts
 function suggestChanges(template: Template, options?: SuggestOptions): ManifestSuggestion[];
-const SUGGESTION_KINDS: readonly ['icon', 'row', 'row-max', 'row-widen', 'variant'];
+const SUGGESTION_KINDS: readonly ['icon', 'row', 'row-max', 'row-widen', 'row-emphasis', 'variant'];
 type SuggestionKind = (typeof SUGGESTION_KINDS)[number];
 
 interface SuggestOptions {
@@ -1145,7 +1145,7 @@ type ManifestChange =
   | { op: 'addSlot'; pattern: string; shape: string; role: Role; name?: string; optional?: boolean }
   | { op: 'removeSlot'; pattern: string; slot: string }
   | ({ op: 'setSlot'; pattern: string; slot: string } & SlotPatch)
-  | { op: 'setRepeat'; pattern: string; min?: number; max?: number; item?: string; span?: { left: number; right: number } | null; widen?: number | null }
+  | { op: 'setRepeat'; pattern: string; min?: number; max?: number; item?: string; span?: { left: number; right: number } | null; widen?: number | null; emphasis?: number | null }
   | { op: 'removeRepeat'; pattern: string };
 
 interface SlotPatch {
@@ -1545,6 +1545,7 @@ interface RepeatDef {
   span?: { left: number; right: number };
   columns?: number;
   widen?: number; // fewer items on a line than drawn grow up to this factor to fill the row
+  emphasis?: number; // the item the slide draws to stand out; a deck that reads the other way moves the items with their looks
 }
 type SlotDef = TextSlotDef | ImageSlotDef | TableSlotDef | ChartSlotDef;
 

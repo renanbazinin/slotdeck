@@ -110,8 +110,9 @@ export type ManifestChange =
   /**
    * Sets how many items a row or grid takes. Finds the row from numbered slot names when the pattern has none.
    * `widen` lets items grow wider, up to that factor, when a line holds fewer than the template draws.
+   * `emphasis` is the item, by its number from 1, that the template draws to stand out; `null` says none does.
    */
-  | { op: 'setRepeat'; pattern: string; min?: number; max?: number; item?: string; span?: { left: number; right: number } | null; widen?: number | null }
+  | { op: 'setRepeat'; pattern: string; min?: number; max?: number; item?: string; span?: { left: number; right: number } | null; widen?: number | null; emphasis?: number | null }
   | { op: 'removeRepeat'; pattern: string };
 
 export interface ChangeResult {
@@ -589,6 +590,14 @@ function apply(manifest: TemplateManifest, change: ManifestChange, info: Templat
         if ((repeat.columns ?? drawn) < 2) reject(`a line of the ${repeat.item}s holds one, so there is no shorter line to widen`);
         repeat.widen = change.widen;
         widened += ` With fewer ${repeat.item}s on a line than drawn, each grows up to ${change.widen} times as wide to fill the row, and holds more text.`;
+      }
+      if (change.emphasis === null) {
+        if (repeat.emphasis !== undefined) widened += ` No ${repeat.item} stands out: in a deck that reads the other way their texts change places.`;
+        delete repeat.emphasis;
+      } else if (change.emphasis !== undefined) {
+        if (!(Number.isInteger(change.emphasis) && change.emphasis >= 1 && change.emphasis <= drawn)) reject(`the ${repeat.item} that stands out is one of the ${drawn} drawn, by its number from 1`);
+        repeat.emphasis = change.emphasis;
+        widened += ` ${repeat.item.charAt(0).toUpperCase()}${repeat.item.slice(1)} ${change.emphasis} stands out: in a deck that reads the other way the ${repeat.item}s change places, each with its look, so it is still ${repeat.item} ${change.emphasis} for its readers.`;
       }
       return `"${pattern.id}": ${found ? `found a ${repeat.columns ? 'grid' : 'row'} of ${drawn} ${repeat.item}s; it` : `the ${repeat.columns ? 'grid' : 'row'} of ${repeat.item}s`} takes ${min === max ? `exactly ${min}` : `${min} to ${max}`}.${widened}`;
     }

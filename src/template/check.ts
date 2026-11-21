@@ -141,6 +141,7 @@ export function checkManifest(template: Template, inspected?: TemplateInfo): Man
       if (min < 1 || min > max) report('error', `repeat range ${min} to ${max} is not valid`);
       if (repeat.columns !== undefined && max > drawn) report('warning', 'a grid cannot hold more items than it draws');
       if (repeat.widen !== undefined && !(typeof repeat.widen === 'number' && repeat.widen >= 1)) report('error', 'repeat.widen is a factor of 1 or more, such as 1.5');
+      if (repeat.emphasis !== undefined && !(Number.isInteger(repeat.emphasis) && repeat.emphasis >= 1 && repeat.emphasis <= drawn)) report('error', `repeat.emphasis is the number of the item that stands out, from 1 to ${drawn}`);
       // A row that widens gives its texts a larger budget when it holds fewer items. With fonts,
       // that budget is tried out in the wider box, on the first item: the items of a row are alike.
       if (measure && min >= 1 && min <= max) {

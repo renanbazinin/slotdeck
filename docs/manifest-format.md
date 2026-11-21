@@ -183,6 +183,7 @@ The shape must not be inside a group.
 | `span` | `{ left, right }` | no | Left and right limits of the row, as fractions of the slide width. Defaults to the row as drawn. Needed when `max` is more than the drawn items can fit in the drawn width. Only applies to shapes placed directly on the slide. |
 | `columns` | integer | no | For a grid: how many items one line holds on the template slide. Leave it out for a single row. A grid cannot hold more items than it draws. |
 | `widen` | number | no | Lets items grow wider when a line holds fewer of them than the template draws, so that they fill the row and do not stand in the middle of it. The value is the most an item may grow, as a factor on its drawn width: `1.5` lets a card become half as wide again. Backgrounds and text boxes widen; pictures keep their size. The budgets of the row's texts grow to match. Left out, items keep their drawn size. |
+| `emphasis` | number | no | The item, by its number from 1 in reading order, that the slide draws to stand out: a card in another colour, an option marked as recommended. In a deck that reads the other way, the items of each line change places with their looks, where otherwise their values change places and the look stays where it is drawn. So the first card of an English deck made from a Hebrew template is the one on the left, and still the green one. `suggestChanges` finds it (kind `row-emphasis`). From 0.7.0. |
 
 How the items are laid out for a given count is described in [layout-freedom.md](layout-freedom.md).
 

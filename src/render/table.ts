@@ -15,8 +15,12 @@ import type { TextOptions } from './text.ts';
  *
  * `aligns` sets the cells of single columns otherwise: `'r'` for a column of numbers, which are
  * read by their last digits. A column it does not name starts where reading starts.
+ *
+ * `writing` names the deck's language and the template's direction: in a deck that reads left to
+ * right from a template that reads right to left, a cell of a figure without letters ("+12%")
+ * reads left to right, as the text of a slide does (see `applyDirection` in text.ts).
  */
-export function setTable(frame: Element, table: TableValue, slot: TableSlotDef, direction: Direction, aligns?: ReadonlyArray<'l' | 'r' | undefined>, language?: string): void {
+export function setTable(frame: Element, table: TableValue, slot: TableSlotDef, direction: Direction, aligns?: ReadonlyArray<'l' | 'r' | undefined>, writing: { language?: string; templateDirection?: Direction } = {}): void {
   const tbl = descendants(frame, NS.a, 'tbl')[0];
   if (frame.localName !== 'graphicFrame' || !tbl) throw new Error('table slots must point at a table');
   const grid = childElement(tbl, NS.a, 'tblGrid');
@@ -59,8 +63,8 @@ export function setTable(frame: Element, table: TableValue, slot: TableSlotDef, 
       const cell = (sampleCells[index] ?? lastSample).cloneNode(true) as Element;
       const body = childElement(cell, NS.a, 'txBody');
       const cellAlign = aligns?.[index] ?? align;
-      const writing: TextOptions = language ? { flipAlign: false, align: cellAlign, direction, language } : { flipAlign: false, align: cellAlign, direction };
-      if (body) setBodyText(body, [text], style ? { ...writing, style } : writing);
+      const options: TextOptions = { flipAlign: false, align: cellAlign, direction, ...(writing.language ? { language: writing.language } : {}), ...(writing.templateDirection ? { templateDirection: writing.templateDirection } : {}) };
+      if (body) setBodyText(body, [text], style ? { ...options, style } : options);
       row.insertBefore(cell, childElement(row, NS.a, 'extLst') ?? null);
     });
     return row;
