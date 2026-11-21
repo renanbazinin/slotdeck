@@ -61,6 +61,12 @@ parts that are not referenced any more are left out, so the output is not bloate
 content. Speaker notes, named sections and revision history of the template are not carried over, because they
 describe the template's own slides.
 
+From 0.7.0 a slide also leaves behind what the template's sample brought along: a link on the sample's text,
+which made the person's whole paragraph a link to the template's page, its comments, the data its add-ins keep
+on it (tags), and animations of shapes or paragraphs the slide no longer has, for which PowerPoint asked to
+repair the file. A slide keeps its layout and what its own shapes point at; a link of the design, such as a logo
+that links to a website, stays. An animation that has nothing left to animate is taken out whole.
+
 ### File properties
 
 Outlook, Explorer and PowerPoint's File > Info show a file's properties without opening it. Left to itself a

@@ -404,6 +404,9 @@ function buildParagraph(proto: Element, text: string, options: TextOptions): Ele
   textNode.textContent = text;
   forgetProofing(childElement(run, NS.a, 'rPr'));
   forgetProofing(endProps);
+  // A link of the template's sample run is the sample's: the person's text would all be a link to it.
+  forgetLink(childElement(run, NS.a, 'rPr'));
+  forgetLink(endProps);
   if (options.style) applyStyle(run, options.style, prefix);
 
   // Drop every run, line break and field of the template paragraph, then put ours back.
@@ -425,6 +428,12 @@ function buildParagraph(proto: Element, text: string, options: TextOptions): Ele
 function forgetProofing(props: Element | null | undefined): void {
   props?.removeAttribute('err');
   props?.removeAttribute('dirty');
+}
+
+/** Takes the link off a run's properties: where it is clicked, and where the pointer rests. */
+function forgetLink(props: Element | null | undefined): void {
+  if (!props) return;
+  for (const link of [...childElements(props, NS.a, 'hlinkClick'), ...childElements(props, NS.a, 'hlinkMouseOver')]) removeNode(link);
 }
 
 function applyStyle(run: Element, style: TableTextStyle, prefix: string): void {

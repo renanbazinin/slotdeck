@@ -38,6 +38,7 @@ import { setPicture } from './picture.ts';
 import type { PictureFill } from './picture.ts';
 import { fitTable, setTable } from './table.ts';
 import { applyRepeat, moveShape, placeShape, rowTextIds } from './repeat.ts';
+import { dropLeftovers } from './leftovers.ts';
 import type { FontMetrics } from '../text/fonts.ts';
 import { measurerFor } from '../text/measure.ts';
 import { adjustText, setHeadings, setShapeText, setTextSizes } from './text.ts';
@@ -370,10 +371,13 @@ ${colors?.key}` : assetId;
       recolorSlide(root, colors.map, schemeOf(source, sourceSlide.part), inherited?.surface ?? inherited?.color, deckColors?.map);
     }
 
-    // Images that were replaced leave relationships nobody uses; drop them so their media can go too.
+    // What the template's sample brought along goes: its add-ins' data, animations of shapes that
+    // are gone. Then the slide keeps its layout and what it still points at: pictures that were
+    // replaced, the sample's links, its comments and its add-ins' tags are left behind, and so are
+    // their parts.
+    dropLeftovers(root);
     const used = usedRelationshipIds(root);
-    // A free slide keeps nothing of what its base slide showed: only what its own shapes point at.
-    rels = rels.filter((rel) => (free ? isRelType(rel, 'slideLayout') || used.has(rel.id) : !isRelType(rel, 'image') || used.has(rel.id)));
+    rels = rels.filter((rel) => isRelType(rel, 'slideLayout') || used.has(rel.id));
 
     out.write(part, openableSizes(serializeXml(doc)));
     writeRels(out, part, rels);
