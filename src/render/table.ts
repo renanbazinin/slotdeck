@@ -134,9 +134,11 @@ export interface Area {
  * a column of long names is wider than a column of short numbers.
  *
  * Every cell has its text in the middle of its height: rows that share a height are higher
- * than their text, and text at the top of a high row hangs.
+ * than their text, and text at the top of a high row hangs. `keepMargins` leaves the space kept
+ * free inside each cell as the template's table has it: for a table of a layout that fills its
+ * frame (`TableSlotDef.fill`), whose cells are as the designer drew them.
  */
-export function fitTable(frame: Element, area: Area, shares?: readonly number[], widths?: readonly number[]): void {
+export function fitTable(frame: Element, area: Area, shares?: readonly number[], widths?: readonly number[], options: { keepMargins?: boolean } = {}): void {
   const tbl = descendants(frame, NS.a, 'tbl')[0];
   const grid = tbl && childElement(tbl, NS.a, 'tblGrid');
   const xfrm = childElement(frame, NS.p, 'xfrm');
@@ -176,7 +178,7 @@ export function fitTable(frame: Element, area: Area, shares?: readonly number[],
     }
     if (!props) continue;
     props.setAttribute('anchor', 'ctr');
-    if (!tight) continue;
+    if (!tight || options.keepMargins) continue;
     props.setAttribute('marL', String(side));
     props.setAttribute('marR', String(side));
     props.setAttribute('marT', String(above));

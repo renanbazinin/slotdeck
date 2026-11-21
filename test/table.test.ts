@@ -313,6 +313,7 @@ test('a table that fills its frame keeps the sample\'s height with fewer rows, a
       rows: rowsOf(tbl).map((row) => Number(row.getAttribute('h'))),
       aligns: rowsOf(tbl).map((row) => cellsOf(row).map((cell) => path(cell, [NS.a, 'txBody'], [NS.a, 'p'], [NS.a, 'pPr'])?.getAttribute('algn')).join('')),
       anchors: descendants(tbl, NS.a, 'tcPr').map((props) => props.getAttribute('anchor') ?? '-').join(''),
+      margins: descendants(tbl, NS.a, 'tcPr').filter((props) => ['marL', 'marR', 'marT', 'marB'].some((name) => props.hasAttribute(name))).length,
     };
   };
   const one = [['Tram Square', '24']];
@@ -320,6 +321,8 @@ test('a table that fills its frame keeps the sample\'s height with fewer rows, a
   assert.deepEqual(draw(tableManifest, one).rows, [300000, 300000]);
   const filled = draw(filling, one);
   assert.deepEqual([filled.height, filled.rows, filled.anchors], [900000, [450000, 450000], 'ctrctrctrctr']);
+  // The space inside its cells is the template's: the rows of 450,000 EMU would otherwise have theirs made tighter.
+  assert.equal(filled.margins, 0);
   // The fixture reads right to left: every column starts at the right already. Read from the left, the docks end on the right.
   assert.deepEqual(filled.aligns, ['rr', 'rr']);
   assert.deepEqual(draw(filling, one, { direction: 'ltr' }).aligns, ['lr', 'lr']);

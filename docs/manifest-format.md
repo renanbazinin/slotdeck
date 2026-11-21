@@ -143,7 +143,7 @@ The shape must be a table.
 | `maxCellChars` | integer | Soft limit on the characters in one cell. |
 | `headerText` | `{ size?, bold?, color?, font? }` | Formatting for header cells, where the sample table defines none or it should differ. `color` is hex without `#`. |
 | `bodyText` | `{ size?, bold?, color?, font? }` | The same for body cells. |
-| `fill` | boolean | The table fills its frame: with fewer rows than the sample table, its rows share the height the sample takes, in the sample's proportions, with their text in the middle, and a column under about 1.7 inches keeps less space at the sides of its cells; without it the table ends higher up. A column whose every cell is a number ends on the right in a deck that reads left to right. From 0.7.0. |
+| `fill` | boolean | The table fills its frame: with fewer rows than the sample table, its rows share the height the sample takes, in the sample's proportions, with their text in the middle and the space inside each cell as the template has it; without it the table ends higher up. A column whose every cell is a number ends on the right in a deck that reads left to right. From 0.7.0. |
 
 ## Chart slot (`kind: "chart"`)
 

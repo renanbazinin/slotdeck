@@ -340,7 +340,7 @@ ${colors?.key}` : assetId;
         // What a screen reader says of it: its headings and how many rows it has.
         path(shape, [NS.p, 'nvGraphicFramePr'], [NS.p, 'cNvPr'])?.setAttribute('descr', tableAlt(action.table, language, writing.direction));
         // Its rows share the frame as the sample's rows do: a heading drawn lower than the rows stays lower.
-        if (frameArea && action.table.rows.length + 1 < sampleRows) fitTable(shape, frameArea, descendants(shape, NS.a, 'tr').map((row) => Number(row.getAttribute('h')) || 1));
+        if (frameArea && action.table.rows.length + 1 < sampleRows) fitTable(shape, frameArea, descendants(shape, NS.a, 'tr').map((row) => Number(row.getAttribute('h')) || 1), undefined, { keepMargins: true });
         // Rows whose cells take more lines than their neighbours' are higher, and columns are as wide as what is written in them asks, as the plan worked out.
         if (box) fitTable(shape, { x: box.x * pres.slideWidth, y: box.y * pres.slideHeight, cx: box.w * pres.slideWidth, cy: box.h * pres.slideHeight }, planned.rowHeights, planned.columnWidths);
       } else if (action.type === 'chart' && slot.kind === 'chart') {
