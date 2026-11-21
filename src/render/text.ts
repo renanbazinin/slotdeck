@@ -97,7 +97,7 @@ export function filledLanguage(text: string, stated: string, options: WritingOpt
 }
 
 /** The language tag of the first right-to-left letter of a text. */
-function rightToLeftTag(text: string): string {
+export function rightToLeftTag(text: string): string {
   const letter = RTL_LETTER.exec(text)?.[0] ?? '';
   return /\p{Script=Hebrew}/u.test(letter) ? 'he-IL' : /\p{Script=Arabic}/u.test(letter) ? 'ar-SA' : /\p{Script=Syriac}/u.test(letter) ? 'syr-SY' : 'dv-MV';
 }

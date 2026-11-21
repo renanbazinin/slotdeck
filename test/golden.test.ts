@@ -136,6 +136,16 @@ const changedSince: Record<string, { version: string; change: string; parts: str
   // changes, lang="he-IL" to lang="en-US"; the rest of the file is as 0.5.2 wrote it.
   'fixture rtl': { version: '0.6.5', change: 'English text in a run the template marks Hebrew is marked English', parts: 'cd85de46fd310f5c' },
   'fixture ltr': { version: '0.6.5', change: 'English text in a run the template marks Hebrew is marked English', parts: '87d825a0520d2578' },
+  // A chart's alternative text says its values: descr="column chart: 2024, 2025" becomes "Column
+  // chart. 2024: Apr-May 5, ...". The rest of the file is as 0.5.2 wrote it.
+  'patterns.en.deck.json': { version: '0.7.0', change: 'a chart says its values to a screen reader', parts: '04620d38b8943db4' },
+  'patterns.en.deck.json textScale 1.25': { version: '0.7.0', change: 'a chart says its values to a screen reader', parts: 'bfe1358ab3417820' },
+  'showcase rescue-dog': { version: '0.7.0', change: 'a chart says its values to a screen reader', parts: 'd436d1f67e14ed78' },
+  'sampleDeck demo min': { version: '0.7.0', change: 'a chart says its values to a screen reader', parts: 'cdd741b17694887d' },
+  'sampleDeck demo max': { version: '0.7.0', change: 'a chart says its values to a screen reader', parts: '395a6ee74be205a8' },
+  // The same in Hebrew ("תרשים עמודות. 2024: אפריל-מאי 5, ..."), and the chart's text, whose names
+  // are Hebrew, is marked he-IL where it was marked en-US.
+  'patterns.he.deck.json': { version: '0.7.0', change: 'a chart says its values to a screen reader, in Hebrew, and its Hebrew text is marked Hebrew', parts: 'f30407b18f01e166' },
 };
 
 test('the fixture holds the decks rendered here, and no other', () => {

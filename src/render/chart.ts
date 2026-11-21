@@ -2,10 +2,13 @@
 // data so the chart can be edited with "Edit Data".
 import { strToU8, zipSync } from 'fflate';
 import { mix } from '../color/space.ts';
+import { knownValues } from '../deck/spec.ts';
 import type { ChartValue } from '../deck/spec.ts';
 import { XML_HEADER, escapeXmlAttr } from '../pptx/xml.ts';
-import type { ChartSlotDef } from '../template/manifest.ts';
+import type { ChartSlotDef, Direction } from '../template/manifest.ts';
 import { writable } from '../util/chars.ts';
+import { leftToRightTag } from '../util/language.ts';
+import { marksRightToLeft, rightToLeftTag } from './text.ts';
 
 const NS_C = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
 const NS_A = 'http://schemas.openxmlformats.org/drawingml/2006/main';
@@ -53,8 +56,9 @@ function stringRef(formula: string, values: string[]): string {
   return `<c:strRef><c:f>${text(formula)}</c:f><c:strCache><c:ptCount val="${values.length}"/>${points}</c:strCache></c:strRef>`;
 }
 
-function numberRef(formula: string, values: number[], format: string): string {
-  const points = values.map((value, index) => `<c:pt idx="${index}"><c:v>${value}</c:v></c:pt>`).join('');
+/** The cached numbers of a series. A value that is not known has no point: the chart leaves a gap there, where a 0 would tell the reader it was nothing. */
+function numberRef(formula: string, values: ReadonlyArray<number | null>, format: string): string {
+  const points = values.map((value, index) => (value === null ? '' : `<c:pt idx="${index}"><c:v>${value}</c:v></c:pt>`)).join('');
   return `<c:numRef><c:f>${text(formula)}</c:f><c:numCache><c:formatCode>${text(format)}</c:formatCode><c:ptCount val="${values.length}"/>${points}</c:numCache></c:numRef>`;
 }
 
@@ -270,14 +274,44 @@ export function seriesColor(colors: readonly string[], index: number, ground: st
   return ground === undefined || round === 0 ? base : mix(hex(ground), hex(base), Math.min(0.75, 0.45 * round));
 }
 
-/** The chart part. `workbookRelId` is the relationship from the chart to its workbook. */
-export function buildChartXml(chart: ChartValue, slot: ChartSlotDef, workbookRelId: string, direction: 'rtl' | 'ltr' = 'ltr'): string {
+/**
+ * The language a chart's text is marked with, from its names of categories and series. In a deck
+ * that reads right to left, names with a right-to-left letter are marked with that language
+ * (`he-IL`), so that PowerPoint places their punctuation and brackets as Hebrew; any other chart is
+ * marked with the deck's left-to-right language (`en-US` for a Hebrew deck, or for one that states
+ * no language), as every chart was before 0.7.0. One mark serves the whole chart: its text has one
+ * paragraph style for all its labels.
+ */
+export function chartLanguage(chart: Pick<ChartValue, 'categories' | 'series'>, direction: Direction, language?: string): string {
+  const names = [...chart.categories, ...chart.series.map((series) => series.name)].join(' ');
+  return marksRightToLeft(names, direction) ? rightToLeftTag(names) : leftToRightTag(language);
+}
+
+/** How the text and the order of a chart are written, beyond its slot. */
+export interface ChartWriting {
+  /**
+   * The chart reads right to left: the first category stands on the right of columns and lines,
+   * with their value axis on the right, and horizontal bars grow from the right, with their names
+   * on the right. The room kept around the plot, and the legend, are mirrored with it. A pie is
+   * drawn as it is. Left out, a chart reads left to right, whatever direction its text reads.
+   */
+  mirrored?: boolean;
+  /** The deck's language, which names the language of a chart whose names are left to right (see {@link chartLanguage}). */
+  language?: string;
+}
+
+/** The chart part. `workbookRelId` is the relationship from the chart to its workbook; `direction` is the direction its text reads. */
+export function buildChartXml(chart: ChartValue, slot: ChartSlotDef, workbookRelId: string, direction: Direction = 'ltr', writing: ChartWriting = {}): string {
   const colors = slot.colors && slot.colors.length > 0 ? slot.colors : DEFAULT_COLORS;
   const drawn = slot.drawn;
   const color = (index: number) => (drawn ? seriesColor(colors, index, drawn.ground ?? 'FFFFFF') : (colors[index % colors.length] as string));
   const lineColor = slot.lineColor ?? 'D9D9D9';
   const percent = chart.format === 'percent';
-  const values = chart.series.flatMap((series) => series.values);
+  const values = knownValues(chart);
+  const mirrored = writing.mirrored === true && chart.type !== 'pie';
+  // A chart in English is marked as it always was: at the end of its paragraph only.
+  const tag = chartLanguage(chart, direction, writing.language);
+  const ownTag = tag === 'en-US' ? '' : ` lang="${escapeXmlAttr(tag)}"`;
   const look = drawn ? (drawn.look ?? numberLook(values, percent)) : undefined;
   const format = look ? formatCode(look) : percent ? '0"%"' : 'General';
   const range = ranges(chart);
@@ -303,7 +337,7 @@ export function buildChartXml(chart: ChartValue, slot: ChartSlotDef, workbookRel
   const [categoryAxisId, valueAxisId] = [50010001, 50010002];
   // Bars are read by their length, so their axis starts at zero; left to itself PowerPoint
   // starts it near the smallest value, which exaggerates differences.
-  const zeroBased = chart.type !== 'line' && chart.series.every((series) => series.values.every((value) => value >= 0));
+  const zeroBased = chart.type !== 'line' && values.every((value) => value >= 0);
   // Where its place is known, a chart says more by itself. Its value axis ends where the plan
   // says, the same for like charts of a slide, and is left out where the numbers stand at the
   // bars. The names of its categories stand upright, every one of them beside a horizontal bar
@@ -316,12 +350,12 @@ export function buildChartXml(chart: ChartValue, slot: ChartSlotDef, workbookRel
   const scaling = end ? `<c:max val="${end.max}"/><c:min val="${end.min ?? 0}"/>` : zeroBased ? '<c:min val="0"/>' : '';
   const stepDecimals = look && end?.step !== undefined ? ([0, 1, 2, 3].find((decimals) => exactAt((end.step as number) / look.divisor, decimals)) ?? 2) : undefined;
   const axisFormat = look ? formatCode(look, Math.max(stepDecimals ?? look.decimals, 0), true) : format;
-  const upright = `<c:txPr><a:bodyPr rot="0" vert="horz"/><a:lstStyle/><a:p><a:pPr${direction === 'rtl' ? ' rtl="1"' : ''}><a:defRPr/></a:pPr><a:endParaRPr lang="en-US"/></a:p></c:txPr>`;
+  const upright = `<c:txPr><a:bodyPr rot="0" vert="horz"/><a:lstStyle/><a:p><a:pPr${direction === 'rtl' ? ' rtl="1"' : ''}><a:defRPr${ownTag}/></a:pPr><a:endParaRPr lang="${escapeXmlAttr(tag)}"/></a:p></c:txPr>`;
   // A chart whose slide shows one legend for all its charts draws none of its own.
   const ownLegend = !spark && drawn?.legend !== false && (several || chart.type === 'pie');
   const widestOf = (list: readonly number[], decimals?: number) => (look ? list.reduce((most, value) => Math.max(most, shownAs(value, look, decimals).length), 1) : 1);
-  /** The room around the plot of a chart whose place is known: see `plotMargins`. */
-  const margins =
+  /** The room around the plot of a chart whose place is known: see `plotMargins`. A chart that reads right to left has it mirrored, and its legend follows. */
+  const room =
     drawn && chart.type !== 'pie'
       ? plotMargins({
           horizontal: chart.type === 'bar',
@@ -333,6 +367,7 @@ export function buildChartXml(chart: ChartValue, slot: ChartSlotDef, workbookRel
           legend: ownLegend,
         })
       : undefined;
+  const margins = room && mirrored ? { ...room, left: room.right, right: room.left } : room;
   /**
    * Every how many categories one is named under columns: as many as have room side by side.
    * Each has the width of its place in the plot, which is what PowerPoint gives a name before
@@ -345,13 +380,18 @@ export function buildChartXml(chart: ChartValue, slot: ChartSlotDef, workbookRel
     const each = Math.max(1, across) / Math.max(1, chart.categories.length);
     return Math.max(1, Math.ceil(((longest * NAME_WIDE + 0.5) * size) / each));
   };
-  /** Category and value axes. Horizontal bars list their categories top to bottom, as a table would. */
+  /**
+   * Category and value axes. Horizontal bars list their categories top to bottom, as a table would.
+   * A chart that reads right to left runs its categories from the right, which brings its value
+   * axis to the right (that axis crosses at the first category); its horizontal bars grow from the
+   * right, where their names then stand (that axis crosses at nothing).
+   */
   const axes = (horizontal: boolean) =>
-    `<c:catAx><c:axId val="${categoryAxisId}"/><c:scaling><c:orientation val="${horizontal ? 'maxMin' : 'minMax'}"/></c:scaling>` +
-    `${shown}<c:axPos val="${horizontal ? 'l' : 'b'}"/><c:numFmt formatCode="General" sourceLinked="0"/>${drawn ? `${axisTicks}<c:tickLblPos val="${below ? 'low' : 'nextTo'}"/>` : axisText}${axisLine}${drawn ? upright : ''}` +
+    `<c:catAx><c:axId val="${categoryAxisId}"/><c:scaling><c:orientation val="${horizontal || mirrored ? 'maxMin' : 'minMax'}"/></c:scaling>` +
+    `${shown}<c:axPos val="${horizontal ? (mirrored ? 'r' : 'l') : 'b'}"/><c:numFmt formatCode="General" sourceLinked="0"/>${drawn ? `${axisTicks}<c:tickLblPos val="${below ? 'low' : 'nextTo'}"/>` : axisText}${axisLine}${drawn ? upright : ''}` +
     `<c:crossAx val="${valueAxisId}"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/>${drawn ? `<c:tickLblSkip val="${skip(horizontal)}"/>` : ''}<c:noMultiLvlLbl val="0"/></c:catAx>` +
-    `<c:valAx><c:axId val="${valueAxisId}"/><c:scaling><c:orientation val="minMax"/>${scaling}</c:scaling>` +
-    `${valueShown}<c:axPos val="${horizontal ? 'b' : 'l'}"/>${gridlines}<c:numFmt formatCode="${escapeXmlAttr(axisFormat)}" sourceLinked="0"/>${axisText}` +
+    `<c:valAx><c:axId val="${valueAxisId}"/><c:scaling><c:orientation val="${horizontal && mirrored ? 'maxMin' : 'minMax'}"/>${scaling}</c:scaling>` +
+    `${valueShown}<c:axPos val="${horizontal ? 'b' : mirrored ? 'r' : 'l'}"/>${gridlines}<c:numFmt formatCode="${escapeXmlAttr(axisFormat)}" sourceLinked="0"/>${axisText}` +
     `<c:spPr>${noLine}</c:spPr><c:crossAx val="${categoryAxisId}"/><c:crosses val="${horizontal ? 'max' : 'autoZero'}"/><c:crossBetween val="between"/>${end?.step !== undefined ? `<c:majorUnit val="${end.step}"/>` : ''}</c:valAx>`;
   const axisIds = `<c:axId val="${categoryAxisId}"/><c:axId val="${valueAxisId}"/>`;
   /**
@@ -432,8 +472,8 @@ export function buildChartXml(chart: ChartValue, slot: ChartSlotDef, workbookRel
   const font = style.font ? `<a:latin typeface="${escapeXmlAttr(style.font)}"/><a:ea typeface="${escapeXmlAttr(style.font)}"/><a:cs typeface="${escapeXmlAttr(style.font)}"/>` : '';
   const defaults =
     // The paragraph direction makes mixed labels such as "רבעון 1" read in the right order.
-    `<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr${direction === 'rtl' ? ' rtl="1"' : ''}><a:defRPr sz="${Math.round((style.size ?? 10) * 100)}"${style.bold ? ' b="1"' : ''}>` +
-    `${style.color ? fill(style.color) : ''}${font}</a:defRPr></a:pPr><a:endParaRPr lang="en-US"/></a:p></c:txPr>`;
+    `<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr${direction === 'rtl' ? ' rtl="1"' : ''}><a:defRPr sz="${Math.round((style.size ?? 10) * 100)}"${style.bold ? ' b="1"' : ''}${ownTag}>` +
+    `${style.color ? fill(style.color) : ''}${font}</a:defRPr></a:pPr><a:endParaRPr lang="${escapeXmlAttr(tag)}"/></a:p></c:txPr>`;
 
   return (
     `${XML_HEADER}<c:chartSpace xmlns:c="${NS_C}" xmlns:a="${NS_A}" xmlns:r="${NS_R}">` +
@@ -446,13 +486,22 @@ export function buildChartXml(chart: ChartValue, slot: ChartSlotDef, workbookRel
   );
 }
 
-/** The data as an Excel workbook: categories down column A, one series per column from B, names in row 1. */
-export function buildChartWorkbook(chart: ChartValue): Uint8Array {
+/**
+ * The data as an Excel workbook: categories down column A, one series per column from B, names in
+ * row 1. A value that is not known is an empty cell. `rightToLeft` sets the sheet right to left,
+ * as Excel shows a sheet in Hebrew: for a chart that reads right to left.
+ */
+export function buildChartWorkbook(chart: ChartValue, options: { rightToLeft?: boolean } = {}): Uint8Array {
   const stringCell = (reference: string, value: string) => `<c r="${reference}" t="inlineStr"><is><t xml:space="preserve">${text(value)}</t></is></c>`;
   const header = `<row r="1">${chart.series.map((series, index) => stringCell(`${columnName(index + 1)}1`, series.name)).join('')}</row>`;
   const rows = chart.categories
     .map((category, row) => {
-      const cells = chart.series.map((series, index) => `<c r="${columnName(index + 1)}${row + 2}"><v>${series.values[row] ?? 0}</v></c>`).join('');
+      const cells = chart.series
+        .map((series, index) => {
+          const value = series.values[row];
+          return value === null || value === undefined ? '' : `<c r="${columnName(index + 1)}${row + 2}"><v>${value}</v></c>`;
+        })
+        .join('');
       return `<row r="${row + 2}">${stringCell(`A${row + 2}`, category)}${cells}</row>`;
     })
     .join('');
@@ -475,7 +524,7 @@ export function buildChartWorkbook(chart: ChartValue): Uint8Array {
     'xl/_rels/workbook.xml.rels':
       `${XML_HEADER}<Relationships xmlns="${packageRels}">` +
       `<Relationship Id="rId1" Type="${NS_R}/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
-    'xl/worksheets/sheet1.xml': `${XML_HEADER}<worksheet xmlns="${main}"><sheetData>${header}${rows}</sheetData></worksheet>`,
+    'xl/worksheets/sheet1.xml': `${XML_HEADER}<worksheet xmlns="${main}">${options.rightToLeft ? '<sheetViews><sheetView rightToLeft="1" workbookViewId="0"/></sheetViews>' : ''}<sheetData>${header}${rows}</sheetData></worksheet>`,
   };
   // A fixed timestamp, so the same chart always gives the same bytes.
   return zipSync(Object.fromEntries(Object.entries(files).map(([name, content]) => [name, strToU8(content)])), { mtime: ZIP_EPOCH });

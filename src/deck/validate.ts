@@ -220,7 +220,8 @@ export function resolveSlot(
     if (categories.length === 0) return { error: 'the chart has no categories' };
     const series = value.series.map((entry) => ({
       name: plainText(entry?.name).trim(),
-      values: (Array.isArray(entry?.values) ? entry.values : []).map(Number),
+      // A value that is not known (null) stays so: the chart leaves a gap there.
+      values: (Array.isArray(entry?.values) ? entry.values : []).map((number: unknown) => (number === null ? null : Number(number))),
     }));
     if (series.length === 0) return { error: 'the chart has no series' };
     // PowerPoint does not open a file that holds a chart of more series than this.
@@ -230,8 +231,9 @@ export function resolveSlot(
       if (entry.values.length !== categories.length) {
         return { error: `${label} has ${entry.values.length} values; the chart has ${categories.length} categories` };
       }
-      if (entry.values.some((number) => !Number.isFinite(number))) return { error: `${label} has a value that is not a number` };
+      if (entry.values.some((number) => number !== null && !Number.isFinite(number))) return { error: `${label} has a value that is not a number` };
     }
+    if (series.every((entry) => entry.values.every((number) => number === null))) return { error: 'the chart has no value that is known; a value that is not known is null' };
     if (value.type === 'pie' && series.length > 1) return { error: 'a pie chart takes exactly one series' };
     const chart: ChartValue = { type: value.type, categories, series };
     if (value.format === 'percent' || value.format === 'number') chart.format = value.format;

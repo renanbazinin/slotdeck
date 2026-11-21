@@ -7,7 +7,7 @@
 import { contrast, mix, readable } from '../color/space.ts';
 import { FREE_PATTERN } from '../deck/spec.ts';
 import type { FreeArrange, FreeBlockKind, SlideSpec, SlotValue } from '../deck/spec.ts';
-import { isChartValue, isTableValue, isTextValue, plainText, toParagraphs } from '../deck/spec.ts';
+import { isChartValue, isTableValue, isTextValue, knownValues, plainText, toParagraphs } from '../deck/spec.ts';
 import type { ChartValue } from '../deck/spec.ts';
 import { headingPlaces, headingsOver } from '../deck/headings.ts';
 import type { HeadingOver } from '../deck/headings.ts';
@@ -684,8 +684,8 @@ const ALIKE = 5;
 /** A chart value that can be drawn: names for its categories, and a number for each in every series. What is not is told by the deck's check. */
 const drawable = (value: SlotValue | undefined): ChartValue | undefined => {
   if (!isChartValue(value) || value.categories.length === 0 || value.series.length === 0) return undefined;
-  const sound = value.series.every((series) => Array.isArray(series?.values) && series.values.length === value.categories.length && series.values.every((number) => typeof number === 'number' && Number.isFinite(number)));
-  return sound && value.categories.every((category) => typeof category === 'string') ? value : undefined;
+  const sound = value.series.every((series) => Array.isArray(series?.values) && series.values.length === value.categories.length && series.values.every((number) => number === null || (typeof number === 'number' && Number.isFinite(number))));
+  return sound && knownValues(value).length > 0 && value.categories.every((category) => typeof category === 'string') ? value : undefined;
 };
 
 /** The paragraphs of a text value. A value that is no text counts as empty: the deck's check reports it. */
@@ -1180,7 +1180,7 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
       size = Math.max(context.atLeast?.get(freeSlotName(index, 'Chart')) ?? 0, size);
       if (detail !== 'spark' && size < least - 1e-9) detail = 'spark';
       size = Math.max(HARD, size);
-      const numbers = value ? value.series.flatMap((series) => series.values) : [];
+      const numbers = value ? knownValues(value) : [];
       return { place, value, detail, size, numbers, most: numbers.reduce((most, number) => Math.max(most, number), 0), below: numbers.some((number) => number < 0) };
     });
     type Entry = (typeof entries)[number];

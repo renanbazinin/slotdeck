@@ -94,7 +94,9 @@ export function toSlide(pattern: UsablePattern, content: unknown, context: Catal
       const series = (Array.isArray(chart.series) ? chart.series : []).map((entry) => {
         const item = (entry ?? {}) as { name?: unknown; values?: unknown };
         // Lengths are left as the model gave them: a short series is a problem to send back, not to pad.
-        return { name: cleanText(item.name), values: (Array.isArray(item.values) ? item.values : []).map(Number).filter(Number.isFinite) };
+        // A value the model says is not known (null) stays a gap, where Number would make it 0.
+        const values = (Array.isArray(item.values) ? item.values : []).map((number: unknown) => (number === null ? null : Number(number)));
+        return { name: cleanText(item.name), values: values.filter((number) => number === null || Number.isFinite(number)) };
       });
       if (categories.length === 0 || series.length === 0) continue;
       slots[planned.slot.name] = chart.format === 'percent' ? { type, categories, series, format: 'percent' } : { type, categories, series };

@@ -1,6 +1,6 @@
 import type { TemplateManifest } from '../template/manifest.ts';
 import { freeSlots, isFreeBlockKind } from '../free/blocks.ts';
-import { isChartValue, isFreeSlide } from './spec.ts';
+import { isChartValue, isFreeSlide, knownValues } from './spec.ts';
 import type { DeckSpec } from './spec.ts';
 import type { Issue } from './validate.ts';
 import { said } from '../messages/en.ts';
@@ -39,7 +39,7 @@ export function unstatedChartValues(manifest: TemplateManifest, deck: DeckSpec):
     for (const slot of charts) {
       const value = slide.slots[slot.name];
       if (slot.kind !== 'chart' || !isChartValue(value)) continue;
-      const unknown = [...new Set(value.series.flatMap((series) => series.values))].filter((number) => !stated.has(number));
+      const unknown = [...new Set(knownValues(value))].filter((number) => !stated.has(number));
       if (unknown.length > 0) {
         issues.push({
           severity: 'warning',

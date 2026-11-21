@@ -160,6 +160,11 @@ export function checkManifest(template: Template, inspected?: TemplateInfo): Man
   // slides. A manifest written by hand may hold anything here; null is a setting that is not given.
   const scaleProblem = templateScaleProblem(manifest.textScale);
   if (scaleProblem) issues.push({ severity: 'error', message: scaleProblem });
+  // The direction its charts read: anything but rtl reads left to right.
+  const chartDirection: unknown = manifest.chartDirection;
+  if (chartDirection !== undefined && chartDirection !== null && chartDirection !== 'rtl' && chartDirection !== 'ltr') {
+    issues.push({ severity: 'warning', message: `chartDirection is ${JSON.stringify(chartDirection)}; it is "rtl" or "ltr", and charts read left to right` });
+  }
   // How wide its text is set and the least size its running text takes: a setting that is wrong is not used.
   for (const name of ['characterWidth', 'leastTextSize'] as const) {
     const problem = templateTextProblem(name, manifest[name]);

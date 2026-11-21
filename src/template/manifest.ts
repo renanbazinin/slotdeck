@@ -20,6 +20,14 @@ export interface TemplateManifest {
    */
   alignOnDirectionChange?: AlignPolicy;
   /**
+   * The direction the charts of a deck that reads right to left read in. `rtl`: the first category
+   * of columns and lines stands on the right, with their value axis, horizontal bars grow from the
+   * right, and the chart's data sheet is right to left. Left out, or `ltr`: charts read left to
+   * right, as many charts of time do in Hebrew too. A deck that reads left to right has charts
+   * that read left to right; a deck may state its own (`DeckSpec.chartDirection`). From 0.7.0.
+   */
+  chartDirection?: Direction;
+  /**
    * Enlarges the body text of every deck made from this template, as a factor on the designed
    * size: 1.3 turns 9 pt into about 12 pt. For a template whose body text is too small to read
    * comfortably. Budgets shrink with it, and a deck's own text size is applied on top.
@@ -134,6 +142,15 @@ export function templateTextSetting(manifest: Pick<TemplateManifest, 'characterW
   const value: unknown = manifest[name];
   if (value === undefined || value === null || templateTextProblem(name, value) !== undefined) return undefined;
   return name === 'leastTextSize' ? Math.ceil((value as number) * 2 - 1e-9) / 2 : (value as number);
+}
+
+/**
+ * Whether the charts of a deck read right to left: as the deck states (`chartDirection`), or else
+ * as the template states for a deck that reads right to left. Anything but `rtl` reads left to right.
+ */
+export function chartsReadRightToLeft(manifest: Pick<TemplateManifest, 'direction' | 'chartDirection'>, deck: { direction?: Direction | undefined; chartDirection?: Direction | undefined }): boolean {
+  const stated = deck.chartDirection ?? ((deck.direction ?? manifest.direction) === 'rtl' ? manifest.chartDirection : undefined);
+  return stated === 'rtl';
 }
 
 /** The factor on body text for a deck: the template's own setting times the deck's. A deck's factor that is null, as an application stores a number that is not set, is 1. */

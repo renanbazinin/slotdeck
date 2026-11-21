@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { strFromU8, unzipSync } from 'fflate';
-import { DeckValidationError, PptxPackage, loadTemplate, planDeck, renderDeck, validateDeck } from '../src/index.ts';
+import { DeckValidationError, PptxPackage, changeManifest, checkManifest, editManifest, loadTemplate, planDeck, renderDeck, validateDeck } from '../src/index.ts';
 import type { ChartValue, DeckSpec, JsonRequest, LlmProvider, SlideSpec, TemplateManifest } from '../src/index.ts';
 import { statedNumbers } from '../src/deck/numbers.ts';
 import { readRels, resolveTarget } from '../src/pptx/package.ts';
 import { NS, descendants, parseXml, path, rootElement } from '../src/pptx/xml.ts';
+import { chartAlt } from '../src/render/alt.ts';
 import { axisLabels, buildChartWorkbook, buildChartXml, formatCode, numberLook, plotMargins, roundAxis, roundSpan, seriesColor, shownAs } from '../src/render/chart.ts';
 import { buildFixturePptx, fixtureManifest } from './fixture.ts';
 
@@ -348,4 +349,140 @@ test('a chart whose place is known: a counted plot, upright names, the axis it i
   // A bare chart keeps the whole frame for its plot, and its bars the height the plan gives them.
   const bare = at(column, { width: 60, height: 30, axis: { max: 120 } }, { detail: 'spark' });
   assert.ok(bare.includes('<c:max val="120"/>') && bare.includes('<c:x val="0.04"/><c:y val="0.06"/><c:w val="0.92"/><c:h val="0.88"/>'));
+});
+
+test('a chart that reads right to left starts at the right, and is told so by the deck or by the template for a deck that reads right to left', () => {
+  const slot = chartManifest().patterns.at(-1)?.slots[1] as Parameters<typeof buildChartXml>[1];
+  const axisOf = (xml: string, name: 'catAx' | 'valAx') => new RegExp(`<c:${name}>(?:(?!</c:${name}>).)*</c:${name}>`).exec(xml)?.[0] ?? '';
+  const orientation = (part: string) => /<c:orientation val="(\w+)"\/>/.exec(part)?.[1];
+  const position = (part: string) => /<c:axPos val="(\w)"\/>/.exec(part)?.[1];
+
+  // Columns and lines: the first category on the right, the value axis on the right; it still crosses at the first category.
+  for (const type of ['column', 'line'] as const) {
+    const plain = buildChartXml({ ...column, type }, slot, 'rId1', 'rtl');
+    const mirrored = buildChartXml({ ...column, type }, slot, 'rId1', 'rtl', { mirrored: true });
+    rootElement(parseXml(mirrored));
+    assert.deepEqual([orientation(axisOf(plain, 'catAx')), position(axisOf(plain, 'valAx'))], ['minMax', 'l'], type);
+    assert.deepEqual([orientation(axisOf(mirrored, 'catAx')), position(axisOf(mirrored, 'catAx')), orientation(axisOf(mirrored, 'valAx')), position(axisOf(mirrored, 'valAx'))], ['maxMin', 'b', 'minMax', 'r'], type);
+    assert.ok(axisOf(mirrored, 'valAx').includes('<c:crosses val="autoZero"/>'));
+  }
+  // Horizontal bars grow from the right, with their names on the right; the first category stays at the top, the value axis at the foot.
+  const bars = buildChartXml({ ...column, type: 'bar' }, slot, 'rId1', 'rtl', { mirrored: true });
+  assert.deepEqual([orientation(axisOf(bars, 'catAx')), position(axisOf(bars, 'catAx')), orientation(axisOf(bars, 'valAx')), position(axisOf(bars, 'valAx'))], ['maxMin', 'r', 'maxMin', 'b']);
+  assert.ok(axisOf(bars, 'valAx').includes('<c:crosses val="max"/>'));
+  // A pie is drawn as it is.
+  const pie: ChartValue = { type: 'pie', categories: ['a', 'b'], series: [{ name: 's', values: [60, 40] }] };
+  assert.equal(buildChartXml(pie, slot, 'rId1', 'rtl', { mirrored: true }), buildChartXml(pie, slot, 'rId1', 'rtl'));
+
+  // A chart whose place is known keeps the room of its value axis on the right, and its legend under the middle of the plot.
+  const pair: ChartValue = { ...column, series: [...column.series, { name: 'Returns', values: [4, 3, 6] }] };
+  const drawn = { width: 300, height: 200, axis: { max: 100, step: 25 } };
+  const plotX = (xml: string) => {
+    const found = /<c:plotArea><c:layout><c:manualLayout><c:layoutTarget val="inner"\/><c:xMode val="edge"\/><c:yMode val="edge"\/><c:x val="([\d.]+)"\/><c:y val="[\d.]+"\/><c:w val="([\d.]+)"\/>/.exec(xml);
+    assert.ok(found);
+    return [Number(found[1]), Number(found[2])] as const;
+  };
+  const legendX = (xml: string) => Number(/<c:legend><c:legendPos val="b"\/><c:layout><c:manualLayout><c:xMode val="edge"\/><c:yMode val="edge"\/><c:x val="([\d.]+)"\//.exec(xml)?.[1]);
+  const left = buildChartXml(pair, { ...slot, drawn }, 'rId1', 'rtl');
+  const right = buildChartXml(pair, { ...slot, drawn }, 'rId1', 'rtl', { mirrored: true });
+  const [x, w] = plotX(left);
+  const [mx, mw] = plotX(right);
+  assert.ok(Math.abs(mw - w) < 1e-3 && Math.abs(mx - (1 - x - w)) < 2e-3, `the plot is mirrored: ${x},${w} and ${mx},${mw}`);
+  assert.ok(x > mx, 'the value axis takes its room on the left, and then on the right');
+  assert.ok(Math.abs(legendX(right) - (legendX(left) + mx - x)) < 2e-3, 'the legend moves with the plot');
+
+  // Rendered: the template's setting reaches a deck that reads right to left; a deck states its own; a deck that reads left to right reads so.
+  const template = (chartDirection?: 'rtl' | 'ltr') => loadTemplate(pptx, { ...chartManifest(), ...(chartDirection ? { chartDirection } : {}) });
+  const chartOf = (file: Uint8Array) => strFromU8(unzipSync(file)['ppt/charts/chart1.xml'] as Uint8Array);
+  const sheetOf = (file: Uint8Array) => strFromU8(unzipSync(unzipSync(file)['ppt/embeddings/Microsoft_Excel_Sheet1.xlsx'] as Uint8Array)['xl/worksheets/sheet1.xml'] as Uint8Array);
+  const mirroredIn = (file: Uint8Array) => orientation(axisOf(chartOf(file), 'catAx')) === 'maxMin';
+  const rtlDeck = renderDeck(template('rtl'), deckOf(slide(column))).pptx;
+  assert.equal(fixtureManifest.direction, 'rtl');
+  assert.ok(mirroredIn(rtlDeck) && sheetOf(rtlDeck).includes('<sheetView rightToLeft="1" workbookViewId="0"/>'));
+  const plainDeck = renderDeck(template(), deckOf(slide(column))).pptx;
+  assert.ok(!mirroredIn(plainDeck) && !sheetOf(plainDeck).includes('sheetView'), 'left out, charts read left to right');
+  assert.ok(!mirroredIn(renderDeck(template('rtl'), { ...deckOf(slide(column)), direction: 'ltr' }).pptx), 'a deck that reads left to right');
+  assert.ok(!mirroredIn(renderDeck(template('rtl'), { ...deckOf(slide(column)), chartDirection: 'ltr' }).pptx), 'the deck says left to right');
+  assert.ok(mirroredIn(renderDeck(template(), { ...deckOf(slide(column)), chartDirection: 'rtl' }).pptx), 'the deck says right to left');
+  assert.ok(mirroredIn(renderDeck(template(), { ...deckOf(slide(column)), direction: 'ltr', chartDirection: 'rtl' }).pptx), 'whatever its text reads');
+});
+
+test('a chart is marked with the language of its names: Hebrew names in a deck that reads right to left are Hebrew', () => {
+  const slot = chartManifest().patterns.at(-1)?.slots[1] as Parameters<typeof buildChartXml>[1];
+  const hebrew: ChartValue = { type: 'column', categories: ['רבעון 1', 'רבעון 2'], series: [{ name: 'הכנסות (מיליונים)', values: [3, 4] }] };
+  const marks = (xml: string) => [...xml.matchAll(/<a:(defRPr|endParaRPr)\b([^>]*)>/g)].map((found) => `${found[1]}:${/lang="([^"]+)"/.exec(found[2] ?? '')?.[1] ?? '-'}`);
+  assert.deepEqual(marks(buildChartXml(hebrew, slot, 'rId1', 'rtl', { language: 'he' })), ['defRPr:he-IL', 'endParaRPr:he-IL']);
+  // English names in a Hebrew deck are English, as every chart was: the end of the paragraph only.
+  assert.deepEqual(marks(buildChartXml(column, slot, 'rId1', 'rtl', { language: 'he' })), ['defRPr:-', 'endParaRPr:en-US']);
+  // A French deck's chart is French; a Hebrew name among English ones in a deck that reads left to right is not enough to make it Hebrew.
+  assert.deepEqual(marks(buildChartXml(column, slot, 'rId1', 'ltr', { language: 'fr' })), ['defRPr:fr-FR', 'endParaRPr:fr-FR']);
+  assert.deepEqual(marks(buildChartXml({ ...column, categories: ['Q1', 'Q2', 'רבעון'] }, slot, 'rId1', 'ltr')), ['defRPr:-', 'endParaRPr:en-US']);
+  // The names under columns whose place is known are marked alike.
+  const drawn = buildChartXml(hebrew, { ...slot, drawn: { width: 300, height: 200 } }, 'rId1', 'rtl', { language: 'he' });
+  assert.ok(drawn.includes('<a:defRPr lang="he-IL"/></a:pPr><a:endParaRPr lang="he-IL"/>'));
+});
+
+test('a value that is not known is a gap in the chart, an empty cell in its data and said so to a screen reader', () => {
+  const gaps: ChartValue = { type: 'line', categories: ['Q1', 'Q2', 'Q3'], series: [{ name: 'Rides', values: [5, null, 9] }] };
+  const slot = chartManifest().patterns.at(-1)?.slots[1] as Parameters<typeof buildChartXml>[1];
+  const xml = buildChartXml(gaps, slot, 'rId1');
+  assert.ok(xml.includes('<c:ptCount val="3"/><c:pt idx="0"><c:v>5</c:v></c:pt><c:pt idx="2"><c:v>9</c:v></c:pt></c:numCache>'), 'no point for the second value');
+  assert.ok(xml.includes('<c:dispBlanksAs val="gap"/>'));
+  const sheet = strFromU8(unzipSync(buildChartWorkbook(gaps))['xl/worksheets/sheet1.xml'] as Uint8Array);
+  assert.ok(sheet.includes('<row r="3"><c r="A3" t="inlineStr"><is><t xml:space="preserve">Q2</t></is></c></row>'), 'an empty cell');
+
+  // A deck may say so; the deck's check takes it, and refuses a chart with no value known at all.
+  const template = loadTemplate(pptx, chartManifest());
+  assert.deepEqual(validateDeck(template, deckOf(slide(gaps))).filter((issue) => issue.severity === 'error'), []);
+  assert.match(validateDeck(template, deckOf(slide({ ...gaps, series: [{ name: 'Rides', values: [null, null, null] }] })))[0]?.message ?? '', /no value that is known/);
+  assert.match(validateDeck(template, deckOf(slide({ ...gaps, series: [{ name: 'Rides', values: [5, 'many', 9] }] })))[0]?.message ?? '', /not a number/);
+  const file = renderDeck(template, deckOf(slide(gaps))).pptx;
+  assert.ok(strFromU8(unzipSync(file)['ppt/charts/chart1.xml'] as Uint8Array).includes('<c:pt idx="2"><c:v>9</c:v></c:pt></c:numCache>'));
+  // The fixture is a Hebrew template: its decks say it in Hebrew.
+  assert.match(strFromU8(unzipSync(file)['ppt/slides/slide1.xml'] as Uint8Array), /descr="תרשים קו של Rides: Q1 5, Q2 אין נתון, Q3 9"/);
+  const english = renderDeck(template, { ...deckOf(slide(gaps)), direction: 'ltr', language: 'en' }).pptx;
+  assert.match(strFromU8(unzipSync(english)['ppt/slides/slide1.xml'] as Uint8Array), /descr="Line chart of Rides: Q1 5, Q2 no value, Q3 9"/);
+});
+
+test('a chart says its kind and its values to a screen reader, in the language of the deck', () => {
+  assert.equal(chartAlt(column), 'Column chart of Adoptions: Q1 62, Q2 74, Q3 95');
+  assert.equal(chartAlt({ ...column, format: 'percent' }), 'Column chart of Adoptions: Q1 62%, Q2 74%, Q3 95%');
+  const pair: ChartValue = { type: 'bar', categories: ['A', 'B'], series: [{ name: 'In', values: [1, 2] }, { name: 'Out', values: [3, null] }] };
+  assert.equal(chartAlt(pair), 'Bar chart. In: A 1, B 2. Out: A 3, B no value');
+  assert.equal(chartAlt({ type: 'pie', categories: ['כן', 'לא'], series: [{ name: '', values: [60, 40] }] }, 'he', 'rtl'), 'תרשים עוגה: כן 60, לא 40');
+  assert.equal(chartAlt(pair, 'he-IL', 'rtl'), 'תרשים פסים. In: A 1, B 2. Out: A 3, B אין נתון');
+  // A Hebrew deck turned left to right says it in English.
+  assert.equal(chartAlt(column, 'he', 'ltr'), 'Column chart of Adoptions: Q1 62, Q2 74, Q3 95');
+});
+
+/** Whether the first chart of a file runs its categories from the right. */
+const mirroredOf = (file: Uint8Array): boolean => /<c:catAx>(?:(?!<\/c:catAx>).)*<c:orientation val="maxMin"\/>/.test(strFromU8(unzipSync(file)["ppt/charts/chart1.xml"] as Uint8Array));
+
+test('a studio sets the direction of charts, and clears it; a value that is no direction is reported', async () => {
+  const template = loadTemplate(pptx, chartManifest());
+  const set = changeManifest(template, [{ op: 'setManifest', chartDirection: 'rtl' }]);
+  assert.deepEqual(set.rejected, []);
+  assert.equal(set.manifest.chartDirection, 'rtl');
+  assert.match(set.applied[0]?.message ?? '', /draws the charts of a deck that reads right to left from the right/);
+  const cleared = changeManifest(loadTemplate(pptx, set.manifest), [{ op: 'setManifest', chartDirection: null }]);
+  assert.equal('chartDirection' in cleared.manifest, false);
+  assert.match(changeManifest(template, [{ op: 'setManifest', chartDirection: 'up' as 'rtl' }]).rejected[0]?.reason ?? '', /the direction of charts is "rtl" or "ltr"/);
+  assert.deepEqual(
+    checkManifest(loadTemplate(pptx, { ...chartManifest(), chartDirection: 'right' as 'rtl' })).filter((issue) => issue.message.includes('chartDirection')).map((issue) => issue.message),
+    ['chartDirection is "right"; it is "rtl" or "ltr", and charts read left to right'],
+  );
+  assert.ok(!mirroredOf(renderDeck(loadTemplate(pptx, { ...chartManifest(), chartDirection: 'right' as 'rtl' }), deckOf(slide(column))).pptx));
+
+  // An instruction in words reaches it through editManifest; "" clears it.
+  const answers = [
+    { note: '', changes: [{ op: 'setManifest', pattern: '', shape: '', slot: '', values: [{ property: 'chartDirection', value: 'rtl' }] }] },
+    { note: '', changes: [{ op: 'setManifest', pattern: '', shape: '', slot: '', values: [{ property: 'chartDirection', value: '' }] }] },
+  ];
+  const { llm, requests } = scripted(...answers);
+  const asked = await editManifest(template, 'Charts in Hebrew decks should start on the right.', { llm });
+  assert.equal(asked.manifest.chartDirection, 'rtl');
+  assert.match(requests[0]?.prompt ?? '', /chartDirection \("rtl" draws the charts of a deck that reads right to left from the right/);
+  const back = await editManifest(loadTemplate(pptx, asked.manifest), 'Draw charts left to right again.', { llm });
+  assert.equal('chartDirection' in back.manifest, false);
+  assert.match(requests[1]?.prompt ?? '', /the charts of a deck that reads right to left are drawn from the right/);
 });

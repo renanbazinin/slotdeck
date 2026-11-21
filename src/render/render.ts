@@ -20,7 +20,7 @@ import type { Relationship } from '../pptx/package.ts';
 import { readPresentation } from '../pptx/presentation.ts';
 import { NS, childElement, childElements, descendants, openableSizes, parseXml, removeNode, rootElement, serializeXml } from '../pptx/xml.ts';
 import type { Element } from '../pptx/xml.ts';
-import { bodyTextScale, chartAtScale, defaultFit, effectiveSlots, itemCount, scalesWithText, slotSources, tableAtScale, templateTextSetting } from '../template/manifest.ts';
+import { bodyTextScale, chartAtScale, chartsReadRightToLeft, defaultFit, effectiveSlots, itemCount, scalesWithText, slotSources, tableAtScale, templateTextSetting } from '../template/manifest.ts';
 import type { ChartSlotDef, PatternDef, SlideBox, TemplateManifest } from '../template/manifest.ts';
 import { withLayouts } from '../template/compose.ts';
 import { readImageInfo } from '../util/image.ts';
@@ -31,6 +31,7 @@ import { said } from '../messages/en.ts';
 import { inheritedBackground, ownBackground, ownTheBackground, paletteOf, recolorChart, recolorDefaults, recolorIcon, recolorInherited, recolorSlide, schemeOf } from '../color/recolor.ts';
 import { contrast } from '../color/space.ts';
 import { CHART_CONTENT_TYPE, CHART_REL_TYPE, WORKBOOK_CONTENT_TYPE, WORKBOOK_REL_TYPE, buildChartWorkbook, buildChartXml, chartFrameXml } from './chart.ts';
+import { chartAlt } from './alt.ts';
 import { setPicture } from './picture.ts';
 import type { PictureFill } from './picture.ts';
 import { fitTable, setTable } from './table.ts';
@@ -127,6 +128,8 @@ export function renderDeck(template: Template, deck: DeckSpec, options: RenderOp
   // The direction and language filled text is written in: see filledLanguage in text.ts.
   const language = deck.language ?? manifest.language;
   const writing: WritingOptions = { direction: deck.direction ?? manifest.direction, templateDirection: manifest.direction, ...(language ? { language } : {}) };
+  // Charts read right to left only where the deck or the template says so.
+  const chartsMirrored = chartsReadRightToLeft(manifest, deck);
 
   const firstSlide = pres.slides[0];
   if (!firstSlide) throw new Error('The template has no slides');
@@ -193,8 +196,8 @@ ${colors?.key}` : assetId;
       chartPart = `${partsDir}charts/chart${chartCount}.xml`;
       workbookPart = `${partsDir}embeddings/Microsoft_Excel_Sheet${chartCount}.xlsx`;
     } while (out.has(chartPart) || out.has(workbookPart));
-    out.write(workbookPart, buildChartWorkbook(chart));
-    out.write(chartPart, openableSizes(buildChartXml(chart, slot, 'rId1', deck.direction ?? manifest.direction)));
+    out.write(workbookPart, buildChartWorkbook(chart, { rightToLeft: chartsMirrored }));
+    out.write(chartPart, openableSizes(buildChartXml(chart, slot, 'rId1', writing.direction, { mirrored: chartsMirrored, ...(language ? { language } : {}) })));
     writeRels(out, chartPart, [{ id: 'rId1', type: WORKBOOK_REL_TYPE, target: relativeTarget(chartPart, workbookPart), external: false }]);
     types.setOverride(chartPart, CHART_CONTENT_TYPE);
     types.ensureDefault('xlsx', WORKBOOK_CONTENT_TYPE);
@@ -330,7 +333,7 @@ ${colors?.key}` : assetId;
         const chartPart = addChart(action.chart, colors && palette ? recolorChart(sized, colors.map, palette, pageOf()) : sized);
         const relId = nextRelId(rels);
         rels.push({ id: relId, type: CHART_REL_TYPE, target: relativeTarget(part, chartPart), external: false });
-        const alt = `${action.chart.type} chart: ${action.chart.series.map((series) => series.name).filter(Boolean).join(', ')}`;
+        const alt = chartAlt(action.chart, language, writing.direction);
         const frame = doc.importNode(rootElement(parseXml(chartFrameXml(slot.shapeId, relId, area, alt))), true);
         parent.replaceChild(frame, shape);
       }

@@ -274,6 +274,7 @@ Every change is an object with `op`. `pattern` is a pattern id, `slot` a slot na
   language?: string,
   direction?: 'ltr' | 'rtl',
   alignOnDirectionChange?: 'flip' | 'keep',
+  chartDirection?: 'rtl' | 'ltr' | null,
   textScale?: number | null,
   characterWidth?: number | null,
   leastTextSize?: number | null,
@@ -284,6 +285,10 @@ Every change is an object with `op`. `pattern` is a pattern id, `slot` a slot na
 
 `textScale` enlarges the body text of every deck made from the template (`1.3` for 30% larger); `null` or `1`
 returns to the designed size.
+
+`chartDirection: 'rtl'` draws the charts of a deck that reads right to left from the right: the first category on
+the right, with the value axis (from 0.7.0). `null` or `'ltr'` draws them left to right, as before. See "Charts
+that read right to left" in [languages.md](languages.md).
 
 `characterWidth` says how wide PowerPoint sets a character of the template's running text, as a share of its
 size (`0.44`): the running text of free slides is then counted with it and set larger, and from 0.6.8 what a

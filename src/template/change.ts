@@ -70,6 +70,8 @@ export type ManifestChange =
       language?: string;
       direction?: Direction;
       alignOnDirectionChange?: AlignPolicy;
+      /** The direction the charts of a deck that reads right to left read in (`TemplateManifest.chartDirection`); `null` reads them left to right, as when it is not set. */
+      chartDirection?: Direction | null;
       textScale?: number | null;
       /** How wide PowerPoint sets a character of the template's running text, as a share of its size (`TemplateManifest.characterWidth`); `null` leaves it to the estimate. */
       characterWidth?: number | null;
@@ -203,6 +205,16 @@ function apply(manifest: TemplateManifest, change: ManifestChange, info: Templat
         if (change.alignOnDirectionChange !== 'flip' && change.alignOnDirectionChange !== 'keep') reject('alignment on a direction change is "flip" or "keep"');
         manifest.alignOnDirectionChange = change.alignOnDirectionChange;
         done.push(`${change.alignOnDirectionChange === 'flip' ? 'mirrors' : 'keeps'} its alignment in decks that read the other way`);
+      }
+      if (change.chartDirection !== undefined) {
+        if (change.chartDirection === null) {
+          delete manifest.chartDirection;
+          done.push('draws the charts of every deck left to right');
+        } else {
+          if (change.chartDirection !== 'rtl' && change.chartDirection !== 'ltr') reject('the direction of charts is "rtl" or "ltr"');
+          manifest.chartDirection = change.chartDirection;
+          done.push(change.chartDirection === 'rtl' ? 'draws the charts of a deck that reads right to left from the right: the first category on the right' : 'draws the charts of every deck left to right');
+        }
       }
       if (change.textScale !== undefined) {
         if (change.textScale === null || change.textScale === 1) {

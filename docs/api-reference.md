@@ -115,6 +115,7 @@ interface DeckSpec {
   brief?: string;
   language?: string;
   direction?: Direction;
+  chartDirection?: Direction;   // the direction its charts read; left out, the manifest's for a deck that reads right to left
   fields?: Record<string, string>;
   textScale?: number;
   layouts?: PatternDesign[];    // layouts made for this deck, built onto the template when it is rendered
@@ -147,7 +148,7 @@ type ChartType = 'column' | 'bar' | 'line' | 'pie';
 interface ChartValue {
   type: ChartType;
   categories: string[];
-  series: Array<{ name: string; values: number[] }>;
+  series: Array<{ name: string; values: Array<number | null> }>; // null: a value that is not known, drawn as a gap
   format?: 'number' | 'percent';
 }
 ```
@@ -1135,7 +1136,7 @@ interface ManifestIssue { severity: 'error' | 'warning'; pattern?: string; slot?
 interface SampleOptions { fill?: number; items?: 'drawn' | 'max' | 'min'; fit?: 'budget' | 'box' }
 
 type ManifestChange =
-  | { op: 'setManifest'; name?: string; language?: string; direction?: Direction; alignOnDirectionChange?: AlignPolicy; textScale?: number | null; characterWidth?: number | null; leastTextSize?: number | null; colors?: { accent?: string | null; accent2?: string | null } | false | null; free?: boolean | null | { base?: string | null; styles?: Record<string, { slide: number; shape: string } | null> } }
+  | { op: 'setManifest'; name?: string; language?: string; direction?: Direction; alignOnDirectionChange?: AlignPolicy; chartDirection?: Direction | null; textScale?: number | null; characterWidth?: number | null; leastTextSize?: number | null; colors?: { accent?: string | null; accent2?: string | null } | false | null; free?: boolean | null | { base?: string | null; styles?: Record<string, { slide: number; shape: string } | null> } }
   | { op: 'addPattern'; slide: number; id: string; description?: string }
   | { op: 'copyPattern'; pattern: string; id: string; description?: string }
   | { op: 'derivePattern'; pattern: string; variant: PatternVariant; slot?: string; id?: string; description?: string }
@@ -1517,6 +1518,7 @@ interface TemplateManifest {
   language?: string;
   direction: Direction;
   alignOnDirectionChange?: AlignPolicy;
+  chartDirection?: Direction; // 'rtl' draws the charts of a deck that reads right to left from the right
   textScale?: number; // enlarges body text in every deck made from the template
   characterWidth?: number; // how wide PowerPoint sets a character of its running text, as a share of its size, measured (0.3 to 0.8); free slides count their running text with it, and from 0.6.8 a layout's slots of paragraphs what their writers are told
   leastTextSize?: number; // the least size, in points, of a long text set dense on a free slide (5 to 24, up to a half point); left out, by the slide's width
