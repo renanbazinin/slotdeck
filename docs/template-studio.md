@@ -431,6 +431,7 @@ The shape goes back to being part of the design.
 | `imageKind`, `fit` | image | `photo`, `icon` or `graphic`; `cover` or `contain`. |
 | `maxColumns`, `maxRows`, `maxCellChars` | table | Limits. |
 | `headerText`, `bodyText` | table | `{ size?, bold?, color?, font? }`, merged into what is already set. |
+| `fill` | table | `true`: with fewer rows than the sample the table still fills its frame, and its columns of numbers end on the right in a deck read from the left (from 0.7.0). `false` or `null` draws it as designed. |
 | `maxCategories`, `maxSeries`, `colors`, `text`, `lineColor` | chart | Limits and styling. |
 
 A property that does not apply to the slot's kind is refused (`"title" is a text slot; maxColumns does not apply to it`).
@@ -438,7 +439,7 @@ A property that does not apply to the slot's kind is refused (`"title" is a text
 #### `setRepeat`
 
 ```ts
-{ op: 'setRepeat', pattern: string, min?: number, max?: number, item?: string, span?: { left: number, right: number } | null, widen?: number | null, emphasis?: number | null }
+{ op: 'setRepeat', pattern: string, min?: number, max?: number, item?: string, span?: { left: number, right: number } | null, widen?: number | null, emphasis?: number | null, spread?: number | null }
 ```
 
 Sets how many items a row or grid takes. When the pattern has no row yet, it is found from numbered slot names:
@@ -471,6 +472,12 @@ between 1 and 4; `null` or `1` turns it off. See "Fewer items that fill the row"
 green among white ones. In a deck that reads the other way, the items then change places with their looks, so
 the green card is still the first for the deck's readers; without it their texts change places and the green
 card marks the last. `suggestChanges` finds it (`row-emphasis`). `null` says no item stands out.
+
+`spread` lets the lines of a row or grid stand further apart when there are fewer of them than the slide draws
+(from 0.7.0): an agenda of three in a list drawn for six spreads down the slide instead of bunching in its
+middle. It is the most the space from one line to the next may grow, as a factor on the drawn step, between 1
+and 3, and never past the area the lines are drawn in; `1.6` suits most lists. `null` or `1` turns it off. A
+row whose items stand on one line has no lines to spread, and is refused.
 
 #### `removeRepeat`
 

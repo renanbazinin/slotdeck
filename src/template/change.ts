@@ -12,7 +12,7 @@ import type { PatternVariant } from './derive.ts';
 import { OVERLAP, detectRepeat, droppedShapes, movedRowSlots, rowFit, rowOnSlide, rowSpan } from './rows.ts';
 import { inspectTemplate } from './inspect.ts';
 import type { ShapeInfo, SlideInfo, TemplateInfo } from './inspect.ts';
-import { CHARACTER_WIDTH, LEAST_TEXT_SIZE, templateTextProblem } from './manifest.ts';
+import { CHARACTER_WIDTH, LEAST_TEXT_SIZE, rowLayout, templateTextProblem } from './manifest.ts';
 import type { AlignPolicy, Direction, EmptyPolicy, ImageKind, PatternDef, SlideBox, SlotDef, TableTextStyle, TemplateManifest } from './manifest.ts';
 import { ROLES, boxCapacity, rolesFor, rowRoom, shapeText, slotFromShape, slotName, tableLimits } from './measure.ts';
 import type { Role } from './measure.ts';
@@ -55,6 +55,8 @@ export interface SlotPatch {
   /** Table: text formatting, merged into what is already set. A new size changes the cell budget unless one is given. */
   headerText?: TableTextStyle | null;
   bodyText?: TableTextStyle | null;
+  /** Table: the table fills its frame with fewer rows than its sample, and its columns of numbers end on the right. */
+  fill?: boolean | null;
   /** Chart: limits and styling. */
   maxCategories?: number;
   maxSeries?: number;
@@ -111,8 +113,9 @@ export type ManifestChange =
    * Sets how many items a row or grid takes. Finds the row from numbered slot names when the pattern has none.
    * `widen` lets items grow wider, up to that factor, when a line holds fewer than the template draws.
    * `emphasis` is the item, by its number from 1, that the template draws to stand out; `null` says none does.
+   * `spread` lets fewer lines than drawn stand further apart, up to that factor; `null` keeps the drawn step.
    */
-  | { op: 'setRepeat'; pattern: string; min?: number; max?: number; item?: string; span?: { left: number; right: number } | null; widen?: number | null; emphasis?: number | null }
+  | { op: 'setRepeat'; pattern: string; min?: number; max?: number; item?: string; span?: { left: number; right: number } | null; widen?: number | null; emphasis?: number | null; spread?: number | null }
   | { op: 'removeRepeat'; pattern: string };
 
 export interface ChangeResult {
@@ -132,7 +135,7 @@ const reject = (reason: string): never => {
 
 const TEXT_KEYS = ['maxChars', 'maxParagraphs', 'deckField', 'alignOnDirectionChange', 'styleRun', 'fontSize', 'paragraphGap', 'scales'] as const;
 const IMAGE_KEYS = ['imageKind', 'fit'] as const;
-const TABLE_KEYS = ['maxColumns', 'maxRows', 'maxCellChars', 'headerText', 'bodyText'] as const;
+const TABLE_KEYS = ['maxColumns', 'maxRows', 'maxCellChars', 'headerText', 'bodyText', 'fill'] as const;
 const CHART_KEYS = ['maxCategories', 'maxSeries', 'colors', 'text', 'lineColor'] as const;
 const KEYS_OF = { text: TEXT_KEYS, image: IMAGE_KEYS, table: TABLE_KEYS, chart: CHART_KEYS } as const;
 const STYLE_KEYS = new Set(['headerText', 'bodyText', 'text']);
@@ -463,6 +466,9 @@ function apply(manifest: TemplateManifest, change: ManifestChange, info: Templat
         if (!Array.isArray(settings.colors)) reject('colors is a list of colours, such as ["0E7C7B", "F4A259"]');
         settings.colors = (settings.colors as unknown[]).map((color) => colorOf(color, 'a colour of a chart'));
       }
+      if (settings.fill !== undefined && settings.fill !== null && typeof settings.fill !== 'boolean') reject('fill is true or false');
+      // A table that does not fill its frame is the table as it always was: the setting is taken away.
+      if (settings.fill === false) settings.fill = null;
       if (settings.paragraphGap !== undefined && settings.paragraphGap !== null && !(typeof settings.paragraphGap === 'number' && Number.isFinite(settings.paragraphGap) && settings.paragraphGap >= 0)) {
         reject('paragraphGap is a number of points, 0 or more');
       }
@@ -591,6 +597,15 @@ function apply(manifest: TemplateManifest, change: ManifestChange, info: Templat
         repeat.widen = change.widen;
         widened += ` With fewer ${repeat.item}s on a line than drawn, each grows up to ${change.widen} times as wide to fill the row, and holds more text.`;
       }
+      if (change.spread === null || change.spread === 1) {
+        if (repeat.spread !== undefined) widened += ` Fewer lines of ${repeat.item}s keep the drawn space between them.`;
+        delete repeat.spread;
+      } else if (change.spread !== undefined) {
+        if (!(typeof change.spread === 'number' && change.spread > 1 && change.spread <= 3)) reject('spread is a factor between 1 and 3, such as 1.6 to let lines stand up to 60% further apart');
+        if (rowLayout(repeat, drawn).length < 2) reject(`the ${repeat.item}s stand on one line, so there are no lines to spread`);
+        repeat.spread = change.spread;
+        widened += ` With fewer lines of ${repeat.item}s than drawn, the space between them grows up to ${change.spread} times, as far as the area they are drawn in.`;
+      }
       if (change.emphasis === null) {
         if (repeat.emphasis !== undefined) widened += ` No ${repeat.item} stands out: in a deck that reads the other way their texts change places.`;
         delete repeat.emphasis;
@@ -693,6 +708,7 @@ export function describeSlot(slot: SlotDef): string {
     parts.push(`a table of up to ${slot.maxColumns ?? '?'} columns and ${slot.maxRows ?? '?'} rows`);
     if (slot.maxCellChars !== undefined) parts.push(`${slot.maxCellChars} characters a cell`);
     if (slot.bodyText?.size !== undefined) parts.push(`text at ${slot.bodyText.size} pt`);
+    if (slot.fill) parts.push('filling its frame');
   } else {
     parts.push(`a native chart of up to ${slot.maxCategories ?? '?'} categories and ${slot.maxSeries ?? '?'} series`);
   }

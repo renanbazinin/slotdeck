@@ -1184,7 +1184,7 @@ type ManifestChange =
   | { op: 'addSlot'; pattern: string; shape: string; role: Role; name?: string; optional?: boolean }
   | { op: 'removeSlot'; pattern: string; slot: string }
   | ({ op: 'setSlot'; pattern: string; slot: string } & SlotPatch)
-  | { op: 'setRepeat'; pattern: string; min?: number; max?: number; item?: string; span?: { left: number; right: number } | null; widen?: number | null; emphasis?: number | null }
+  | { op: 'setRepeat'; pattern: string; min?: number; max?: number; item?: string; span?: { left: number; right: number } | null; widen?: number | null; emphasis?: number | null; spread?: number | null }
   | { op: 'removeRepeat'; pattern: string };
 
 interface SlotPatch {
@@ -1207,6 +1207,7 @@ interface SlotPatch {
   maxCellChars?: number;
   headerText?: TableTextStyle | null;
   bodyText?: TableTextStyle | null;
+  fill?: boolean | null;
   maxCategories?: number;
   maxSeries?: number;
   colors?: string[] | null;
@@ -1585,6 +1586,7 @@ interface RepeatDef {
   columns?: number;
   widen?: number; // fewer items on a line than drawn grow up to this factor to fill the row
   emphasis?: number; // the item the slide draws to stand out; a deck that reads the other way moves the items with their looks
+  spread?: number; // fewer lines than drawn stand up to this factor further apart, within the area they are drawn in
 }
 type SlotDef = TextSlotDef | ImageSlotDef | TableSlotDef | ChartSlotDef;
 
@@ -1628,6 +1630,7 @@ interface TableSlotDef {
   maxCellChars?: number;
   headerText?: TableTextStyle;
   bodyText?: TableTextStyle;
+  fill?: boolean; // with fewer rows than the sample, the table still fills its frame; numbers end on the right
 }
 interface ChartSlotDef {
   kind: 'chart';

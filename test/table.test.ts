@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { placeholderPhoto } from '../examples/placeholder.ts';
-import { DeckValidationError, PptxPackage, loadTemplate, planDeck, planEdit, renderDeck, validateDeck } from '../src/index.ts';
+import { DeckValidationError, PptxPackage, changeManifest, loadTemplate, planDeck, planEdit, renderDeck, validateDeck } from '../src/index.ts';
 import type { DeckSpec, JsonRequest, LlmProvider, SlideSpec, TemplateManifest } from '../src/index.ts';
 import { slotSources } from '../src/template/manifest.ts';
 import { NS, childElement, childElements, descendants, parseXml, path, rootElement } from '../src/pptx/xml.ts';
@@ -299,4 +299,40 @@ test('a cell of a figure without letters reads left to right in a deck that read
   // In a deck that reads as the template does, a figure keeps the direction the template gives it.
   assert.deepEqual(directions(' rtl="1"', {}), ['Station:0', 'Change:0', 'Tram Square:0', '+12%:1', 'River Gate:0', '4.6 / 5:1']);
   assert.deepEqual(directions('', {}), ['Station:0', 'Change:0', 'Tram Square:0', '+12%:-', 'River Gate:0', '4.6 / 5:-']);
+});
+
+test('a table that fills its frame keeps the sample\'s height with fewer rows, and its columns of numbers end on the right in a deck read from the left', () => {
+  const filling: TemplateManifest = { ...tableManifest, patterns: tableManifest.patterns.map((pattern) => ({ ...pattern, slots: pattern.slots.map((slot) => (slot.kind === 'table' ? { ...slot, fill: true } : slot)) })) };
+  const draw = (manifest: TemplateManifest, rows: string[][], deck: Partial<DeckSpec> = {}) => {
+    const file = renderDeck(loadTemplate(pptx, manifest), { version: 1, ...deck, slides: [tableSlide(['Station', 'Docks'], rows)] }).pptx;
+    const root = rootElement(parseXml(PptxPackage.load(file).readText('ppt/slides/slide1.xml')));
+    const frame = descendants(root, NS.p, 'graphicFrame')[0] as Element;
+    const tbl = descendants(frame, NS.a, 'tbl')[0] as Element;
+    return {
+      height: Number(path(frame, [NS.p, 'xfrm'], [NS.a, 'ext'])?.getAttribute('cy')),
+      rows: rowsOf(tbl).map((row) => Number(row.getAttribute('h'))),
+      aligns: rowsOf(tbl).map((row) => cellsOf(row).map((cell) => path(cell, [NS.a, 'txBody'], [NS.a, 'p'], [NS.a, 'pPr'])?.getAttribute('algn')).join('')),
+      anchors: descendants(tbl, NS.a, 'tcPr').map((props) => props.getAttribute('anchor') ?? '-').join(''),
+    };
+  };
+  const one = [['Tram Square', '24']];
+  // The sample table is three rows of 300,000 EMU: a heading and one row end two thirds of the way down.
+  assert.deepEqual(draw(tableManifest, one).rows, [300000, 300000]);
+  const filled = draw(filling, one);
+  assert.deepEqual([filled.height, filled.rows, filled.anchors], [900000, [450000, 450000], 'ctrctrctrctr']);
+  // The fixture reads right to left: every column starts at the right already. Read from the left, the docks end on the right.
+  assert.deepEqual(filled.aligns, ['rr', 'rr']);
+  assert.deepEqual(draw(filling, one, { direction: 'ltr' }).aligns, ['lr', 'lr']);
+  assert.deepEqual(draw(tableManifest, one, { direction: 'ltr' }).aligns, ['ll', 'll'], 'as before without it');
+  // A table of as many rows as the sample, or more, is set as before; only its numbers move.
+  const three = [['Tram Square', '24'], ['River Gate', '18']];
+  assert.deepEqual(draw(filling, three).rows, draw(tableManifest, three).rows);
+  // A studio sets it, and false takes it away.
+  const template = loadTemplate(pptx, tableManifest);
+  const set = changeManifest(template, [{ op: 'setSlot', pattern: 'table', slot: 'table', fill: true }]);
+  assert.deepEqual(set.rejected, []);
+  assert.match(set.applied[0]?.message ?? '', /filling its frame/);
+  const unset = changeManifest(loadTemplate(pptx, set.manifest), [{ op: 'setSlot', pattern: 'table', slot: 'table', fill: false }]);
+  assert.equal('fill' in (unset.manifest.patterns.find((pattern) => pattern.id === 'table')?.slots.find((slot) => slot.name === 'table') ?? {}), false);
+  assert.match(changeManifest(template, [{ op: 'setSlot', pattern: 'table', slot: 'title', fill: true }]).rejected[0]?.reason ?? '', /fill does not apply to it/);
 });

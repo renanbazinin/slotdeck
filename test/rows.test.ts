@@ -9,7 +9,9 @@ import type { Element } from '../src/pptx/xml.ts';
 import type { ShapeInfo, SlideInfo } from '../src/template/inspect.ts';
 import type { RepeatDef } from '../src/template/manifest.ts';
 import { movedRowSlots, rowCapacity, rowComfort, standsOut } from '../src/template/rows.ts';
-import { buildFixturePptx, card, cardsManifest, fixtureManifest, fixtureWithSlide, fixtureWithTextCards } from './fixture.ts';
+import { buildFixturePptx, card, cardsManifest, fixtureManifest, fixtureWithSlide, fixtureWithTextCards, gridManifest } from './fixture.ts';
+import { applyRepeat } from '../src/render/repeat.ts';
+import { indexShapes } from '../src/render/render.ts';
 
 /** A slide with a title and one text box per item, given as left edge and width in fractions of the slide. */
 function slideOf(items: Array<[x: number, w: number]>, more: Array<Partial<ShapeInfo> & { id: string }> = [], titleX = 0.05): SlideInfo {
@@ -416,4 +418,39 @@ test('a row whose slide draws one item to stand out moves its items in a deck th
   assert.equal('emphasis' in (changeManifest(marked, [{ op: 'setRepeat', pattern: 'cards', emphasis: null }]).manifest.patterns.find((pattern) => pattern.id === 'cards')?.repeat ?? {}), false);
   const wrong: TemplateManifest = { ...cardsManifest, patterns: cardsManifest.patterns.map((pattern) => (pattern.repeat ? { ...pattern, repeat: { ...pattern.repeat, emphasis: 9 } } : pattern)) };
   assert.ok(checkManifest(loadTemplate(green, wrong)).some((issue) => issue.message === 'repeat.emphasis is the number of the item that stands out, from 1 to 3'));
+});
+
+test('fewer lines than drawn stand further apart with spread, up to its factor and as far as the area they are drawn in', () => {
+  // Six topics one under another, 0.5 cm high and 0.7 cm apart from top to top, from 1,000,000 to 5,000,000 EMU.
+  const box = (id: number, y: number) =>
+    `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="Topic"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="1000000" y="${y}"/><a:ext cx="4000000" cy="500000"/></a:xfrm></p:spPr>` +
+    `<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Topic</a:t></a:r></a:p></p:txBody></p:sp>`;
+  const slide =
+    '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree>' +
+    [0, 1, 2, 3, 4, 5].map((n) => box(10 + n, 1000000 + n * 700000)).join('') +
+    '</p:spTree></p:cSld></p:sld>';
+  const tops = (count: number, spread?: number) => {
+    const root = rootElement(parseXml(slide));
+    const repeat: RepeatDef = { item: 'topic', slots: ['topic{n}'], shapes: [0, 1, 2, 3, 4, 5].map((n) => [String(10 + n)]), columns: 1, min: 1, max: 6, ...(spread ? { spread } : {}) };
+    applyRepeat(indexShapes(root), repeat, count, 12192000);
+    return descendants(root, NS.a, 'off').map((off) => Number(off.getAttribute('y')));
+  };
+  // Three of six bunch in the middle at the drawn step.
+  assert.deepEqual(tops(3), [2050000, 2750000, 3450000]);
+  // With 1.6 the step grows by 60%; with 3 it grows only as far as the area, from its top to its foot.
+  assert.deepEqual(tops(3, 1.6), [1630000, 2750000, 3870000]);
+  assert.deepEqual(tops(3, 3), [1000000, 2750000, 4500000]);
+  // As many lines as drawn, or one alone, stand as without it.
+  assert.deepEqual(tops(6, 1.6), tops(6));
+  assert.deepEqual(tops(1, 1.6), tops(1));
+
+  // A studio sets it on a list or grid of several lines, and not on a single row.
+  const grid = loadTemplate(buildFixturePptx(), gridManifest);
+  const set = changeManifest(grid, [{ op: 'setRepeat', pattern: 'grid', spread: 1.6 }]);
+  assert.deepEqual(set.rejected, []);
+  assert.match(set.applied[0]?.message ?? '', /With fewer lines of cards than drawn, the space between them grows up to 1\.6 times, as far as the area they are drawn in\./);
+  assert.equal(set.manifest.patterns.find((pattern) => pattern.id === 'grid')?.repeat?.spread, 1.6);
+  assert.match(changeManifest(grid, [{ op: 'setRepeat', pattern: 'grid', spread: 5 }]).rejected[0]?.reason ?? '', /spread is a factor between 1 and 3/);
+  assert.match(changeManifest(loadTemplate(buildFixturePptx(), cardsManifest), [{ op: 'setRepeat', pattern: 'cards', spread: 1.6 }]).rejected[0]?.reason ?? '', /the cards stand on one line, so there are no lines to spread/);
+  assert.equal('spread' in (changeManifest(loadTemplate(buildFixturePptx(), set.manifest), [{ op: 'setRepeat', pattern: 'grid', spread: null }]).manifest.patterns.find((pattern) => pattern.id === 'grid')?.repeat ?? {}), false);
 });

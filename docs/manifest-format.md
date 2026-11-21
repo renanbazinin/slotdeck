@@ -143,6 +143,7 @@ The shape must be a table.
 | `maxCellChars` | integer | Soft limit on the characters in one cell. |
 | `headerText` | `{ size?, bold?, color?, font? }` | Formatting for header cells, where the sample table defines none or it should differ. `color` is hex without `#`. |
 | `bodyText` | `{ size?, bold?, color?, font? }` | The same for body cells. |
+| `fill` | boolean | The table fills its frame: with fewer rows than the sample table, its rows share the height the sample takes, in the sample's proportions, with their text in the middle; without it the table ends higher up. A column whose every cell is a number ends on the right in a deck that reads left to right. From 0.7.0. |
 
 ## Chart slot (`kind: "chart"`)
 
@@ -183,6 +184,7 @@ The shape must not be inside a group.
 | `span` | `{ left, right }` | no | Left and right limits of the row, as fractions of the slide width. Defaults to the row as drawn. Needed when `max` is more than the drawn items can fit in the drawn width. Only applies to shapes placed directly on the slide. |
 | `columns` | integer | no | For a grid: how many items one line holds on the template slide. Leave it out for a single row. A grid cannot hold more items than it draws. |
 | `widen` | number | no | Lets items grow wider when a line holds fewer of them than the template draws, so that they fill the row and do not stand in the middle of it. The value is the most an item may grow, as a factor on its drawn width: `1.5` lets a card become half as wide again. Backgrounds and text boxes widen; pictures keep their size. The budgets of the row's texts grow to match. Left out, items keep their drawn size. |
+| `spread` | number | no | Lets the lines of a row or grid stand further apart when there are fewer of them than the template draws, as an agenda of three in a list drawn for six: the space from one line to the next grows up to this factor on the drawn step (`1.6`), as far as the area the lines are drawn in, so that they spread down it and do not bunch in its middle. Only the number of items decides it. Left out, the lines keep the drawn step. From 0.7.0. |
 | `emphasis` | number | no | The item, by its number from 1 in reading order, that the slide draws to stand out: a card in another colour, an option marked as recommended. In a deck that reads the other way, the items of each line change places with their looks, where otherwise their values change places and the look stays where it is drawn. So the first card of an English deck made from a Hebrew template is the one on the left, and still the green one. `suggestChanges` finds it (kind `row-emphasis`). From 0.7.0. |
 
 How the items are laid out for a given count is described in [layout-freedom.md](layout-freedom.md).

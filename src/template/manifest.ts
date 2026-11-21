@@ -222,6 +222,14 @@ export interface RepeatDef {
    * `suggestChanges` finds it (kind `row-emphasis`). From 0.7.0.
    */
   emphasis?: number;
+  /**
+   * Lets the lines of a row or grid stand further apart when there are fewer of them than the
+   * template draws, as an agenda of three in a list drawn for six: the space from one line to the
+   * next grows up to this factor on the drawn step, as far as the area the lines are drawn in, so
+   * that they spread down it and do not bunch in its middle. Only the number of items decides it.
+   * Left out, the lines keep the drawn step. From 0.7.0.
+   */
+  spread?: number;
 }
 
 /**
@@ -381,6 +389,13 @@ export interface TableSlotDef extends SlotBase {
   maxCellChars?: number;
   headerText?: TableTextStyle;
   bodyText?: TableTextStyle;
+  /**
+   * The table fills its frame: with fewer rows than the sample table, its rows share the height the
+   * sample takes, with their text in the middle, where without it the table ends higher up. A column
+   * of numbers ends on the right in a deck that reads left to right, as numbers are read by their
+   * last digits. Left out, a table is drawn as before. From 0.7.0.
+   */
+  fill?: boolean;
 }
 
 /**

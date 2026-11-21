@@ -36,7 +36,7 @@ import { writeProperties } from './properties.ts';
 import type { DeckProperties } from './properties.ts';
 import { setPicture } from './picture.ts';
 import type { PictureFill } from './picture.ts';
-import { fitTable, setTable } from './table.ts';
+import { fitTable, numberAligns, setTable, tableArea } from './table.ts';
 import { applyRepeat, moveShape, placeShape, rowTextIds } from './repeat.ts';
 import { dropLeftovers } from './leftovers.ts';
 import type { FontMetrics } from '../text/fonts.ts';
@@ -329,7 +329,13 @@ ${colors?.key}` : assetId;
         const box = (slot as { box?: SlideBox }).box;
         // A table of a free slide states its sizes itself and takes the box it was given.
         const planned = slot as { rowHeights?: number[]; columnWidths?: number[]; columnAligns?: Array<'l' | 'r' | undefined> };
-        setTable(shape, action.table, tableAtScale(slot, textScale), deck.direction ?? manifest.direction, box ? planned.columnAligns : undefined, writing);
+        // A table that fills its frame takes the area its sample takes, and sets its columns of numbers as a free slide's are set.
+        const frameArea = !box && slot.fill ? tableArea(shape) : undefined;
+        const sampleRows = frameArea ? descendants(shape, NS.a, 'tr').length : 0;
+        const aligns = box ? planned.columnAligns : frameArea ? numberAligns(action.table, writing.direction ?? 'ltr') : undefined;
+        setTable(shape, action.table, tableAtScale(slot, textScale), deck.direction ?? manifest.direction, aligns, writing);
+        // Its rows share the frame as the sample's rows do: a heading drawn lower than the rows stays lower.
+        if (frameArea && action.table.rows.length + 1 < sampleRows) fitTable(shape, frameArea, descendants(shape, NS.a, 'tr').map((row) => Number(row.getAttribute('h')) || 1));
         // Rows whose cells take more lines than their neighbours' are higher, and columns are as wide as what is written in them asks, as the plan worked out.
         if (box) fitTable(shape, { x: box.x * pres.slideWidth, y: box.y * pres.slideHeight, cx: box.w * pres.slideWidth, cy: box.h * pres.slideHeight }, planned.rowHeights, planned.columnWidths);
       } else if (action.type === 'chart' && slot.kind === 'chart') {

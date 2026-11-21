@@ -90,6 +90,29 @@ export function setTable(frame: Element, table: TableValue, slot: TableSlotDef, 
   if (extent && height > 0) extent.setAttribute('cy', String(height));
 }
 
+/** The area a table's frame takes on its slide, in EMU; `undefined` for a frame that states none. */
+export function tableArea(frame: Element): Area | undefined {
+  const xfrm = childElement(frame, NS.p, 'xfrm');
+  const off = xfrm && childElement(xfrm, NS.a, 'off');
+  const ext = xfrm && childElement(xfrm, NS.a, 'ext');
+  const area = { x: Number(off?.getAttribute('x')), y: Number(off?.getAttribute('y')), cx: Number(ext?.getAttribute('cx')), cy: Number(ext?.getAttribute('cy')) };
+  return Object.values(area).every(Number.isFinite) && area.cx > 0 && area.cy > 0 ? area : undefined;
+}
+
+/** A cell that is a number: a sign, a currency, then a digit. */
+const NUMBER_CELL = /^[+\-−]?[€$₪£]?\s?\d/;
+
+/**
+ * How the columns of a table are aligned where its columns of numbers end on one edge: `'r'` for a
+ * column whose every body cell is a number, in a deck that reads left to right. A deck that reads
+ * right to left sets every column from the right already, so nothing changes there.
+ */
+export function numberAligns(table: TableValue, direction: Direction): Array<'l' | 'r' | undefined> | undefined {
+  if (direction === 'rtl' || table.rows.length === 0) return undefined;
+  const numeric = table.header.map((_, column) => table.rows.every((row) => NUMBER_CELL.test((row[column] ?? '').trim())));
+  return numeric.some(Boolean) ? numeric.map((yes) => (yes ? 'r' : undefined)) : undefined;
+}
+
 /** An area of the slide in EMU. */
 export interface Area {
   x: number;
