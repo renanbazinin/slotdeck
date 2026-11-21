@@ -100,6 +100,7 @@ export const HE: IssueCatalogue = {
   'chart-format-unknown': (v) => `פורמט התרשים ${isolate(v.format)} אינו מוכר ולא נלקח בחשבון; אפשר להשתמש ב-"number" או ב-"percent"`,
   'chart-values-unstated': (v) => `ערכים בתרשים שלא צוינו בבקשה למצגת: ${isolate(v.numbers)}. כדאי לבדוק אותם לפני השימוש במצגת.`,
   'text-details-unstated': (v) => `${v.count === 1 ? 'פרט שלא צוין' : 'פרטים שלא צוינו'} בבקשה למצגת: ${isolate(v.details)}. כדאי לבדוק ${v.count === 1 ? 'אותו' : 'אותם'} לפני השימוש במצגת.`,
+  'word-wider-than-line': (v) => `המילה ${isolate(v.word)} (${characters(v.chars)}) רחבה משורה של התיבה, ולכן היא נשברת באמצע`,
   'text-stand-in': (v) => `במקום ערך מופיע ממלא מקום: ${isolate(v.found)}. כדאי לכתוב במקומו את הערך האמיתי, או להשמיט אותו.`,
   'text-about-slide': (v) => `הטקסט מדבר על השקף (${isolate(v.found)}) במקום לומר את התוכן עצמו.`,
   'text-orphan': (v) =>

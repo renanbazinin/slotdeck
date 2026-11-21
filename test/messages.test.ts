@@ -57,6 +57,7 @@ const SAMPLES: { [C in IssueCode]: IssueValues[C] } = {
   'chart-format-unknown': { format: '"currency"' },
   'chart-values-unstated': { numbers: '-5, 12.5, 89', count: 3 },
   'text-details-unstated': { details: 'adopt@example.org, 24/7', count: 2 },
+  'word-wider-than-line': { word: 'https://www.example.org/very/long/address', chars: 41 },
   'text-stand-in': { found: 'XX%' },
   'text-about-slide': { found: 'this slide' },
   'text-orphan': { lines: 2, word: '"cc"', chars: 25 },

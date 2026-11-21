@@ -254,7 +254,8 @@ test("the writer is told the pair, without a length its description states where
 
   // The check is the stored budget: 320 characters in three paragraphs are more than the pair and pass.
   const deck: DeckSpec = { version: 1, title: 'Bikes', fields, slides: [{ pattern: 'text-only', slots: { title: 'Keep it', body: ['A'.repeat(106), 'B'.repeat(107), 'C'.repeat(107)] } }] };
-  assert.deepEqual(validateDeck(demo, deck, { layout: 'adaptive' }).filter((issue) => issue.slot === 'body'), []);
+  // Within the stored budget; its words of a hundred letters are told as words no line holds (0.7.0), and that is all.
+  assert.deepEqual(validateDeck(demo, deck, { layout: 'adaptive' }).filter((issue) => issue.slot === 'body').map((issue) => issue.code), ['word-wider-than-line', 'word-wider-than-line', 'word-wider-than-line']);
 });
 
 /** A model that gives the same outline to every call. */

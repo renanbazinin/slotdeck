@@ -278,6 +278,7 @@ in JSON.
 | `chart-format-unknown` | `format` | A chart format that is not `number` or `percent`. |
 | `chart-values-unstated` | `numbers`, `count` | Chart values the brief does not state (planner only). |
 | `text-details-unstated` | `details`, `count` | From 0.7.0: email or web addresses, phone numbers, "24/7" or percentages in a slide's text that the brief, the document and the deck's fields do not give (planner only). |
+| `word-wider-than-line` | `word`, `chars` | From 0.7.0, without fonts: a word no line of its box holds (an address, a long number), which PowerPoint breaks inside it. |
 | `text-stand-in` | `found` | From 0.7.0: text that stands where a value belongs, such as "XX%", "[name]" or "TBD" (planner only). |
 | `text-about-slide` | `found` | From 0.7.0: text that speaks about the slide ("this slide", "בשקף זה") where it should say its content (planner only). |
 | `text-orphan` | `lines`, `word`, `chars` | A heading ends with one word on its last line (`checkDesign`). |

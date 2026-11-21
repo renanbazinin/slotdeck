@@ -234,7 +234,8 @@ test('validation reports problems without rendering', () => {
   assert.deepEqual(warnings.map((issue) => issue.slot).sort(), ['body', 'extra', 'title']);
 
   const result = render({ slides: [contentSlide({ title: 'x'.repeat(21) })] });
-  assert.equal(result.warnings.length, 1, 'warnings are returned, not thrown');
+  // A word of 21 letters is also wider than a line of the title's box at 26 pt (0.7.0).
+  assert.deepEqual(result.warnings.map((issue) => issue.code), ['slot-over-chars', 'word-wider-than-line'], 'warnings are returned, not thrown');
 });
 
 test('a value that is no text is reported as one, and nothing throws', () => {

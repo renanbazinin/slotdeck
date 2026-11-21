@@ -1,4 +1,6 @@
-import { bodyTextScale, effectiveSlots, itemRange, slotSources, tableAtScale, templateScaleProblem, textBudget } from '../template/manifest.ts';
+import { lineRoomOf, wordsWiderThanLine } from '../text/wide.ts';
+import type { LineRoom } from '../text/wide.ts';
+import { bodyTextScale, effectiveSlots, itemRange, scalesWithText, slotSources, tableAtScale, templateScaleProblem, textBudget } from '../template/manifest.ts';
 import { headingPlaces } from './headings.ts';
 import type { Direction, PatternDef, SlotDef, TemplateManifest, TextSlotDef } from '../template/manifest.ts';
 import type { FitOptions, TextFit, TextMeasurer } from '../text/measure.ts';
@@ -118,6 +120,11 @@ export interface ValidateOptions {
    * measure keeps the character check.
    */
   measure?: TextMeasurer;
+  /**
+   * Where the lines of a text slot run (`lineRoomOf`): without fonts, a word that no line holds is
+   * then told. Set by `validateDeck` and `renderDeck` from a loaded template. From 0.7.0.
+   */
+  lines?: LineRoom;
 }
 
 /**
@@ -274,7 +281,9 @@ export function validateDeck(target: TemplateManifest | Template, deck: DeckSpec
     throw error;
   }
   const measure = options.measure ?? measurerFor(built);
-  return checkDeck(built.manifest, deck, measure ? { ...options, measure } : options, (slide) => freeFor(target, deck, slide));
+  const checks: ValidateOptions = { ...options, lines: options.lines ?? lineRoomOf(built.pkg) };
+  if (measure) checks.measure = measure;
+  return checkDeck(built.manifest, deck, checks, (slide) => freeFor(target, deck, slide));
 }
 
 /** The check itself. `free` lays a free slide out; without it only what needs no template is checked. */
@@ -432,6 +441,14 @@ export function checkDeck(manifest: TemplateManifest, deck: DeckSpec, options: V
           if (over) issues.push({ severity: 'warning', slide: number, slot: source, ...over });
         } else if (budget.maxChars !== undefined && chars > budget.maxChars) {
           issues.push({ severity: 'warning', slide: number, slot: source, ...said('slot-over-chars', { chars, most: budget.maxChars }) });
+        }
+        // A word no line of its box holds (an address, a long number) is broken inside it.
+        const room = fit ? undefined : options.lines?.(pattern, slot);
+        if (room) {
+          const size = room.size * (scalesWithText(slot) ? scale : 1);
+          for (const word of wordsWiderThanLine(action.paragraphs, room.width, size).slice(0, 3)) {
+            issues.push({ severity: 'warning', slide: number, slot: source, ...said('word-wider-than-line', { word: word.length > 40 ? `${word.slice(0, 37)}...` : word, chars: word.length }) });
+          }
         }
         if (budget.maxParagraphs !== undefined && action.paragraphs.length > budget.maxParagraphs) {
           issues.push({ severity: 'warning', slide: number, slot: source, ...said('slot-over-paragraphs', { paragraphs: action.paragraphs.length, most: budget.maxParagraphs }) });

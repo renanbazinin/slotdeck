@@ -11,6 +11,7 @@ import { isChartValue, isTableValue, isTextValue, knownValues, plainText, toPara
 import type { ChartValue } from '../deck/spec.ts';
 import { headingPlaces, headingsOver } from '../deck/headings.ts';
 import type { HeadingOver } from '../deck/headings.ts';
+import { SET_SHARE, wordWide } from '../text/wide.ts';
 import { NAME_WIDE, numberLook, plotMargins, roundSpan, seriesColor, shownAs } from '../render/chart.ts';
 import { headingRoom, runInChars, runsIn } from '../render/text.ts';
 import { tableTextSize } from '../render/table.ts';
@@ -613,19 +614,6 @@ function askedParagraphs(chars: number, count = Math.max(1, Math.round(chars / 3
   return Array.from({ length: count }, (_, at) => Math.floor(chars / count) + (at < chars % count ? 1 : 0));
 }
 
-/**
- * How wide a word is set, in sizes of its text: about half a size a letter, more for capitals and for
- * the widest letters, less for the narrowest. Generous, so that a word counted to fit a column does.
- */
-const wordWide = (word: string): number =>
-  [...word].reduce((sum, char) => sum + (/[MWmw@%]/.test(char) ? 0.88 : /[A-Z]/.test(char) ? 0.68 : /[ijlt.,:;'!|I]/.test(char) ? 0.32 : /[fr()]/.test(char) ? 0.4 : 0.56), 0);
-/**
- * How wide PowerPoint sets text of ordinary weight, as a share of `wordWide`: 0.77 to 0.81 of it
- * on average in its own rendering of two templates, one in Latin and one in Hebrew letters, and
- * no more than this on nineteen lines of twenty. A heavy face (a heading, the title of a table)
- * is set at about the whole of it.
- */
-const SET_SHARE = 0.85;
 /**
  * The lines PowerPoint most likely sets a text in, in a width at a size: its words one after
  * another, each counted by the kind of its letters, and a word wider than a line broken. `share`

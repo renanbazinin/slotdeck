@@ -41,6 +41,7 @@ import { applyRepeat, moveShape, placeShape, rowTextIds } from './repeat.ts';
 import { dropLeftovers } from './leftovers.ts';
 import type { FontMetrics } from '../text/fonts.ts';
 import { measurerFor } from '../text/measure.ts';
+import { lineRoomOf } from '../text/wide.ts';
 import { adjustText, setHeadings, setShapeText, setTextSizes } from './text.ts';
 import { headingPlaces } from '../deck/headings.ts';
 import type { TextOptions, WritingOptions } from './text.ts';
@@ -125,7 +126,7 @@ export function renderDeck(template: Template, deck: DeckSpec, options: RenderOp
 
   // A template loaded with fonts measures its text: warnings are in lines, and text may be shrunk to fit.
   const measure = measurerFor(template);
-  const issues = checkDeck(manifest, deck, measure ? { layout, assets: Object.keys(assets), measure } : { layout, assets: Object.keys(assets) }, freeOf);
+  const issues = checkDeck(manifest, deck, { layout, assets: Object.keys(assets), lines: lineRoomOf(template.pkg), ...(measure ? { measure } : {}) }, freeOf);
   const errors = issues.filter((issue) => issue.severity === 'error');
   if (errors.length > 0) throw new DeckValidationError(errors);
   const shrunk: RenderResult['shrunk'] = [];

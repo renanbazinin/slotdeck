@@ -46,6 +46,8 @@ export interface IssueValues {
   'chart-values-unstated': { numbers: string; count: number };
   /** Contact details and figures in a text that the brief does not give, as they stand on the slide. */
   'text-details-unstated': { details: string; count: number };
+  /** Without fonts: a word that no line of its box holds, which PowerPoint breaks inside it. */
+  'word-wider-than-line': { word: string; chars: number };
   /** Text that stands where a value belongs, such as "XX%" or "[name]". */
   'text-stand-in': { found: string };
   /** Words in which a text speaks about the slide, such as "this slide". */
@@ -129,6 +131,7 @@ export const ISSUE_CODES: readonly IssueCode[] = [
   'chart-format-unknown',
   'chart-values-unstated',
   'text-details-unstated',
+  'word-wider-than-line',
   'text-stand-in',
   'text-about-slide',
   'text-orphan',
