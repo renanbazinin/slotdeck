@@ -320,6 +320,8 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
         lineReduction: 0,
         columns,
         columnGap: 0,
+        // The copy states no space at the ends of its text either (see buildFreeSlide).
+        firstLast: false,
         placed: true,
         vertical: false,
         wrap: drawn.wrap,
@@ -333,7 +335,8 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
    * space after paragraphs; `deckDirection` is the direction the deck reads (see FitOptions).
    */
   const lay = (frame: TextFrame, paragraphs: string[], size: (style: ParagraphStyle) => number, gap: number | undefined, flags: { approximate: boolean }, spare = 0, deckDirection?: Direction, bold?: ReadonlySet<number>, stated: (style: ParagraphStyle) => boolean = () => true): Laid => {
-    const inner = (frame.vertical ? frame.height - frame.insets.top - frame.insets.bottom : frame.width - frame.insets.left - frame.insets.right) / frame.columns - spare;
+    // A line of a column is the box's width shared by its columns, the space between them taken off (`spcCol`).
+    const inner = ((frame.vertical ? frame.height - frame.insets.top - frame.insets.bottom : frame.width - frame.insets.left - frame.insets.right) - (frame.columns - 1) * frame.columnGap) / frame.columns - spare;
     const laid: Laid = { lines: [], widths: [], lineRoom: [], height: 0, gaps: 0, lastPitch: 0, widest: 0, firstSize: 0 };
     const styleAt = (index: number): ParagraphStyle => frame.paragraphs[Math.min(index, frame.paragraphs.length - 1)] as ParagraphStyle;
     // The headings set run in, by position: over a paragraph that is no heading and draws no bullet,
@@ -393,13 +396,13 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
       const opening = head === undefined || 'points' in style.lineSpacing ? pitch : LINE * Math.max(points, size(styleAt(head)) * frame.fontScale) * Math.max(0.1, style.lineSpacing.percent - frame.lineReduction);
       laid.height += opening + Math.max(0, lines.length - 1) * pitch;
       laid.lastPitch = pitch;
-      // The space before the first paragraph and after the last is not drawn. A paragraph led by a
-      // heading set run in has the heading's space before it and after it before it, as the
-      // renderer moves it.
+      // The space before the first paragraph and after the last is not drawn, unless the shape says
+      // so (`spcFirstLastPara`, as PowerPoint draws it). A paragraph led by a heading set run in has
+      // the heading's space before it and after it before it, as the renderer moves it.
       const opens = head ?? index;
       const headPoints = head === undefined ? points : size(styleAt(head)) * frame.fontScale;
       const above = head === undefined ? spacing(style.before, points) : spacing(styleAt(head).before, headPoints) + (gap ?? spacing(styleAt(head).after, headPoints));
-      const between = (opens > 0 ? above : 0) + (index < paragraphs.length - 1 ? (gap ?? spacing(style.after, points)) : 0);
+      const between = (opens > 0 || frame.firstLast ? above : 0) + (index < paragraphs.length - 1 || frame.firstLast ? (gap ?? spacing(style.after, points)) : 0);
       laid.height += between;
       laid.gaps += between;
     });
