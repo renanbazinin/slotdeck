@@ -56,7 +56,8 @@ short rate limit instead of failing.
 - **A word no line of its box holds** (`word-wider-than-line`): without fonts, `validateDeck` and `renderDeck`
   with a loaded template tell an address or a long number that PowerPoint can only break inside it.
 - **`null` in a chart's values** is a value that is not known: a gap in the chart and an empty cell in its data,
-  where it was drawn as 0.
+  where it was drawn as 0. A chart written again in an edit keeps its gaps, unless the request gives the numbers
+  (a writer is given numbers only, and code puts a gap it filled back).
 
 ### Changed
 
@@ -70,7 +71,10 @@ short rate limit instead of failing.
 - **A figure in a table cell** ("+12%") reads left to right in a deck that reads left to right from a template
   that reads right to left, as text boxes have since 0.6.5.
 - **Every writer is told** never to state the organisation's own procedures, terms, prices, contacts, results or
-  plans that the brief does not give, and never to write about the slide itself as slide text.
+  plans that the brief does not give, and never to write about the slide itself as slide text. In a live check of
+  three thin briefs (six calls), no deck invented a contact, a hotline or a price, and decks set to be read were
+  written in sentences with no thank-you slide; a table still gave its plans terms of its own ("Unlimited 45m").
+  Review a deck made from a thin brief.
 
 ### Fixed
 
@@ -112,8 +116,6 @@ call to fail on the first 503, see the new behaviour. Decks are now told the new
 
 - The highlighted item is found only where exactly one item of three or more looks unlike the rest; two unlike
   items do not say which stands out, and a pair of columns (`sequences`) is not moved.
-- A chart's `null` values are not asked of a model: a chart slide written again in an edit may fill a gap with a
-  number. Check a chart with gaps after an edit.
 - Counting capitals and wide letters against character budgets without fonts was tried and left out: an
   ordinary sentence near its budget came out a few hundredths over, and the count is not checked against
   PowerPoint for that use.
