@@ -309,7 +309,8 @@ leaves that much, free slides stand on the one that leaves most: that one can be
 by comparison with it (`... and "section" leaves them 40%`). A part is a copy of a text box that a pattern of
 the manifest fills, not of a placeholder, which takes its look from the slide layout. The copy keeps the line
 spacing of that text box, and the text of a free slide is counted at it: a body text with a line spacing of
-130% leaves a card less text.
+130% leaves a card less text. From 0.6.9 running text and lists may close their lines up by up to a tenth, never
+closer than single, to keep their size (see "How large things are" in [free-slides.md](free-slides.md)).
 
 A manifest that was changed takes effect for free slides at once, on the package that is open as after a fresh
 load. When a pattern is removed later, a `free.styles` entry may be left pointing at a shape that no pattern

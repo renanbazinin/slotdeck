@@ -243,12 +243,22 @@ function prepareText(copy: Element, shape: MadeShape, kit: FreeKit, writing: Wri
     const old = childElement(para, NS.a, name);
     if (old) removeNode(old);
   }
-  const lineSpacing = childElement(para, NS.a, 'lnSpc');
-  // A text that can take several lines has them at least as far apart as its size asks. A
-  // template may set the one line of a heading closer than that (70% is in use), which lifts a
-  // single line a little and does no harm; two lines set so run into each other. A copy that
-  // holds one line by its making keeps the spacing of its source, and with it its place.
-  if (lineSpacing && shape.lines === 'several') {
+  let lineSpacing = childElement(para, NS.a, 'lnSpc');
+  if (shape.lineSpacing) {
+    // Lines the plan closed up (`MadeShape.lineSpacing`) are drawn as it counted them, whatever the
+    // source states or inherits. Line spacing comes first among a paragraph's properties.
+    if (lineSpacing) removeNode(lineSpacing);
+    lineSpacing = create('lnSpc');
+    const drawn = shape.lineSpacing;
+    const value = create('points' in drawn ? 'spcPts' : 'spcPct');
+    value.setAttribute('val', String('points' in drawn ? Math.round(drawn.points * 100) : Math.round(drawn.percent * 100000)));
+    lineSpacing.appendChild(value);
+    para.insertBefore(lineSpacing, para.firstChild);
+  } else if (lineSpacing && shape.lines === 'several') {
+    // A text that can take several lines has them at least as far apart as its size asks. A
+    // template may set the one line of a heading closer than that (70% is in use), which lifts a
+    // single line a little and does no harm; two lines set so run into each other. A copy that
+    // holds one line by its making keeps the spacing of its source, and with it its place.
     const percent = childElement(lineSpacing, NS.a, 'spcPct');
     const points = childElement(lineSpacing, NS.a, 'spcPts');
     if (percent && Number(percent.getAttribute('val') ?? 100000) < 100000) percent.setAttribute('val', '100000');

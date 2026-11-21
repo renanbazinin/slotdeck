@@ -303,8 +303,8 @@ export function textMeasurer(template: Template, fonts: FontMetrics | undefined 
       // look for every paragraph, and does not shrink by itself.
       const drawn = (slot as { drawn?: FreeDrawn }).drawn ?? { inset: 0, wrap: true };
       // The copy states no space before or after its paragraphs: what there is between two of
-      // them is the slot's own gap.
-      const first: ParagraphStyle = { ...(copied.paragraphs[0] as ParagraphStyle), before: { points: 0 }, after: { points: 0 } };
+      // them is the slot's own gap. Lines the plan closed up are as close as it drew them.
+      const first: ParagraphStyle = { ...(copied.paragraphs[0] as ParagraphStyle), before: { points: 0 }, after: { points: 0 }, ...(drawn.lineSpacing ? { lineSpacing: drawn.lineSpacing } : {}) };
       const paragraph: ParagraphStyle = drawn.hang === undefined ? first : { ...first, bullet: drawn.hang > 0, marginStart: drawn.hang, indent: -drawn.hang };
       const columns = drawn.columns ?? 1;
       const side = drawn.inset + copied.clear.x;

@@ -3,6 +3,73 @@
 What changed in each version, newest first, with what to do when upgrading. The version you have installed is
 in `node_modules/slotdeck/package.json`.
 
+## 0.6.9
+
+On a free slide, spacing gives way before size. A text a little too long for its box was set half a point
+smaller, while the space between its paragraphs and its line spacing never changed. Now that space closes up
+first, and on a template that sets its lines wider than single, so do its lines: the text keeps more of its
+size. On a right-to-left template whose lines are 112%, a document of ten parts under headings went from 14.5
+to 16 pt.
+
+### Changed
+
+- **Running text and lists on a free slide are set larger where closer spacing lets them.** Only a text that fits
+  at the template's own spacing is set so, at the largest size at which it fits with:
+  - the space between its paragraphs closed up to no less than 0.7 of what it is (half the size, in whole
+    points);
+  - its lines, where the template sets them wider than single, closed up by up to a tenth, never closer than
+    single, in whole percents (or whole points, where the template states points).
+
+  The loosest spacing that fits is used, and like texts of a slide share it. A long text a person asked to
+  have whole may take two columns where 0.6.8 took three, at a size no smaller; never more columns. In a deck
+  that asks for larger text, how much of the wish a slide takes is chosen as 0.6.8 chose it; spacing then gives
+  way within that, and no text is smaller than 0.6.8 set it. On 2,216 texts of free slides
+  on the demo template (English and Hebrew), a right-to-left fixture and a right-to-left template:
+  - 395 are set larger. On the right-to-left template that is 203 of 554, by 1 pt on a typical one and up to
+    3.5. On the demo template a text gains half a point on a typical one, up to 2.
+  - None is set smaller, and none is newly reported.
+  - What a writer is told before writing is the same in every one of 372 plans.
+  - In PowerPoint's own rendering of the 356 of them it could open, it drew exactly the spacing planned. Every
+    text ended inside its box, or within the part of a line its last line may hang, except three in two
+    columns not set dense, whose box is an estimate (see Known limits). They stayed inside their room, and two
+    of them ran further past in 0.6.8.
+
+  What is cut, reported or set whole is decided at the template's own spacing, as in 0.6.8 (the one judge of
+  0.6.3 is not loosened). The renderer draws the spacing the plan counted: the space after each paragraph, and
+  where lines close up, an explicit line spacing. A check with the template's fonts measures them as drawn.
+
+### Fixed
+
+- **A text of many short paragraphs is no longer set down the slide past its box.** A short text is set a
+  little down its room; counted by its length, twelve one-line paragraphs were set so far down that their last
+  two ran 38.5 pt under the box in PowerPoint, and the deck's check reported them. A written text is set no
+  further down than its paragraphs, each in whole lines, leave free, with the part of a line its last line may
+  hang under its box. A text the check did not report stays where it was.
+
+### Upgrading from 0.6.8
+
+Nothing to change in code. Decks without free slides render byte for byte as in 0.6.8, and so do 29 stored
+decks of two right-to-left templates. A stored deck with free slides changes where:
+- a running text or a list that fits is set larger with closer spacing;
+- a text of many short paragraphs was set down past its box: it is set higher, and where it fits there it is
+  no longer reported (one that does not is reported with the larger budget of its higher box).
+
+A test that pins the size of a written free slide's text, or its `paragraphGap`, sees the larger size and the
+closer gap. The budgets writers are told, and plans made before there is content, do not change, except that a
+person's document that code sets as it is is planned at the size it is now set at.
+
+### Known limits
+
+- Text set closer reads tighter. The floors (0.7 of the space between paragraphs, single line spacing) were
+  chosen where PowerPoint's rendering still kept paragraphs apart and letters clear; a template whose lines are
+  single gains only from the space between paragraphs.
+- The box of running text in two columns that is not set dense is an estimate, made at the template's own
+  spacing. Its second column can run a little under that box, inside its room, as in 0.6.8: set larger, one
+  Hebrew text on the demo template now runs 4.5 pt under it.
+- In a deck that asks for larger text, the share of the wish is chosen at the template's own spacing. A running
+  text there can come out a little smaller than the same text without the wish, where closer spacing set that
+  one larger: never smaller than 0.6.8 set it with the wish.
+
 ## 0.6.8
 
 A layout's text no longer runs past its box when it is written to the length the writer is told. A layout's

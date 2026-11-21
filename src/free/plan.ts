@@ -48,6 +48,8 @@ export interface MadeShape {
   text?: string;
   /** The text can take several lines: they are set at least as far apart as its size asks, whatever the source's own line spacing. */
   lines?: 'several';
+  /** The line spacing the copy is drawn with where its spacing gave way (`GIVE`): a share of the usual in whole percents (1.01 for 101%), or a height in whole points. Left out, its source's own. */
+  lineSpacing?: { percent: number } | { points: number };
   /** Picture: the template picture whose outline it takes. */
   outline?: { slide: number; shapeId: string };
   /** A table the code draws, on a ground its usual look does not suit: the fill of every second row (`''` for none) and the colour of its lines. */
@@ -72,6 +74,8 @@ export interface FreeDrawn {
   columns?: number;
   gap?: number;
   height?: number;
+  /** The line spacing the copy is drawn with where it is not its source's (`MadeShape.lineSpacing`). */
+  lineSpacing?: { percent: number } | { points: number };
 }
 
 /**
@@ -147,6 +151,13 @@ export interface FreeContext {
    * rest of its slide what 0.6.6 gave it.
    */
   asThen?: boolean;
+  /**
+   * Counts as 0.6.8 counted: no spacing gives way (`GIVE`), and a short text is set down its room
+   * as it was. For the plans among which a deck asking for larger text chooses how much of the
+   * wish a slide takes (resolve.ts): chosen among plans whose texts closer spacing lifts, a slide
+   * took the whole wish with a text lifted just to the least, smaller than 0.6.8 set it.
+   */
+  ownSpacing?: boolean;
 }
 
 const clamp = (value: number, low: number, high: number) => Math.min(high, Math.max(low, value));
@@ -176,10 +187,42 @@ const perLine = (width: number, size: number, wide = WIDE) => Math.max(1, Math.f
  * shape it is made from, so a text of a template with a line spacing of 130% takes 1.56 times
  * its size for every line, and is counted so. Lines set closer than usual are counted as usual.
  */
-function lineOf(style: Pick<FreeTextStyle, 'leading'>, size: number): number {
+function lineOf(style: Pick<FreeTextStyle, 'leading'>, size: number, give = 0): number {
   const leading = style.leading;
-  if (!leading) return LINE * size;
-  return Math.max(LINE * size, 'points' in leading ? leading.points : LINE * size * leading.percent);
+  const own = !leading ? LINE * size : Math.max(LINE * size, 'points' in leading ? leading.points : LINE * size * leading.percent);
+  if (give > 0) {
+    // Closed up, never higher than its own: lines in whole points at about single have nothing to give.
+    const drawn = drawnLeading(style, size, give);
+    return Math.min(own, 'points' in drawn ? drawn.points : LINE * size * drawn.percent);
+  }
+  return own;
+}
+/**
+ * 0.6.9: how far the spacing of running text and lists gives way before its size does. Text
+ * that does not fit at a size is first set with the space between its paragraphs closed up, to
+ * 0.7 of what it is (`GAP_GIVE`), and its lines by up to a tenth (`LINE_GIVE`), never closer
+ * than single: a template that sets its lines wider (112%) gives some of that up, one at single
+ * gives none. In PowerPoint's own rendering, paragraphs closer than 0.7 of the usual space
+ * stopped reading as apart. `GIVE` are the steps, loosest first: a text is set at the largest
+ * size at which one of them fits it, and at the loosest of them that does.
+ */
+const GAP_GIVE = 0.3;
+const LINE_GIVE = 0.1;
+const GIVE: readonly number[] = [0, 0.25, 0.5, 0.75, 1];
+const NO_GIVE: readonly number[] = [0];
+/**
+ * The line spacing a copy is drawn with where its spacing gives way so far (`give`, 0 to 1): the
+ * spacing it has, at least single, less up to a tenth, in whole percents or whole points, as
+ * PowerPoint draws them, and never closer than single.
+ */
+function drawnLeading(style: Pick<FreeTextStyle, 'leading'>, size: number, give: number): { percent: number } | { points: number } {
+  const leading = style.leading;
+  if (leading && 'points' in leading) {
+    const full = Math.max(leading.points, LINE * size);
+    return { points: Math.max(Math.ceil(LINE * size - 1e-9), Math.ceil(full * (1 - LINE_GIVE * give) - 1e-9)) };
+  }
+  const full = Math.max(1, leading?.percent ?? 1);
+  return { percent: Math.max(100, Math.ceil(100 * full * (1 - LINE_GIVE * give) - 1e-9)) / 100 };
 }
 /** The height of so many lines of a text at a size, with `more` lines of the usual height on top: the space kept around a text follows its size, whatever the line spacing. */
 const linesHigh = (style: Pick<FreeTextStyle, 'leading'>, lines: number, size: number, more = 0): number => (style.leading ? lines * lineOf(style, size) + more * LINE * size : (lines + more) * LINE * size);
@@ -304,6 +347,8 @@ interface Fitted {
    * paragraph under it, as the renderer sets them (`setHeadings`). Left out, none.
    */
   runIn?: (size: number) => ReadonlySet<number>;
+  /** How far its spacing gives way (`GIVE`): 0 or left out, not at all. Every count of it reads this. */
+  give?: number;
 }
 const NONE: ReadonlySet<number> = new Set();
 /**
@@ -328,11 +373,15 @@ function drawnCount(text: Fitted, size: number): { chars: number; paragraphs: nu
 const charsHeld = (text: Fitted, size: number, hang: Hang): number => {
   if (text.card) return cardCapacity(text.width, text.height, size, text.style, hang);
   if (text.columns !== undefined) return heldIn(text, size, hang, text.paragraphs);
-  return capacity(text.width, text.height, size, hang, drawnCount(text, size).paragraphs, lineOf(text.style, size), text.wide);
+  return capacity(text.width, text.height, size, hang, drawnCount(text, size).paragraphs, lineOf(text.style, size, text.give), text.wide);
 };
 /** How far the lines of a bulleted text hang behind the bullet, and the space between two paragraphs, at a size: what the copy is drawn with (build.ts) and what its slot states. */
 const hangAt = (size: number): number => 1.1 * size;
-const gapAt = (size: number): number => Math.round(0.5 * size);
+const gapAt = (size: number, give = 0): number => {
+  const full = Math.round(0.5 * size);
+  // Closed up, in whole points as PowerPoint draws it, and never under 0.7 of what it is.
+  return give > 0 ? Math.max(Math.ceil(0.7 * full - 1e-9), Math.round(full * (1 - GAP_GIVE * give))) : full;
+};
 /**
  * How many characters of a text a line holds at a size, in the width its bullet leaves, as its
  * lines are counted: by length, with room lost where lines break at words. A paragraph of one line
@@ -354,7 +403,7 @@ function linesEach(text: Fitted, size: number): number[] {
 function paragraphsHigh(text: Fitted, size: number): number {
   const each = linesEach(text, size);
   const lines = each.reduce((sum, count) => sum + count, 0);
-  return lines * lineOf(text.style, size) + Math.max(0, each.length - 1) * gapAt(size);
+  return lines * lineOf(text.style, size, text.give) + Math.max(0, each.length - 1) * gapAt(size, text.give);
 }
 /**
  * The height every line of a text needs in a column, in order, at a size: a line, and under the
@@ -362,8 +411,8 @@ function paragraphsHigh(text: Fitted, size: number): number {
  * a heading set run in goes before the paragraph it heads, and is counted with its first line.
  */
 function lineNeeds(text: Fitted, size: number): number[] {
-  const line = lineOf(text.style, size);
-  const gap = gapAt(size);
+  const line = lineOf(text.style, size, text.give);
+  const gap = gapAt(size, text.give);
   const needs: number[] = [];
   let before = 0;
   for (const lines of linesEach(text, size)) {
@@ -423,7 +472,7 @@ function columnsHigh(needs: readonly number[], columns: number): number {
  * with its first column a line longer, so that its last ran under its box, and words of wide
  * letters take more of a line than their length says. That line is kept free in every column.
  */
-const columnRoom = (text: Fitted, size: number): number => text.height - lineOf(text.style, size);
+const columnRoom = (text: Fitted, size: number): number => text.height - lineOf(text.style, size, text.give);
 /**
  * The one judge of a text a person asked to have whole (`arrange.dense`), in so many columns
  * (`Fitted.columns`, one or more): whether its paragraphs fit its box at a size, and how high its
@@ -442,7 +491,7 @@ function judged(text: Fitted, size: number, hang: Hang): { fits: boolean; high: 
   const needs = lineNeeds(text, size);
   const room = columnRoom(text, size);
   const drawn = drawnCount(text, size);
-  const byLength = drawn.chars <= capacity(text.width, text.height * columns, size, hang, drawn.paragraphs, lineOf(text.style, size), text.wide);
+  const byLength = drawn.chars <= capacity(text.width, text.height * columns, size, hang, drawn.paragraphs, lineOf(text.style, size, text.give), text.wide);
   return { fits: room > 0 && byLength && columnsTaken(needs, room) <= columns, high: columnsHigh(needs, columns) };
 }
 /**
@@ -456,8 +505,8 @@ function judged(text: Fitted, size: number, hang: Hang): { fits: boolean; high: 
  */
 function heldIn(text: Fitted, size: number, hang: Hang, paragraphs: number): number {
   const columns = text.columns ?? 1;
-  const line = lineOf(text.style, size);
-  const step = line + gapAt(size);
+  const line = lineOf(text.style, size, text.give);
+  const step = line + gapAt(size, text.give);
   const room = columnRoom(text, size);
   const count = Math.max(1, paragraphs);
   if (room < step) return 0;
@@ -473,7 +522,7 @@ function heldIn(text: Fitted, size: number, hang: Hang, paragraphs: number): num
  */
 function roomyParagraphs(text: Fitted, size: number): number {
   const columns = text.columns ?? 1;
-  const step = lineOf(text.style, size) + gapAt(size);
+  const step = lineOf(text.style, size, text.give) + gapAt(size, text.give);
   const half = (columns * columnRoom(text, size) - (columns - 1) * step) / 2;
   return Math.max(1, Math.floor(half / step));
 }
@@ -505,10 +554,17 @@ function fitsAt(text: Fitted, size: number, hang: Hang): boolean {
   if (!text.each || (text.each.length < 2 && !text.bullets)) return true;
   return paragraphsHigh(text, size) <= text.height + hang(size);
 }
-/** The largest size, in half points between `least` and `most`, at which every text fits its box. */
-function fitSize(texts: Fitted[], most: number, least: number, hang: Hang): number {
+/** A text with its spacing given way so far (`Fitted.give`). */
+const giving = (text: Fitted, give: number): Fitted => (give > 0 ? { ...text, give } : text);
+/** The loosest of the spacings `give` at which every text fits its box at a size; `undefined` where none does. */
+function spacingAt(texts: Fitted[], size: number, hang: Hang, give: readonly number[] = NO_GIVE): number | undefined {
+  for (const level of give) if (texts.every((text) => fitsAt(giving(text, level), size, hang))) return level;
+  return undefined;
+}
+/** The largest size, in half points between `least` and `most`, at which every text fits its box at one of the spacings `give` (`GIVE`): by default its own. */
+function fitSize(texts: Fitted[], most: number, least: number, hang: Hang, give: readonly number[] = NO_GIVE): number {
   for (let size = halfDown(most); size > least; size -= 0.5) {
-    if (texts.every((text) => fitsAt(text, size, hang))) return size;
+    if (spacingAt(texts, size, hang, give) !== undefined) return size;
   }
   return Math.min(halfDown(most), half(least));
 }
@@ -1010,6 +1066,8 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
     told?: number;
     /** Whether the text can take several lines. Left out: running text, lists, quotations, notes and labels can, the short parts cannot. */
     several?: boolean;
+    /** How far its spacing gave way (`GIVE`): it is drawn so. Its budgets are counted at its own spacing all the same. */
+    give?: number;
   }
   /** Makes a text shape as a copy of a style, and its slot when it holds content of the deck. */
   const text = (index: number, label: string, style: FreeTextStyle, size: number, box: SlideBox, width: number, height: number, options: TextOptions = {}): void => {
@@ -1026,6 +1084,8 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
     if (options.columns && options.columns > 1) shape.columns = options.columns;
     if (options.fixed !== undefined) shape.text = options.fixed;
     if (options.several ?? ['text', 'list', 'quote', 'note', 'label'].includes(label)) shape.lines = 'several';
+    // Lines closed up are drawn so; lines that give nothing (a template at single) keep their source's spacing.
+    if (options.give && lineOf(style, size, options.give) < lineOf(style, size) - 1e-9) shape.lineSpacing = drawnLeading(style, size, options.give);
     shapes.push(shape);
     if (!options.slot) return;
     const columns = options.columns && options.columns > 1 ? options.columns : 1;
@@ -1038,6 +1098,7 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
     const most = Math.max(1, none ? (planning ? Math.max(LEAST_SAID, Math.floor(perLine(inner, size) * FULL)) : 1) : (options.most ?? capacity(inner, height * columns, size, hang, options.paragraphs ? 2 : 1, lineOf(style, size))));
     const slot: FreeTextSlot = { name: options.slot, kind: 'text', shapeId: id, box, size, fontSize: size, scales: false, alignOnDirectionChange: 'keep', maxChars: most, styleOf: { slide: style.slide, shapeId: style.shapeId }, drawn: { inset: options.inset ?? 0, wrap: options.wrap ?? true } };
     if (shape.bullets) slot.drawn.hang = shape.bullets === 'none' ? 0 : hangAt(size);
+    if (shape.lineSpacing) slot.drawn.lineSpacing = shape.lineSpacing;
     if (columns > 1) {
       slot.drawn.columns = columns;
       slot.drawn.gap = kit.gap * Wpt;
@@ -1045,7 +1106,7 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
     }
     if (options.paragraphs) {
       slot.maxParagraphs = options.told ?? Math.max(options.fitted ?? 0, clamp(Math.floor(((height * columns) / lineOf(style, size)) / (options.lines ?? 2)), 1, 12));
-      slot.paragraphGap = gapAt(size);
+      slot.paragraphGap = gapAt(size, options.give);
     }
     if (!options.required) slot.empty = 'remove';
     const described = options.describe ?? target(most);
@@ -1272,11 +1333,11 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
 
   /** The size of some like texts: no larger than `most`, shrunk to fit by at most a fifth, grown when all are short. */
   /** The size texts are set at, between `most` and four fifths of `floorOf` (by default `most`), or larger where they are short. */
-  const sized = (texts: Fitted[], most: number, grow = 1, floorOf = most): number => {
+  const sized = (texts: Fitted[], most: number, grow = 1, floorOf = most, give: readonly number[] = NO_GIVE): number => {
     const least = Math.max(HARD, 0.8 * Math.min(most, floorOf));
     if (texts.every((entry) => entry.chars === 0)) return Math.max(HARD, halfDown(most));
     const short = texts.every((entry) => entry.chars <= 0.6 * charsHeld(entry, most, hang));
-    return Math.max(HARD, fitSize(texts, short ? most * grow : most, least, hang));
+    return Math.max(HARD, fitSize(texts, short ? most * grow : most, least, hang, give));
   };
 
   // ---- running text and lists
@@ -1372,6 +1433,13 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
     const given = whole && planning && !asIs ? countOf(alone.block.index, part) : undefined;
     const told = whole && crowded && planning ? (asIs ?? (given !== undefined ? lengthsOf(alone.block.index, part) : askedParagraphs(tensDown(DENSE_TOP * chars), DENSE_PARAGRAPHS))) : undefined;
     const split = whole && planning !== undefined && asIs === undefined && (given !== undefined || told !== undefined);
+    // Text that is written, and a person's text code sets as it is, gives way in its spacing
+    // before its size (`GIVE`), but only to set larger a text that fits at the template's own
+    // spacing: what is cut, reported or set whole is decided at that spacing, as 0.6.8 decided it
+    // (the one judge of 0.6.3 is never loosened). What a writer is told before it writes is
+    // counted at the template's own spacing too: a text inside it is set at the size planned for
+    // it, or larger.
+    const give = (planning !== undefined && asIs === undefined) || context.ownSpacing ? NO_GIVE : GIVE;
     /**
      * The texts to fit in those rooms: as written or planned, or, for a text alone, with the
      * paragraphs given (`lengths`). `wide` is how wide a character is counted. A text as written
@@ -1398,8 +1466,13 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
     const denseFloor = kit.leastTextSize !== undefined ? Math.min(kit.leastTextSize, halfDown(Math.min(most, bodyN))) : leastSizeOf(kit);
     /** The least size a text alone is set at here, in the first room. */
     const firstFloor = Math.max(HARD, 0.8 * Math.min(most, bodyN), stated);
-    const firstAt = (list: Fitted[]): number => (alone && chars > 0 ? Math.max(HARD, fitSize(list, most, firstFloor, hang)) : sized(list, most, blocksOnSlide <= 2 ? 1.25 : 1, mostThen));
-    let fitted = firstAt(toFit);
+    const firstAt = (list: Fitted[], levels: readonly number[] = NO_GIVE): number => (alone && chars > 0 ? Math.max(HARD, fitSize(list, most, firstFloor, hang, levels)) : sized(list, most, blocksOnSlide <= 2 ? 1.25 : 1, mostThen, levels));
+    // Which room a text a person asked to have whole takes is chosen at the template's spacing:
+    // chosen with the spacing given way, texts that two columns set large stayed in one, smaller.
+    const atOwn = firstAt(toFit);
+    let fitted = atOwn;
+    /** Where spacing that gives way lets the text be set: the size, in so many columns. Settled below. */
+    let lift: { size: number; columns: number } | undefined = give === NO_GIVE ? undefined : { size: firstAt(toFit, give), columns };
     if (told) toFit = fitOf(bodies, columns, undefined, told);
     /**
      * Whether a text a person asked to have whole needed the larger room as 0.6.6 counted it: its
@@ -1417,7 +1490,7 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
       const at = Math.max(HARD, fitSize(first, most, Math.max(HARD, 0.8 * Math.min(most, bodyN), stated), hang));
       return !(told ? asThen(fitOf(bodies, columns, undefined, told)) : first).every((text) => fitsAt(text, at, hang));
     };
-    const fitsFirst = whole && toFit.every((text) => fitsAt(text, fitted, hang));
+    const fitsFirst = whole && toFit.every((text) => fitsAt(text, atOwn, hang));
     if (whole && (!fitsFirst || neededMore())) {
       if (!crowded) cramped = true;
       else {
@@ -1428,18 +1501,17 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
           const usual = columnsAt(size);
           return usual === 2 && (alone.w - 2 * kit.gap * Wpt) / 3 / (SET_WIDE * size) >= DENSE_SHORT ? [2, 3] : [usual];
         };
-        // Where it fits at no size, it is set at the least size, in the columns its lines take there, as before.
-        let chosen = { size: floor, columns: columnsAt(floor) };
-        let found = false;
-        search: for (let size = halfDown(most); size >= floor - 1e-9; size -= 0.5) {
-          for (const count of columnsFor(size)) {
-            if (fitOf(bodiesIn(count), count, denseWide, told).every((text) => fitsAt(text, size, hang))) {
-              chosen = { size, columns: count };
-              found = true;
-              break search;
+        /** The largest size, and its columns (no more than `fewest`), at which the text fits at one of the spacings `levels`; where it fits at none, the least size in the columns its lines take there, as before. */
+        const search = (levels: readonly number[], fewest = Number.POSITIVE_INFINITY): { chosen: { size: number; columns: number }; found: boolean } => {
+          for (let size = halfDown(most); size >= floor - 1e-9; size -= 0.5) {
+            for (const count of columnsFor(size)) {
+              if (count > fewest) continue;
+              if (spacingAt(fitOf(bodiesIn(count), count, denseWide, told), size, hang, levels) !== undefined) return { chosen: { size, columns: count }, found: true };
             }
           }
-        }
+          return { chosen: { size: floor, columns: columnsAt(floor) }, found: false };
+        };
+        const { chosen, found } = search(NO_GIVE);
         // A text that came here only by the count of then (`neededMore`), and that the larger room
         // holds at no size, stays as it is set before the columns: there it fits, and in columns it
         // would be cut. The least size here can be over four fifths of a small template's size.
@@ -1449,10 +1521,35 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
           bodies = bodiesIn(columns);
           toFit = fitOf(bodies, columns, wide, told);
           fitted = chosen.size;
+          // Spacing that gives way may set it larger, in as many columns or fewer, where it fits here at all.
+          lift = lift && found ? search(give, chosen.columns).chosen : undefined;
         }
       }
     }
-    const size = Math.max(floorOf(blocks[0]?.index, kind === 'text' ? 'text' : 'list'), Math.min(fitted, Math.max(under, Math.min(most, bodyN))));
+    /** The size the texts are set at where they could be set at `at`: no smaller than the floor of the slide, no larger than a heading over them. */
+    const settled = (at: number): number => Math.max(floorOf(blocks[0]?.index, kind === 'text' ? 'text' : 'list'), Math.min(at, Math.max(under, Math.min(most, bodyN))));
+    let size = settled(fitted);
+    // The spacing: the template's own, unless the texts fit at it at that size (they are set whole,
+    // as 0.6.8 set them) and spacing that gives way sets them larger. Then they are set at that
+    // size, in its columns, at the loosest spacing that fits.
+    let spacing = 0;
+    if (lift && toFit.every((text) => fitsAt(text, size, hang))) {
+      const at = settled(lift.size);
+      const list = lift.columns === columns ? toFit : fitOf(bodiesIn(lift.columns), lift.columns, wide, told);
+      const level = at > size ? spacingAt(list, at, hang, give) : undefined;
+      if (level !== undefined) {
+        if (lift.columns !== columns) {
+          columns = lift.columns;
+          bodies = bodiesIn(columns);
+        }
+        toFit = list;
+        size = at;
+        spacing = level;
+      }
+    }
+    if (spacing > 0) toFit = toFit.map((text) => giving(text, spacing));
+    /** A text counted at the template's own spacing: what its budgets say. */
+    const own = (text: Fitted): Fitted => (text.give ? { ...text, give: 0 } : text);
     proseSize = Math.min(proseSize, size);
     bodies.forEach((body, position) => {
       const { room } = body;
@@ -1468,7 +1565,12 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
         // template's own width, a text of many short paragraphs came to fewer lines than its
         // paragraphs take, and was set so far down that it ran under its box.
         const needed = dense ? paragraphsHigh(fit, size) : linesHigh(bodyStyle, Math.ceil(chars / (perLine(body.perColumn, size, Math.max(WIDE, bodyWide)) * FULL)), size) + Math.max(0, each.length - 1) * 0.5 * size;
-        down = columns === 1 && needed < 0.6 * body.height ? 0.3 * (body.height - needed) : 0;
+        // A text whose spacing gave way fills its room: it is never short, and is not set down. Nor
+        // is any text set further down than its paragraphs, each in whole lines, leave free: a text
+        // of many short paragraphs, counted by its length, was set down until it ran under its box.
+        const lower = columns === 1 && spacing === 0 && needed < 0.6 * body.height ? 0.3 * (body.height - needed) : 0;
+        // Its last line may hang under the box as far as the check lets it (`hang`): a text it does not report stays where 0.6.8 set it.
+        down = planning || context.ownSpacing ? lower : Math.max(0, Math.min(lower, body.height + hang(size) - paragraphsHigh(fit, size)));
       }
       if (room.heading) text(room.block.index, 'heading', kit.styles.heading, headSize, inBlock(room.rect, room.x, room.y + down, body.width, headHeight), body.width, headHeight, { slot: freeSlotName(room.block.index, 'Heading'), most: perLine(body.width, headSize), describe: 'A heading of a few words. Give one to every text of the slide, or to none' });
       // Text in two columns fills the first before it starts the second: its box is only as
@@ -1479,21 +1581,26 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
       // columns are where they come out alike (`judged`) and a line more, the line its columns
       // keep free (`columnRoom`). Columns that come out unlike, the last the shorter, are as
       // PowerPoint fills them.
-      const line = lineOf(bodyStyle, size);
+      // The line as it is drawn, and as the template has it: budgets are counted at that.
+      const line = lineOf(bodyStyle, size, spacing);
+      const ownLine = lineOf(bodyStyle, size);
       const set = whole && columns > 1 ? judged(fit, size, hang).high + line : undefined;
-      const halved = set ?? linesHigh(bodyStyle, Math.ceil(Math.ceil((fit.chars * Math.max(0.47, kit.characterWidth ?? 0) * size) / body.perColumn) / columns), size) + Math.max(0, each.length - 1) * 0.5 * size;
-      const boxHeight = columns > 1 ? Math.min(body.height, Math.max(lineOf(bodyStyle, size), halved)) : body.height - down;
+      const halfLines = Math.ceil(Math.ceil((fit.chars * Math.max(0.47, kit.characterWidth ?? 0) * size) / body.perColumn) / columns);
+      // Text not set dense in columns keeps the box its lines take at the template's spacing: counted
+      // closer, the box of a Hebrew text was a few points lower than PowerPoint filled its first column.
+      const halved = set ?? linesHigh(bodyStyle, halfLines, size) + Math.max(0, each.length - 1) * 0.5 * size;
+      const boxHeight = columns > 1 ? Math.min(body.height, Math.max(line, halved)) : body.height - down;
       // What the slot states. Before there is content, what the room holds at this size: a text
       // that was set a little down the slide because the usual text is short has the whole room.
       // A text a person asked to have whole has the box it is drawn in, as it will be drawn.
       const high = planning && !dense ? body.height : body.height - down;
       const none = !holdsLine((body.left - (planning && !dense ? 0 : down)) * columns, size, line, hang);
       const perSlot = kind === 'list' ? 1.5 : 3;
-      const paragraphsHeld = clamp(Math.floor((high * columns) / line / perSlot), 1, 12);
+      const paragraphsHeld = clamp(Math.floor((high * columns) / ownLine / perSlot), 1, 12);
       /** The text in its room as high as `height`: of a text a person asked to have whole, each column. */
       const inRoom = (text: Fitted, height: number): Fitted => (text.columns !== undefined ? { ...text, height } : { ...text, height: height * columns });
       const here = inRoom(fit, high);
-      const usual = kind === 'list' ? listCapacity(body.perColumn, high * columns, size, planning ? Math.min(Math.max(1, each.length), paragraphsHeld) : Math.max(1, each.length), bodyStyle, hang, bodyWide) : capacity(body.perColumn, high * columns, size, hang, 2, line, wide);
+      const usual = kind === 'list' ? listCapacity(body.perColumn, high * columns, size, planning ? Math.min(Math.max(1, each.length), paragraphsHeld) : Math.max(1, each.length), bodyStyle, hang, bodyWide) : capacity(body.perColumn, high * columns, size, hang, 2, ownLine, wide);
       let most = usual;
       let fitted = 0;
       /** Of a text a person asked to have whole: the paragraphs its slot takes, exactly. */
@@ -1505,8 +1612,8 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
         // both is not sent back. A document's text that code would set as it is (`asIs`) but that
         // the slide does not hold even at the least size is written so too: code does not set it
         // (`filledText`), and its writer is told what the slide holds.
-        told = fitsAt(here, size, hang) ? fit.paragraphs : toldParagraphs(here, size, hang, fit.paragraphs);
-        most = tensDown(heldIn(here, size, hang, told));
+        told = fitsAt(here, size, hang) ? fit.paragraphs : toldParagraphs(own(here), size, hang, fit.paragraphs);
+        most = tensDown(heldIn(own(here), size, hang, told));
         fitted = told;
       } else if (whole && asIs) {
         // A document's text that code sets as it is, and that fits: the slide holds it.
@@ -1524,8 +1631,8 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
           most = Math.max(usual, fit.chars);
           told = fitted = each.length;
         } else {
-          told = fitted = Math.min(count, roomyParagraphs(here, size));
-          most = Math.min(usual, heldIn(here, size, hang, told), told === count ? fit.chars - 1 : Infinity);
+          told = fitted = Math.min(count, roomyParagraphs(own(here), size));
+          most = Math.min(usual, heldIn(own(here), size, hang, told), told === count ? fit.chars - 1 : Infinity);
         }
       } else if (whole && fit.chars > 0) {
         // Before there is content, a text of an asked length that its slide holds at four fifths of
@@ -1542,10 +1649,10 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
         if (denseFloor > readableSize(kit.slideWidth) + 1e-9) {
           const low = Math.min(size, firstFloor);
           let count = paragraphsHeld;
-          while (count > 2 && tensDown(heldIn(here, low, hang, count)) < fit.chars) count--;
-          if (tensDown(heldIn(here, low, hang, count)) < fit.chars) count = toldParagraphs(here, low, hang, fit.paragraphs);
+          while (count > 2 && tensDown(heldIn(own(here), low, hang, count)) < fit.chars) count--;
+          if (tensDown(heldIn(own(here), low, hang, count)) < fit.chars) count = toldParagraphs(own(here), low, hang, fit.paragraphs);
           told = fitted = count;
-          most = Math.min(most, tensDown(heldIn(here, low, hang, count)));
+          most = Math.min(most, tensDown(heldIn(own(here), low, hang, count)));
         }
       } else if (!whole && (!planning || countOf(room.block.index, part) !== undefined) && fit.chars > 0) {
         // Before there is content, a text whose number of paragraphs the planner gave is counted
@@ -1556,14 +1663,14 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
           fitted = each.length;
         } else {
           // Text that does not fit is over its budget: by its length, or by the lines its paragraphs take one by one.
-          const needed = paragraphsHigh(here, size);
+          const needed = paragraphsHigh(own(here), size);
           const room = here.height + hang(size);
-          most = Math.min(usual, charsHeld(here, size, hang), needed > room ? Math.floor((fit.chars * room) / needed) : Infinity);
+          most = Math.min(usual, charsHeld(own(here), size, hang), needed > room ? Math.floor((fit.chars * room) / needed) : Infinity);
         }
       }
       const aim = target(most);
       const describe = kind === 'list' ? say(paragraphsHeld > 1 ? 'One short point in each item' : 'One short point', aim !== undefined && paragraphsHeld > 1 ? `${aim} in all` : aim) : aim;
-      text(room.block.index, kind === 'text' ? 'text' : 'list', bodyStyle, size, inBlock(room.rect, room.x, body.topOf + down, body.width, boxHeight), body.width, high, { slot: freeSlotName(room.block.index, part), required: true, paragraphs: true, columns, lines: perSlot, most, none, fitted, ...(told !== undefined ? { told } : {}), ...(describe !== undefined ? { describe } : {}) });
+      text(room.block.index, kind === 'text' ? 'text' : 'list', bodyStyle, size, inBlock(room.rect, room.x, body.topOf + down, body.width, boxHeight), body.width, high, { slot: freeSlotName(room.block.index, part), required: true, paragraphs: true, columns, lines: perSlot, most, none, fitted, ...(spacing > 0 ? { give: spacing } : {}), ...(told !== undefined ? { told } : {}), ...(describe !== undefined ? { describe } : {}) });
     });
   }
 

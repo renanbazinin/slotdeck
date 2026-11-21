@@ -51,9 +51,10 @@ const textOf1 = (template: typeof demo, slide: Pick<SlideSpec, 'blocks' | 'arran
 
 test('a template that states how wide its text is set has its running text set larger; cards, and a template without it, as before', () => {
   const narrow = withSettings({ characterWidth: 0.44 });
-  // Running text of six paragraphs, and a long text set dense.
+  // Running text of six paragraphs, and a long text set dense. Set larger, the space between the
+  // paragraphs gives way before half a point of size does (0.6.9): 16.5 pt.
   const text = slideOf(textOf(1400, 6));
-  assert.deepEqual([textOf1(demo, text).size, textOf1(narrow, text).size], [14.5, 16]);
+  assert.deepEqual([textOf1(demo, text).size, textOf1(narrow, text).size], [14.5, 16.5]);
   const dense = slideOf(textOf(2000, 8), true);
   assert.deepEqual([textOf1(demo, dense).size, textOf1(narrow, dense).size], [13.5, 14.5]);
   // The text set larger still fits as the deck's check counts it.
@@ -131,13 +132,18 @@ const sectioned = (sections: number, chars: number): { paragraphs: string[]; hea
 };
 
 test('the headings of a document are counted as they are set: run in, a text with them is set larger than one with each on a line', () => {
-  for (const [sections, chars, plain, headed] of [
-    [6, 2400, 12, 12.5],
-    [12, 2400, 10.5, 11.5],
+  // The sizes as plain paragraphs and set as headings, the space between paragraphs giving way
+  // before the size (0.6.9): 0.6.8 set them at 12 and 12.5, and 10.5 and 11.5.
+  const sizes: number[][] = [];
+  for (const [sections, chars] of [
+    [6, 2400],
+    [12, 2400],
   ] as const) {
     const { paragraphs, headings } = sectioned(sections, chars);
-    assert.equal(textOf1(demo, slideOf(paragraphs, true)).size, plain, `${sections} as plain paragraphs`);
-    assert.equal(textOf1(demo, slideOf(paragraphs, true, { headings })).size, headed, `${sections} set as headings`);
+    const plain = textOf1(demo, slideOf(paragraphs, true)).size ?? 0;
+    const headed = textOf1(demo, slideOf(paragraphs, true, { headings })).size ?? 0;
+    assert.ok(headed > plain, `${sections}: ${headed} set as headings, ${plain} as plain paragraphs`);
+    sizes.push([sections, plain, headed]);
     // At that size every heading is set run in, and the deck's check finds it fits.
     const slide = slideOf(paragraphs, true, { headings });
     assert.deepEqual(validateDeck(demo, deckOf([slide]), { layout: 'adaptive' }), []);
@@ -145,6 +151,10 @@ test('the headings of a document are counted as they are set: run in, a text wit
     const text = /<p:sp>(?:(?!<\/p:sp>)[\s\S])*?Riders(?:(?!<\/p:sp>)[\s\S])*<\/p:sp>/.exec(xml)?.[0] ?? '';
     assert.equal((text.match(/<a:p>/g) ?? []).length, sections, `${sections}: one paragraph a part`);
   }
+  assert.deepEqual(sizes, [
+    [6, 12, 12.5],
+    [12, 11, 11.5],
+  ]);
 });
 
 test('the plan asks the renderer’s own question of each heading, in a line a character shorter', () => {
@@ -265,14 +275,15 @@ test('a deck that asks for larger text gets what 0.6.6 gave it, where a text is 
     return { text: of('b1Text'), note: of('b2Text'), enlarged: free.enlarged ?? 'all' };
   };
   const deck = (template: typeof demo, slide: SlideSpec) => validateDeck(template, { ...deckOf([slide]), textScale: 1.15 }, { layout: 'adaptive' });
-  // Headings run in: the text is 18.5 pt without the wish, and 0.6.6 gave the slide all of the wish, 18 and 19.5.
+  // Headings run in: the text is 18.5 pt without the wish, and 0.6.6 gave the slide all of the wish,
+  // 18 and 19.5. The space between its paragraphs giving way first (0.6.9), it is set at 19.
   const headed: SlideSpec = { pattern: 'free', blocks: ['text', 'note'], slots: { title: 'A title', b1Text: ['Riders', part(133), 'Costs and budget', part(133), 'Stations', part(133)], b2Text: part(60) }, headings: ['Riders', 'Costs and budget', 'Stations'] };
-  assert.deepEqual(sizes(demo, headed), { text: 18, note: 19.5, enlarged: 'all' });
+  assert.deepEqual(sizes(demo, headed), { text: 19, note: 19.5, enlarged: 'all' });
   assert.deepEqual(deck(demo, headed), []);
-  // A template's width: the same.
+  // A template's width: the same, set at 18.5 where the space between its paragraphs gives way.
   const plain: SlideSpec = { pattern: 'free', blocks: ['text', 'note'], slots: { title: 'A title', b1Text: ['Riders', part(275), 'Costs and budget', part(275)], b2Text: part(60) } };
   const narrow = withSettings({ characterWidth: 0.45 });
-  assert.deepEqual(sizes(narrow, plain), { text: 18, note: 19.5, enlarged: 'all' });
+  assert.deepEqual(sizes(narrow, plain), { text: 18.5, note: 19.5, enlarged: 'all' });
   assert.deepEqual(deck(narrow, plain), []);
 });
 
