@@ -147,7 +147,7 @@ An `ImageRef`:
 | Field | Type | Required | Meaning |
 | --- | --- | --- | --- |
 | `asset` | string | yes | The id of the picture. The bytes are passed to `renderDeck` in `options.assets` under this id. |
-| `alt` | string | no | Alternative text for screen readers, stored on the picture. |
+| `alt` | string | no | Alternative text for screen readers, stored on the picture. From 0.7.0 an icon without it is marked as decoration (Office's "Mark as decorative"), so that a screen reader passes over it instead of reading out an unnamed picture. |
 | `prompt` | string | no | A description the picture can be generated from. Written by the planner for photos; lets the picture be made again later. |
 
 How the picture is placed depends on the slot (`fit` in the manifest):
@@ -172,6 +172,8 @@ A `TableValue`:
 - The template table's first row supplies the header style and its following rows supply the body styles in
   turn (so banding is kept). Columns share the table's width equally.
 - Limits (`maxColumns`, `maxRows`, `maxCellChars`) are soft.
+- From 0.7.0 the table's frame carries alternative text that says its headings and how many rows it has, such as
+  "Table: Station, Docks; 2 rows", in Hebrew for a deck in Hebrew that reads right to left.
 
 ### Chart slot
 

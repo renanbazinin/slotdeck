@@ -18,7 +18,7 @@ import {
 } from '../pptx/package.ts';
 import type { Relationship } from '../pptx/package.ts';
 import { readPresentation } from '../pptx/presentation.ts';
-import { NS, childElement, childElements, descendants, openableSizes, parseXml, removeNode, rootElement, serializeXml } from '../pptx/xml.ts';
+import { NS, childElement, childElements, descendants, openableSizes, parseXml, path, removeNode, rootElement, serializeXml } from '../pptx/xml.ts';
 import type { Element } from '../pptx/xml.ts';
 import { bodyTextScale, chartAtScale, chartsReadRightToLeft, defaultFit, effectiveSlots, itemCount, scalesWithText, slotSources, tableAtScale, templateTextSetting } from '../template/manifest.ts';
 import type { ChartSlotDef, PatternDef, SlideBox, TemplateManifest } from '../template/manifest.ts';
@@ -31,7 +31,7 @@ import { said } from '../messages/en.ts';
 import { inheritedBackground, ownBackground, ownTheBackground, paletteOf, recolorChart, recolorDefaults, recolorIcon, recolorInherited, recolorSlide, schemeOf } from '../color/recolor.ts';
 import { contrast } from '../color/space.ts';
 import { CHART_CONTENT_TYPE, CHART_REL_TYPE, WORKBOOK_CONTENT_TYPE, WORKBOOK_REL_TYPE, buildChartWorkbook, buildChartXml, chartFrameXml } from './chart.ts';
-import { chartAlt } from './alt.ts';
+import { chartAlt, tableAlt } from './alt.ts';
 import { writeProperties } from './properties.ts';
 import type { DeckProperties } from './properties.ts';
 import { setPicture } from './picture.ts';
@@ -313,6 +313,8 @@ ${colors?.key}` : assetId;
         rels.push({ id: relId, type: IMAGE_REL_TYPE, target: relativeTarget(part, image.part), external: false });
         const fill: PictureFill = { relId, width: image.info.width, height: image.info.height, fit: defaultFit(slot) };
         if (action.image.alt !== undefined) fill.alt = action.image.alt;
+        // A pictogram that no one described is decoration to a screen reader, not an unnamed picture.
+        if (slot.imageKind === 'icon') fill.decorative = true;
         if (slot.box) {
           fill.area = {
             x: slot.box.x * pres.slideWidth,
@@ -334,6 +336,8 @@ ${colors?.key}` : assetId;
         const sampleRows = frameArea ? descendants(shape, NS.a, 'tr').length : 0;
         const aligns = box ? planned.columnAligns : frameArea ? numberAligns(action.table, writing.direction ?? 'ltr') : undefined;
         setTable(shape, action.table, tableAtScale(slot, textScale), deck.direction ?? manifest.direction, aligns, writing);
+        // What a screen reader says of it: its headings and how many rows it has.
+        path(shape, [NS.p, 'nvGraphicFramePr'], [NS.p, 'cNvPr'])?.setAttribute('descr', tableAlt(action.table, language, writing.direction));
         // Its rows share the frame as the sample's rows do: a heading drawn lower than the rows stays lower.
         if (frameArea && action.table.rows.length + 1 < sampleRows) fitTable(shape, frameArea, descendants(shape, NS.a, 'tr').map((row) => Number(row.getAttribute('h')) || 1));
         // Rows whose cells take more lines than their neighbours' are higher, and columns are as wide as what is written in them asks, as the plan worked out.
