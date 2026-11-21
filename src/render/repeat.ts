@@ -188,11 +188,13 @@ function widenShapes(shapes: Element[], left: number, width: number, delta: numb
  *
  * With `widen` on the repeat, a line that holds fewer items than the template draws has its items
  * made wider, up to that factor, so that they fill the row's span at the template's own gaps.
- * `texts` are the ids of the row's text boxes that the deck writes.
+ * `texts` are the ids of the row's text boxes that the deck writes. `mirrored`: the deck reads the
+ * other way from the template, and a row with an item that stands out (`emphasis`) sets its items
+ * out in the deck's direction.
  *
  * Copied shapes get the id of their original plus a multiple of {@link COPY_ID_STEP}.
  */
-export function applyRepeat(shapes: Map<string, Element>, repeat: RepeatDef, count: number, slideWidth: number, texts: ReadonlySet<string> = new Set()): void {
+export function applyRepeat(shapes: Map<string, Element>, repeat: RepeatDef, count: number, slideWidth: number, texts: ReadonlySet<string> = new Set(), mirrored = false): void {
   const items = repeat.shapes.map((ids) =>
     ids.map((id) => {
       const shape = shapes.get(id);
@@ -256,7 +258,17 @@ export function applyRepeat(shapes: Map<string, Element>, repeat: RepeatDef, cou
       pitch = wider + gap;
     }
   }
-  const totalHeight = (rows.length - 1) * rowPitch + height;
+  // In a deck that reads the other way, a row with an item that stands out sets its items out in
+  // the deck's direction, each with its look; any other row keeps its places and has its values mirrored.
+  const fromRight = rightToLeft !== (mirrored && repeat.emphasis !== undefined);
+  // Fewer lines than drawn (an agenda of three where six are drawn): with `spread`, the space
+  // between them grows, up to that factor on the drawn step, as far as the area the lines were
+  // drawn in, so that they do not bunch in its middle. The count alone decides it, as for widen.
+  let linePitch = rowPitch;
+  if (repeat.spread !== undefined && repeat.spread > 1 && rows.length > 1 && rows.length < drawnRows.length) {
+    linePitch = Math.max(rowPitch, Math.min(rowPitch * repeat.spread, (area.bottom - area.y - height) / (rows.length - 1)));
+  }
+  const totalHeight = (rows.length - 1) * linePitch + height;
   const top = (area.y + area.bottom) / 2 - totalHeight / 2;
   const centre = (area.x + area.right) / 2;
   let index = 0;
@@ -266,8 +278,8 @@ export function applyRepeat(shapes: Map<string, Element>, repeat: RepeatDef, cou
     const start = Math.min(Math.max(centre - total / 2, span.left), Math.max(span.left, span.right - total));
     for (let position = 0; position < size; position++, index++) {
       const box = boxes[index] as Extent;
-      const x = start + (rightToLeft ? size - 1 - position : position) * step;
-      const y = top + row * rowPitch;
+      const x = start + (fromRight ? size - 1 - position : position) * step;
+      const y = top + row * linePitch;
       for (const shape of items[index] as Element[]) moveBy(shape, x - box.x, y - box.y);
     }
   });

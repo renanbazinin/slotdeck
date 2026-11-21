@@ -15,8 +15,12 @@ import type { TextOptions } from './text.ts';
  *
  * `aligns` sets the cells of single columns otherwise: `'r'` for a column of numbers, which are
  * read by their last digits. A column it does not name starts where reading starts.
+ *
+ * `writing` names the deck's language and the template's direction: in a deck that reads left to
+ * right from a template that reads right to left, a cell of a figure without letters ("+12%")
+ * reads left to right, as the text of a slide does (see `applyDirection` in text.ts).
  */
-export function setTable(frame: Element, table: TableValue, slot: TableSlotDef, direction: Direction, aligns?: ReadonlyArray<'l' | 'r' | undefined>, language?: string): void {
+export function setTable(frame: Element, table: TableValue, slot: TableSlotDef, direction: Direction, aligns?: ReadonlyArray<'l' | 'r' | undefined>, writing: { language?: string; templateDirection?: Direction } = {}): void {
   const tbl = descendants(frame, NS.a, 'tbl')[0];
   if (frame.localName !== 'graphicFrame' || !tbl) throw new Error('table slots must point at a table');
   const grid = childElement(tbl, NS.a, 'tblGrid');
@@ -59,8 +63,8 @@ export function setTable(frame: Element, table: TableValue, slot: TableSlotDef, 
       const cell = (sampleCells[index] ?? lastSample).cloneNode(true) as Element;
       const body = childElement(cell, NS.a, 'txBody');
       const cellAlign = aligns?.[index] ?? align;
-      const writing: TextOptions = language ? { flipAlign: false, align: cellAlign, direction, language } : { flipAlign: false, align: cellAlign, direction };
-      if (body) setBodyText(body, [text], style ? { ...writing, style } : writing);
+      const options: TextOptions = { flipAlign: false, align: cellAlign, direction, ...(writing.language ? { language: writing.language } : {}), ...(writing.templateDirection ? { templateDirection: writing.templateDirection } : {}) };
+      if (body) setBodyText(body, [text], style ? { ...options, style } : options);
       row.insertBefore(cell, childElement(row, NS.a, 'extLst') ?? null);
     });
     return row;
@@ -86,6 +90,29 @@ export function setTable(frame: Element, table: TableValue, slot: TableSlotDef, 
   if (extent && height > 0) extent.setAttribute('cy', String(height));
 }
 
+/** The area a table's frame takes on its slide, in EMU; `undefined` for a frame that states none. */
+export function tableArea(frame: Element): Area | undefined {
+  const xfrm = childElement(frame, NS.p, 'xfrm');
+  const off = xfrm && childElement(xfrm, NS.a, 'off');
+  const ext = xfrm && childElement(xfrm, NS.a, 'ext');
+  const area = { x: Number(off?.getAttribute('x')), y: Number(off?.getAttribute('y')), cx: Number(ext?.getAttribute('cx')), cy: Number(ext?.getAttribute('cy')) };
+  return Object.values(area).every(Number.isFinite) && area.cx > 0 && area.cy > 0 ? area : undefined;
+}
+
+/** A cell that is a number: a sign, a currency, then a digit. */
+const NUMBER_CELL = /^[+\-−]?[€$₪£]?\s?\d/;
+
+/**
+ * How the columns of a table are aligned where its columns of numbers end on one edge: `'r'` for a
+ * column whose every body cell is a number, in a deck that reads left to right. A deck that reads
+ * right to left sets every column from the right already, so nothing changes there.
+ */
+export function numberAligns(table: TableValue, direction: Direction): Array<'l' | 'r' | undefined> | undefined {
+  if (direction === 'rtl' || table.rows.length === 0) return undefined;
+  const numeric = table.header.map((_, column) => table.rows.every((row) => NUMBER_CELL.test((row[column] ?? '').trim())));
+  return numeric.some(Boolean) ? numeric.map((yes) => (yes ? 'r' : undefined)) : undefined;
+}
+
 /** An area of the slide in EMU. */
 export interface Area {
   x: number;
@@ -107,9 +134,11 @@ export interface Area {
  * a column of long names is wider than a column of short numbers.
  *
  * Every cell has its text in the middle of its height: rows that share a height are higher
- * than their text, and text at the top of a high row hangs.
+ * than their text, and text at the top of a high row hangs. `keepMargins` leaves the space kept
+ * free inside each cell as the template's table has it: for a table of a layout that fills its
+ * frame (`TableSlotDef.fill`), whose cells are as the designer drew them.
  */
-export function fitTable(frame: Element, area: Area, shares?: readonly number[], widths?: readonly number[]): void {
+export function fitTable(frame: Element, area: Area, shares?: readonly number[], widths?: readonly number[], options: { keepMargins?: boolean } = {}): void {
   const tbl = descendants(frame, NS.a, 'tbl')[0];
   const grid = tbl && childElement(tbl, NS.a, 'tblGrid');
   const xfrm = childElement(frame, NS.p, 'xfrm');
@@ -149,7 +178,7 @@ export function fitTable(frame: Element, area: Area, shares?: readonly number[],
     }
     if (!props) continue;
     props.setAttribute('anchor', 'ctr');
-    if (!tight) continue;
+    if (!tight || options.keepMargins) continue;
     props.setAttribute('marL', String(side));
     props.setAttribute('marR', String(side));
     props.setAttribute('marT', String(above));

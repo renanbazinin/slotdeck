@@ -41,6 +41,7 @@ const PROPERTIES = [
   'maxColumns',
   'maxRows',
   'maxCellChars',
+  'fill',
   'headerSize',
   'headerBold',
   'headerColor',
@@ -57,11 +58,14 @@ const PROPERTIES = [
   'language',
   'direction',
   'alignOnDirectionChange',
+  'chartDirection',
   'textScale',
   'characterWidth',
   'leastTextSize',
   'variant',
   'widen',
+  'emphasis',
+  'spread',
   'accent',
   'accent2',
   'keepColors',
@@ -78,17 +82,17 @@ const SYSTEM = [
 const GUIDE = [
   'Every operation has "op", "pattern", "shape", "slot" and "values". Give "" for a pattern, shape or slot the operation does not use. List in "values" only the properties that change, each as { property, value } with the value written as text ("6", "true", "drop").',
   'Operations:',
-  '- setSlot (pattern, slot): change a slot. Values: empty ("error" makes it required, "remove" optional, "keep" always leaves the template\'s own content, "drop" always removes the shape); maxChars, maxParagraphs (limits of a text); fontSize (a text size in points); deckField (ties a text to one value for the whole deck); name (renames the slot); imageKind ("photo", "icon" or "graphic"). For a table: maxColumns, maxRows, maxCellChars, headerSize, headerBold, headerColor (hex), headerFont, bodySize, bodyBold, bodyColor, bodyFont. For a chart: maxCategories, maxSeries.',
+  '- setSlot (pattern, slot): change a slot. Values: empty ("error" makes it required, "remove" optional, "keep" always leaves the template\'s own content, "drop" always removes the shape); maxChars, maxParagraphs (limits of a text); fontSize (a text size in points); deckField (ties a text to one value for the whole deck); name (renames the slot); imageKind ("photo", "icon" or "graphic"). For a table: maxColumns, maxRows, maxCellChars, headerSize, headerBold, headerColor (hex), headerFont, bodySize, bodyBold, bodyColor, bodyFont, fill ("true": with fewer rows than the sample the table still fills its frame, and its columns of numbers end on the right; "false" draws it as designed). For a chart: maxCategories, maxSeries.',
   '- addSlot (pattern, shape): make a shape of the slide a slot, or give the shape of an existing slot another role. Values: role, and optionally name and optional ("true"). Roles: title, subtitle, text, list (one paragraph per item), number (a large figure), caption, photo, icon, graphic (a supplied chart or diagram picture), chart (a native editable chart in place of a picture), table, decoration (removed from every slide made with the pattern), fixed (stays exactly as designed).',
   '- removeSlot (pattern, slot): the shape stays as the template shows it.',
-  '- setRepeat (pattern): how many items the row or grid of a pattern takes. Values: min, max, and widen (a factor such as "1.5": with fewer items than the slide draws, each item may grow up to that many times as wide, so the row is filled and does not float in the middle; "1" keeps the drawn width).',
+  '- setRepeat (pattern): how many items the row or grid of a pattern takes. Values: min, max, and widen (a factor such as "1.5": with fewer items than the slide draws, each item may grow up to that many times as wide, so the row is filled and does not float in the middle; "1" keeps the drawn width), spread (a factor such as "1.6": with fewer lines of items than the slide draws, as an agenda of three in a list drawn for six, the space between them may grow up to that many times, so they reach down the slide and do not bunch in its middle; "1" keeps the drawn space), and emphasis (the number of the item the slide draws to stand out, such as "1" for a first card in another colour: in a deck that reads the other way the items then change places with their looks; "" when none does).',
   '- removeRepeat (pattern): the items stop being a row whose number can change.',
   '- setPattern (pattern): Values: id (renames the pattern), description, figures ("true" offers it only when a brief has numbers).',
   '- copyPattern (pattern): a second pattern from the same slide, to turn into a variant by hand with further operations. Values: id of the new pattern, and optionally description.',
   '- derivePattern (pattern): a second pattern from the same slide that the software lays out itself. Values: variant, and optionally id and description. Variants: "mirror" (the picture and the text beside it change sides), "text-only" (the picture is left out and the text widens over the room it leaves), "without" (leaves out the optional text named in "slot"; what sits under it moves up). The software works out every position and budget, and refuses a variant the slide does not allow. In a description, say what the layout holds and where the picture is.',
   '- removePattern (pattern).',
   '- addPattern: make a slide without a pattern into one. Values: slide, id, and optionally description.',
-  '- setManifest: settings of the whole template. Values: name, language, direction ("rtl" or "ltr"), alignOnDirectionChange ("flip" or "keep"), textScale (a factor on the body text of every deck, such as "1.3" when the template\'s body text is too small; "1" for the designed size), characterWidth (how wide PowerPoint sets a character of the template\'s text, as a share of its size, such as "0.43"; only a number the person gives, which they measured; "" has the software estimate it), leastTextSize (the least size in points of a long text a person asked to have whole, set dense on a slide the software lays out, such as "10"; other text is not held to it; "" for the size the slide\'s width allows), accent and accent2 (the template\'s main and second colour as six hex digits such as "0E7C7B", which a deck that asks for other colours replaces; "" has the software find them), keepColors ("true" keeps every deck in the template\'s own colours whatever it asks for; "false" lets decks ask again), freeSlides ("false" stops slides that the software lays out itself being planned; "true" allows them), freeBase (the id of the pattern whose frame such slides stand on; "" has the software choose).',
+  '- setManifest: settings of the whole template. Values: name, language, direction ("rtl" or "ltr"), alignOnDirectionChange ("flip" or "keep"), chartDirection ("rtl" draws the charts of a deck that reads right to left from the right, its first category on the right; "ltr" or "" draws them left to right, as many charts of time are drawn in Hebrew too), textScale (a factor on the body text of every deck, such as "1.3" when the template\'s body text is too small; "1" for the designed size), characterWidth (how wide PowerPoint sets a character of the template\'s text, as a share of its size, such as "0.43"; only a number the person gives, which they measured; "" has the software estimate it), leastTextSize (the least size in points of a long text a person asked to have whole, set dense on a slide the software lays out, such as "10"; other text is not held to it; "" for the size the slide\'s width allows), accent and accent2 (the template\'s main and second colour as six hex digits such as "0E7C7B", which a deck that asks for other colours replaces; "" has the software find them), keepColors ("true" keeps every deck in the template\'s own colours whatever it asks for; "false" lets decks ask again), freeSlides ("false" stops slides that the software lays out itself being planned; "true" allows them), freeBase (the id of the pattern whose frame such slides stand on; "" has the software choose).',
   'A change to one item of a row (card1Icon) is made to that slot of every item, so give it once.',
   "When a size, a table's columns or a row count changes, do not also set a character budget: the software measures the new one.",
   'Operations run in order, so a pattern made by copyPattern can be named by the operations after it.',
@@ -149,7 +153,7 @@ export function describeManifest(template: Template): string {
     const repeat = pattern.repeat;
     if (repeat) {
       const drawn = repeat.shapes.length;
-      lines.push(`  ${repeat.columns ? `grid of ${drawn} ${repeat.item}s, ${repeat.columns} to a line` : `row of ${drawn} ${repeat.item}s`} (${repeat.slots.join(', ')}); takes ${(repeat.min ?? drawn) === (repeat.max ?? drawn) ? `exactly ${repeat.min ?? drawn}` : `${repeat.min ?? drawn} to ${repeat.max ?? drawn}`}${repeat.widen && repeat.widen > 1 ? `; fewer on a line grow up to ${repeat.widen} times as wide` : ''}`);
+      lines.push(`  ${repeat.columns ? `grid of ${drawn} ${repeat.item}s, ${repeat.columns} to a line` : `row of ${drawn} ${repeat.item}s`} (${repeat.slots.join(', ')}); takes ${(repeat.min ?? drawn) === (repeat.max ?? drawn) ? `exactly ${repeat.min ?? drawn}` : `${repeat.min ?? drawn} to ${repeat.max ?? drawn}`}${repeat.widen && repeat.widen > 1 ? `; fewer on a line grow up to ${repeat.widen} times as wide` : ''}${repeat.spread && repeat.spread > 1 ? `; fewer lines stand up to ${repeat.spread} times as far apart` : ''}${repeat.emphasis !== undefined ? `; ${repeat.item} ${repeat.emphasis} stands out` : ''}`);
     }
     lines.push('  slots:');
     for (const slot of pattern.slots) {
@@ -165,7 +169,7 @@ export function describeManifest(template: Template): string {
   });
 
   return [
-    `Template "${manifest.name}"${manifest.language ? `, written in ${manifest.language}` : ''}, reads ${manifest.direction === 'rtl' ? 'right to left' : 'left to right'}; ${(manifest.alignOnDirectionChange ?? 'flip') === 'flip' ? 'mirrors' : 'keeps'} alignment in decks that read the other way${manifest.textScale && manifest.textScale !== 1 ? `; body text is shown at ${manifest.textScale} times its designed size` : ''}${templateTextSetting(manifest, 'characterWidth') !== undefined ? `; a character of its text is counted ${manifest.characterWidth} of its size wide` : ''}${templateTextSetting(manifest, 'leastTextSize') !== undefined ? `; a long text a person asked to have whole, set dense on a slide the software lays out, is set no smaller than ${templateTextSetting(manifest, 'leastTextSize')} pt` : ''}${manifest.colors === false ? '; every deck keeps its colours' : manifest.colors ? `; its ${[manifest.colors.accent ? `main colour is ${manifest.colors.accent}` : '', manifest.colors.accent2 ? `second colour is ${manifest.colors.accent2}` : ''].filter(Boolean).join(' and its ')}` : ''}${manifest.free === false ? '; no slides are laid out by the software' : manifest.free && manifest.free.base ? `; slides the software lays out stand on the frame of "${manifest.free.base}"` : ''}. Positions and sizes are percentages of the slide.`,
+    `Template "${manifest.name}"${manifest.language ? `, written in ${manifest.language}` : ''}, reads ${manifest.direction === 'rtl' ? 'right to left' : 'left to right'}; ${(manifest.alignOnDirectionChange ?? 'flip') === 'flip' ? 'mirrors' : 'keeps'} alignment in decks that read the other way${manifest.chartDirection === 'rtl' ? '; the charts of a deck that reads right to left are drawn from the right' : ''}${manifest.textScale && manifest.textScale !== 1 ? `; body text is shown at ${manifest.textScale} times its designed size` : ''}${templateTextSetting(manifest, 'characterWidth') !== undefined ? `; a character of its text is counted ${manifest.characterWidth} of its size wide` : ''}${templateTextSetting(manifest, 'leastTextSize') !== undefined ? `; a long text a person asked to have whole, set dense on a slide the software lays out, is set no smaller than ${templateTextSetting(manifest, 'leastTextSize')} pt` : ''}${manifest.colors === false ? '; every deck keeps its colours' : manifest.colors ? `; its ${[manifest.colors.accent ? `main colour is ${manifest.colors.accent}` : '', manifest.colors.accent2 ? `second colour is ${manifest.colors.accent2}` : ''].filter(Boolean).join(' and its ')}` : ''}${manifest.free === false ? '; no slides are laid out by the software' : manifest.free && manifest.free.base ? `; slides the software lays out stand on the frame of "${manifest.free.base}"` : ''}. Positions and sizes are percentages of the slide.`,
     ...blocks,
     unused.length > 0 ? `Slides without a pattern: ${unused.join(', ')}.` : '',
   ]
@@ -253,6 +257,7 @@ function toChange(raw: Record<string, unknown>): ManifestChange | undefined {
         maxCellChars: count('maxCellChars'),
         headerText: style('header'),
         bodyText: style('body'),
+        fill: bool('fill'),
         maxCategories: count('maxCategories'),
         maxSeries: count('maxSeries'),
       });
@@ -264,7 +269,7 @@ function toChange(raw: Record<string, unknown>): ManifestChange | undefined {
     case 'removeSlot':
       return { op, pattern, slot };
     case 'setRepeat':
-      return put({ op, pattern } as ManifestChange, { min: count('min'), max: count('max'), widen: num('widen') });
+      return put({ op, pattern } as ManifestChange, { min: count('min'), max: count('max'), widen: num('widen'), spread: num('spread'), emphasis: values.has('emphasis') && (values.get('emphasis') ?? '').trim() === '' ? null : count('emphasis') });
     case 'removeRepeat':
     case 'removePattern':
       return { op, pattern };
@@ -282,6 +287,7 @@ function toChange(raw: Record<string, unknown>): ManifestChange | undefined {
         language: str('language'),
         direction: choice('direction', ['rtl', 'ltr'] as const),
         alignOnDirectionChange: choice('alignOnDirectionChange', ['flip', 'keep'] as const),
+        chartDirection: values.get('chartDirection') === '' ? null : choice('chartDirection', ['rtl', 'ltr'] as const),
         textScale: num('textScale'),
         characterWidth: cleared('characterWidth'),
         leastTextSize: cleared('leastTextSize'),

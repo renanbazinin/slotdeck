@@ -12,18 +12,20 @@ import type { Box, SlideInfo, TemplateInfo } from './inspect.ts';
 import { widenFactor } from './manifest.ts';
 import type { PatternDef, SlotDef, TemplateManifest } from './manifest.ts';
 import { isPictogram } from './measure.ts';
-import { detectRepeat, droppedShapes, rowCapacity, rowComfort, strandedSlots } from './rows.ts';
+import { detectRepeat, droppedShapes, rowCapacity, rowComfort, standsOut, strandedSlots } from './rows.ts';
 import { rowRoom } from './measure.ts';
 
-export const SUGGESTION_KINDS = ['icon', 'row', 'row-max', 'row-widen', 'variant'] as const;
+export const SUGGESTION_KINDS = ['icon', 'row', 'row-max', 'row-widen', 'row-emphasis', 'variant'] as const;
 export type SuggestionKind = (typeof SUGGESTION_KINDS)[number];
 
 export interface ManifestSuggestion {
   /**
    * `icon`: pictures labelled photo that are pictograms. `row`: items named alike that are not a
    * row yet. `row-max`: a row with room for more items than it takes. `row-widen`: a row or grid
-   * whose items could grow to fill the line when there are fewer. `variant`: a layout the slide
-   * also allows (mirrored, text only, without an optional text).
+   * whose items could grow to fill the line when there are fewer. `row-emphasis`: a row whose
+   * slide draws one item to stand out, which a deck that reads the other way should move with its
+   * look (from 0.7.0). `variant`: a layout the slide also allows (mirrored, text only, without an
+   * optional text).
    */
   kind: SuggestionKind;
   /** The pattern the suggestion is about. */
@@ -143,6 +145,16 @@ export function suggestChanges(template: Template, options: SuggestOptions = {})
             kind: 'row-max',
             message: `The row of ${repeat.item}s in "${pattern.id}" takes up to ${most}, and the slide has room for ${comfort.most} side by side at their drawn width, with the space between them no less than a third of what the template draws.${spread}${physical > comfort.most ? ` Up to ${physical} fit when they sit closer than that.` : ''}`,
             changes: [{ op: 'setRepeat', pattern: pattern.id, max: comfort.most, ...(comfort.span ? { span: comfort.span } : {}) }],
+          });
+        }
+      }
+      if (kinds.has('row-emphasis') && repeat.emphasis === undefined) {
+        const odd = standsOut(template.pkg, slide.part, repeat.shapes);
+        if (odd !== undefined) {
+          add({
+            kind: 'row-emphasis',
+            message: `${repeat.item.charAt(0).toUpperCase()}${repeat.item.slice(1)} ${odd} of "${pattern.id}" is drawn unlike the other ${repeat.item}s. In a deck that reads the other way their texts now change places and its look stays where it is drawn, so it marks another ${repeat.item}. Marked as the one that stands out, the ${repeat.item}s change places with their looks, and it stays ${repeat.item} ${odd} for the deck's readers.`,
+            changes: [{ op: 'setRepeat', pattern: pattern.id, emphasis: odd }],
           });
         }
       }

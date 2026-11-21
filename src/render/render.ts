@@ -18,9 +18,9 @@ import {
 } from '../pptx/package.ts';
 import type { Relationship } from '../pptx/package.ts';
 import { readPresentation } from '../pptx/presentation.ts';
-import { NS, childElement, childElements, descendants, openableSizes, parseXml, removeNode, rootElement, serializeXml } from '../pptx/xml.ts';
+import { NS, childElement, childElements, descendants, openableSizes, parseXml, path, removeNode, rootElement, serializeXml } from '../pptx/xml.ts';
 import type { Element } from '../pptx/xml.ts';
-import { bodyTextScale, chartAtScale, defaultFit, effectiveSlots, itemCount, scalesWithText, slotSources, tableAtScale, templateTextSetting } from '../template/manifest.ts';
+import { bodyTextScale, chartAtScale, chartsReadRightToLeft, defaultFit, effectiveSlots, itemCount, scalesWithText, slotSources, tableAtScale, templateTextSetting } from '../template/manifest.ts';
 import type { ChartSlotDef, PatternDef, SlideBox, TemplateManifest } from '../template/manifest.ts';
 import { withLayouts } from '../template/compose.ts';
 import { readImageInfo } from '../util/image.ts';
@@ -31,12 +31,17 @@ import { said } from '../messages/en.ts';
 import { inheritedBackground, ownBackground, ownTheBackground, paletteOf, recolorChart, recolorDefaults, recolorIcon, recolorInherited, recolorSlide, schemeOf } from '../color/recolor.ts';
 import { contrast } from '../color/space.ts';
 import { CHART_CONTENT_TYPE, CHART_REL_TYPE, WORKBOOK_CONTENT_TYPE, WORKBOOK_REL_TYPE, buildChartWorkbook, buildChartXml, chartFrameXml } from './chart.ts';
+import { chartAlt, tableAlt } from './alt.ts';
+import { writeProperties } from './properties.ts';
+import type { DeckProperties } from './properties.ts';
 import { setPicture } from './picture.ts';
 import type { PictureFill } from './picture.ts';
-import { fitTable, setTable } from './table.ts';
+import { fitTable, numberAligns, setTable, tableArea } from './table.ts';
 import { applyRepeat, moveShape, placeShape, rowTextIds } from './repeat.ts';
+import { dropLeftovers, keptUnnamed } from './leftovers.ts';
 import type { FontMetrics } from '../text/fonts.ts';
 import { measurerFor } from '../text/measure.ts';
+import { lineRoomOf } from '../text/wide.ts';
 import { adjustText, setHeadings, setShapeText, setTextSizes } from './text.ts';
 import { headingPlaces } from '../deck/headings.ts';
 import type { TextOptions, WritingOptions } from './text.ts';
@@ -79,6 +84,14 @@ export interface RenderOptions {
    * `adaptive`: optional slots may be left out, and their shapes are removed.
    */
   layout?: LayoutMode;
+  /**
+   * Writes what the file says of itself, as a deck and not as its template: its title, language,
+   * author and date, its number of slides, and the version of slotdeck that made it; the
+   * template's picture of its cover, which Outlook and Explorer show, is taken out. `embedDeck`
+   * keeps the deck in the file (see `readEmbeddedDeck`). Left out, the file keeps the template's
+   * properties, as before 0.7.0, and is the same file. `generateDeck` and the chat tools set it.
+   */
+  properties?: DeckProperties;
 }
 
 export interface RenderResult {
@@ -113,7 +126,7 @@ export function renderDeck(template: Template, deck: DeckSpec, options: RenderOp
 
   // A template loaded with fonts measures its text: warnings are in lines, and text may be shrunk to fit.
   const measure = measurerFor(template);
-  const issues = checkDeck(manifest, deck, measure ? { layout, assets: Object.keys(assets), measure } : { layout, assets: Object.keys(assets) }, freeOf);
+  const issues = checkDeck(manifest, deck, { layout, assets: Object.keys(assets), lines: lineRoomOf(template.pkg), ...(measure ? { measure } : {}) }, freeOf);
   const errors = issues.filter((issue) => issue.severity === 'error');
   if (errors.length > 0) throw new DeckValidationError(errors);
   const shrunk: RenderResult['shrunk'] = [];
@@ -127,6 +140,8 @@ export function renderDeck(template: Template, deck: DeckSpec, options: RenderOp
   // The direction and language filled text is written in: see filledLanguage in text.ts.
   const language = deck.language ?? manifest.language;
   const writing: WritingOptions = { direction: deck.direction ?? manifest.direction, templateDirection: manifest.direction, ...(language ? { language } : {}) };
+  // Charts read right to left only where the deck or the template says so.
+  const chartsMirrored = chartsReadRightToLeft(manifest, deck);
 
   const firstSlide = pres.slides[0];
   if (!firstSlide) throw new Error('The template has no slides');
@@ -193,8 +208,8 @@ ${colors?.key}` : assetId;
       chartPart = `${partsDir}charts/chart${chartCount}.xml`;
       workbookPart = `${partsDir}embeddings/Microsoft_Excel_Sheet${chartCount}.xlsx`;
     } while (out.has(chartPart) || out.has(workbookPart));
-    out.write(workbookPart, buildChartWorkbook(chart));
-    out.write(chartPart, openableSizes(buildChartXml(chart, slot, 'rId1', deck.direction ?? manifest.direction)));
+    out.write(workbookPart, buildChartWorkbook(chart, { rightToLeft: chartsMirrored }));
+    out.write(chartPart, openableSizes(buildChartXml(chart, slot, 'rId1', writing.direction, { mirrored: chartsMirrored, ...(language ? { language } : {}) })));
     writeRels(out, chartPart, [{ id: 'rId1', type: WORKBOOK_REL_TYPE, target: relativeTarget(chartPart, workbookPart), external: false }]);
     types.setOverride(chartPart, CHART_CONTENT_TYPE);
     types.ensureDefault('xlsx', WORKBOOK_CONTENT_TYPE);
@@ -213,6 +228,8 @@ ${colors?.key}` : assetId;
     return shapes.get(shapeId);
   };
   const usedSlideParts = new Set<string>();
+  /** Where each picture of the deck stands, by slide and shape: what a deck kept in its file names its pictures by. */
+  const placed: Array<{ asset: string; slide: number; shape: string; recolored: boolean }> = [];
 
   const newSlideParts: string[] = [];
   deck.slides.forEach((slide, index) => {
@@ -234,7 +251,7 @@ ${colors?.key}` : assetId;
     let rels = readRels(source, sourceSlide.part).filter((rel) => !isRelType(rel, 'notesSlide'));
     const part = `${slideDir}/slide${number}.xml`;
     // A row of items is first brought to the number the slide asks for; the shapes it copies get new ids.
-    if (pattern.repeat) applyRepeat(indexShapes(root), pattern.repeat, itemCount(pattern, slide.items), pres.slideWidth, rowTextIds(pattern));
+    if (pattern.repeat) applyRepeat(indexShapes(root), pattern.repeat, itemCount(pattern, slide.items), pres.slideWidth, rowTextIds(pattern), directionChanged);
     const shapes = indexShapes(root);
     const sources = slotSources(pattern, directionChanged, slide.items);
     const textScale = bodyTextScale(template.manifest, deck.textScale);
@@ -297,6 +314,8 @@ ${colors?.key}` : assetId;
         rels.push({ id: relId, type: IMAGE_REL_TYPE, target: relativeTarget(part, image.part), external: false });
         const fill: PictureFill = { relId, width: image.info.width, height: image.info.height, fit: defaultFit(slot) };
         if (action.image.alt !== undefined) fill.alt = action.image.alt;
+        // A pictogram that no one described is decoration to a screen reader, not an unnamed picture.
+        if (slot.imageKind === 'icon') fill.decorative = true;
         if (slot.box) {
           fill.area = {
             x: slot.box.x * pres.slideWidth,
@@ -306,12 +325,22 @@ ${colors?.key}` : assetId;
           };
         }
         setPicture(shape, fill);
+        // A pictogram in other colours is not the picture the deck names; it stands in for it where nothing else does.
+        placed.push({ asset: action.image.asset, slide: number, shape: slot.shapeId, recolored: media.get(action.image.asset) !== image });
       } else if (action.type === 'table' && slot.kind === 'table') {
         // The colours of its text are written onto the slide, and change with the slide below.
         const box = (slot as { box?: SlideBox }).box;
         // A table of a free slide states its sizes itself and takes the box it was given.
         const planned = slot as { rowHeights?: number[]; columnWidths?: number[]; columnAligns?: Array<'l' | 'r' | undefined> };
-        setTable(shape, action.table, tableAtScale(slot, textScale), deck.direction ?? manifest.direction, box ? planned.columnAligns : undefined, writing.language);
+        // A table that fills its frame takes the area its sample takes, and sets its columns of numbers as a free slide's are set.
+        const frameArea = !box && slot.fill ? tableArea(shape) : undefined;
+        const sampleRows = frameArea ? descendants(shape, NS.a, 'tr').length : 0;
+        const aligns = box ? planned.columnAligns : frameArea ? numberAligns(action.table, writing.direction ?? 'ltr') : undefined;
+        setTable(shape, action.table, tableAtScale(slot, textScale), deck.direction ?? manifest.direction, aligns, writing);
+        // What a screen reader says of it: its headings and how many rows it has.
+        path(shape, [NS.p, 'nvGraphicFramePr'], [NS.p, 'cNvPr'])?.setAttribute('descr', tableAlt(action.table, language, writing.direction));
+        // Its rows share the frame as the sample's rows do: a heading drawn lower than the rows stays lower.
+        if (frameArea && action.table.rows.length + 1 < sampleRows) fitTable(shape, frameArea, descendants(shape, NS.a, 'tr').map((row) => Number(row.getAttribute('h')) || 1), undefined, { keepMargins: true });
         // Rows whose cells take more lines than their neighbours' are higher, and columns are as wide as what is written in them asks, as the plan worked out.
         if (box) fitTable(shape, { x: box.x * pres.slideWidth, y: box.y * pres.slideHeight, cx: box.w * pres.slideWidth, cy: box.h * pres.slideHeight }, planned.rowHeights, planned.columnWidths);
       } else if (action.type === 'chart' && slot.kind === 'chart') {
@@ -330,7 +359,7 @@ ${colors?.key}` : assetId;
         const chartPart = addChart(action.chart, colors && palette ? recolorChart(sized, colors.map, palette, pageOf()) : sized);
         const relId = nextRelId(rels);
         rels.push({ id: relId, type: CHART_REL_TYPE, target: relativeTarget(part, chartPart), external: false });
-        const alt = `${action.chart.type} chart: ${action.chart.series.map((series) => series.name).filter(Boolean).join(', ')}`;
+        const alt = chartAlt(action.chart, language, writing.direction);
         const frame = doc.importNode(rootElement(parseXml(chartFrameXml(slot.shapeId, relId, area, alt))), true);
         parent.replaceChild(frame, shape);
       }
@@ -353,10 +382,13 @@ ${colors?.key}` : assetId;
       recolorSlide(root, colors.map, schemeOf(source, sourceSlide.part), inherited?.surface ?? inherited?.color, deckColors?.map);
     }
 
-    // Images that were replaced leave relationships nobody uses; drop them so their media can go too.
+    // What the template's sample brought along goes: its add-ins' data, animations of shapes that
+    // are gone. Then the slide keeps its layout, what it still points at, and what a part it shows
+    // needs without naming it (a diagram's drawing): pictures that were replaced, the sample's
+    // links, its comments and its add-ins' tags are left behind, and so are their parts.
+    dropLeftovers(root);
     const used = usedRelationshipIds(root);
-    // A free slide keeps nothing of what its base slide showed: only what its own shapes point at.
-    rels = rels.filter((rel) => (free ? isRelType(rel, 'slideLayout') || used.has(rel.id) : !isRelType(rel, 'image') || used.has(rel.id)));
+    rels = rels.filter((rel) => isRelType(rel, 'slideLayout') || used.has(rel.id) || keptUnnamed(rel.type, root, free !== undefined));
 
     out.write(part, openableSizes(serializeXml(doc)));
     writeRels(out, part, rels);
@@ -403,6 +435,8 @@ ${colors?.key}` : assetId;
 
   out.write(pres.part, serializeXml(presDoc));
   writeRels(out, pres.part, presRels);
+
+  if (options.properties) writeProperties(out, types, pres.part, deck, newSlideParts.length, options.properties, { language: manifest.language }, placed);
 
   pruneUnreachable(out, types);
   types.save(out);

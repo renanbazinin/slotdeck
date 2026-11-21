@@ -30,6 +30,35 @@ function renderDeck(template: Template, deck: DeckSpec, options?: RenderOptions)
 
 Deck JSON to pptx bytes. Synchronous, no model. Throws `DeckValidationError` when the deck has errors.
 
+With `options.properties` (from 0.7.0) the file says what it is as a deck, not as its template: a title (the
+given one, else the deck's `title`, else its first slide's title), a language, an author and a date where they
+are given, its real number of slides, and the version of slotdeck that made it as the custom property
+`slotdeck`. The template's own title, author, dates, its lists of sample slide titles and its picture of its
+cover, which Outlook and Explorer show for the file, are taken out; its other custom properties, such as a
+label of how confidential it is, stay. A date is written only where it is given, so that the same deck gives
+the same file. Without the option the file keeps the template's properties and is the same file as before
+0.7.0. `generateDeck`, `editDeck` and the chat tools set it unless their `properties` is `false`.
+
+### `readEmbeddedDeck`
+
+```ts
+function readEmbeddedDeck(pptx: Uint8Array): EmbeddedDeck | undefined;
+interface EmbeddedDeck { deck: DeckSpec; version: string; assets: Record<string, Uint8Array> }
+```
+
+Takes out of a pptx the deck that `renderDeck` kept in it with `properties: { embedDeck: true }`, the version
+of slotdeck that made the file, and the bytes of its pictures by asset id: `renderDeck(template, found.deck,
+{ assets: found.assets })` renders it again. The deck kept has no `brief` and no `document`. `undefined` for a
+file that keeps none; PowerPoint keeps it when the file is saved again. Throws for bytes that are no pptx.
+
+### `SLOTDECK_VERSION`
+
+```ts
+const SLOTDECK_VERSION: string; // '0.7.0'
+```
+
+The version of the package, as a file rendered with `properties` states it.
+
 ### `validateDeck`
 
 ```ts
@@ -90,7 +119,14 @@ Tell the kinds of slot value apart when walking a deck.
 interface Template { pkg: PptxPackage; manifest: TemplateManifest; fonts?: FontMetrics }
 interface TemplateOptions { fonts?: FontMetrics }
 
-interface RenderOptions { assets?: Record<string, Uint8Array>; layout?: LayoutMode }
+interface RenderOptions { assets?: Record<string, Uint8Array>; layout?: LayoutMode; properties?: DeckProperties }
+interface DeckProperties {
+  title?: string;        // left out: the deck's title, else its first slide's
+  language?: string;     // left out: the deck's, else the template's
+  author?: string;       // left out: no one is named
+  date?: Date | string;  // left out: no date, so the same deck gives the same file
+  embedDeck?: boolean;   // keeps the deck in the file, for readEmbeddedDeck
+}
 interface RenderResult {
   pptx: Uint8Array;
   warnings: Issue[];
@@ -115,6 +151,7 @@ interface DeckSpec {
   brief?: string;
   language?: string;
   direction?: Direction;
+  chartDirection?: Direction;   // the direction its charts read; left out, the manifest's for a deck that reads right to left
   fields?: Record<string, string>;
   textScale?: number;
   layouts?: PatternDesign[];    // layouts made for this deck, built onto the template when it is rendered
@@ -147,7 +184,7 @@ type ChartType = 'column' | 'bar' | 'line' | 'pie';
 interface ChartValue {
   type: ChartType;
   categories: string[];
-  series: Array<{ name: string; values: number[] }>;
+  series: Array<{ name: string; values: Array<number | null> }>; // null: a value that is not known, drawn as a gap
   format?: 'number' | 'percent';
 }
 ```
@@ -240,6 +277,10 @@ in JSON.
 | `chart-over-series` | `series`, `most` | A chart over the slot's series. |
 | `chart-format-unknown` | `format` | A chart format that is not `number` or `percent`. |
 | `chart-values-unstated` | `numbers`, `count` | Chart values the brief does not state (planner only). |
+| `text-details-unstated` | `details`, `count` | From 0.7.0: email or web addresses, phone numbers, "24/7" or percentages in a slide's text that the brief, the document and the deck's fields do not give (planner only). |
+| `word-wider-than-line` | `word`, `chars` | From 0.7.0, without fonts: a word no line of its box holds (an address, a long number), which PowerPoint breaks inside it. |
+| `text-stand-in` | `found` | From 0.7.0: text that stands where a value belongs, such as "XX%", "[name]" or "TBD" (planner only). |
+| `text-about-slide` | `found` | From 0.7.0: text that speaks about the slide ("this slide", "בשקף זה") where it should say its content (planner only). |
 | `text-orphan` | `lines`, `word`, `chars` | A heading ends with one word on its last line (`checkDesign`). |
 | `text-empty` | `lines`, `sampleLines?` or `capacity?`, `chars` | Text leaves its box almost empty (`checkDesign`). |
 | `row-uneven` | `lines`, `beside`, `besideLines`, `chars` | A card holds far less than the one beside it (`checkDesign`). |
@@ -529,6 +570,7 @@ type ImageDensity = 'none' | 'low' | 'medium' | 'high';
 
 interface PlanOptions {
   llm: LlmProvider;
+  delivery?: 'present' | 'read'; // from 0.7.0: 'read' for decks read on their own: full sentences, no thank-you slide
   layout?: LayoutMode;
   icons?: IconDef[];
   assets?: AssetDef[];
@@ -626,12 +668,14 @@ interface GenerateOptions extends Omit<PlanOptions, 'onProgress'> {
   cache?: Map<string, Uint8Array>;
   imageConcurrency?: number;
   onProgress?: (event: GenerateProgress) => void;
+  properties?: DeckProperties | false; // what the file says of itself (RenderOptions.properties); set unless false
 }
 interface EditDeckOptions extends Omit<EditOptions, 'onProgress'> {
   images?: ImageProvider;
   cache?: Map<string, Uint8Array>;
   imageConcurrency?: number;
   onProgress?: (event: GenerateProgress) => void;
+  properties?: DeckProperties | false; // what the file says of itself (RenderOptions.properties); set unless false
 }
 type GenerateProgress = PlanProgress | { stage: 'images'; done: number; total: number } | { stage: 'render' };
 
@@ -830,6 +874,7 @@ interface PresentationToolsOptions {
   assets?: AssetDef[];
   layout?: LayoutMode;
   fields?: Record<string, string>;
+  properties?: DeckProperties | false; // what a presentation's file says of itself (RenderOptions.properties); set unless false
   numberPatterns?: 'from-brief' | 'always' | 'never';
   review?: DeckReview; // a second look at every draft the tools write
   composeLayouts?: number; // new layouts for a new plan, as for planOutline; none while free slides are on offer
@@ -845,6 +890,7 @@ interface PresentationToolsOptions {
 }
 interface PresentationTools {
   definitions: ToolDefinition[];
+  instructions: string; // from 0.7.0: lines for the chat model's system prompt, made from the same options; see chat-tools.md
   call(name: string, args: unknown, context?: ToolCallContext): Promise<ToolResult>;
 }
 interface ToolCallContext {
@@ -887,8 +933,20 @@ const GEMINI_DEVELOPER_ENDPOINT: string;
 ```ts
 class GeminiError extends Error {
   readonly status: number | undefined;
+  readonly retryAfterMs: number | undefined; // from 0.7.0: the wait the service asked for
+  readonly timedOut: boolean;                // from 0.7.0: no answer within timeoutMs
 }
 ```
+
+### `retryDelay`
+
+```ts
+function retryDelay(error: unknown, attempt: number, random?: () => number): number | undefined;
+```
+
+From 0.7.0. How long to wait, in milliseconds, before trying a model call again that failed with `error` on try
+number `attempt` (from 1), as the Gemini adapters wait; `undefined` where another try is not worth it (a bad
+request or key, a spending cap or a daily quota, a stop). See `retries` in [providers.md](providers.md).
 
 ### Types
 
@@ -915,6 +973,8 @@ interface GeminiOptions {
   headers?: Record<string, string> | (() => Record<string, string> | Promise<Record<string, string>>);
   fetch?: typeof fetch;
   timeoutMs?: number;
+  retries?: number;    // from 0.7.0: tries after a passing failure; default 2
+  deadlineMs?: number; // from 0.7.0: the most a call takes, its tries and waits together
   thinkingLevel?: 'minimal' | 'low' | 'medium' | 'high';
   maxOutputTokens?: number;
 }
@@ -925,6 +985,8 @@ interface GeminiImageOptions {
   headers?: Record<string, string> | (() => Record<string, string> | Promise<Record<string, string>>);
   fetch?: typeof fetch;
   timeoutMs?: number;
+  retries?: number;    // from 0.7.0: tries after a passing failure; default 2
+  deadlineMs?: number; // from 0.7.0: the most a call takes, its tries and waits together
   imageSize?: '512' | '1K' | '2K' | '4K';
   style?: string;
 }
@@ -1025,7 +1087,7 @@ not exist. See [template-studio.md](template-studio.md).
 
 ```ts
 function suggestChanges(template: Template, options?: SuggestOptions): ManifestSuggestion[];
-const SUGGESTION_KINDS: readonly ['icon', 'row', 'row-max', 'row-widen', 'variant'];
+const SUGGESTION_KINDS: readonly ['icon', 'row', 'row-max', 'row-widen', 'row-emphasis', 'variant'];
 type SuggestionKind = (typeof SUGGESTION_KINDS)[number];
 
 interface SuggestOptions {
@@ -1135,7 +1197,7 @@ interface ManifestIssue { severity: 'error' | 'warning'; pattern?: string; slot?
 interface SampleOptions { fill?: number; items?: 'drawn' | 'max' | 'min'; fit?: 'budget' | 'box' }
 
 type ManifestChange =
-  | { op: 'setManifest'; name?: string; language?: string; direction?: Direction; alignOnDirectionChange?: AlignPolicy; textScale?: number | null; characterWidth?: number | null; leastTextSize?: number | null; colors?: { accent?: string | null; accent2?: string | null } | false | null; free?: boolean | null | { base?: string | null; styles?: Record<string, { slide: number; shape: string } | null> } }
+  | { op: 'setManifest'; name?: string; language?: string; direction?: Direction; alignOnDirectionChange?: AlignPolicy; chartDirection?: Direction | null; textScale?: number | null; characterWidth?: number | null; leastTextSize?: number | null; colors?: { accent?: string | null; accent2?: string | null } | false | null; free?: boolean | null | { base?: string | null; styles?: Record<string, { slide: number; shape: string } | null> } }
   | { op: 'addPattern'; slide: number; id: string; description?: string }
   | { op: 'copyPattern'; pattern: string; id: string; description?: string }
   | { op: 'derivePattern'; pattern: string; variant: PatternVariant; slot?: string; id?: string; description?: string }
@@ -1144,7 +1206,7 @@ type ManifestChange =
   | { op: 'addSlot'; pattern: string; shape: string; role: Role; name?: string; optional?: boolean }
   | { op: 'removeSlot'; pattern: string; slot: string }
   | ({ op: 'setSlot'; pattern: string; slot: string } & SlotPatch)
-  | { op: 'setRepeat'; pattern: string; min?: number; max?: number; item?: string; span?: { left: number; right: number } | null; widen?: number | null }
+  | { op: 'setRepeat'; pattern: string; min?: number; max?: number; item?: string; span?: { left: number; right: number } | null; widen?: number | null; emphasis?: number | null; spread?: number | null }
   | { op: 'removeRepeat'; pattern: string };
 
 interface SlotPatch {
@@ -1167,6 +1229,7 @@ interface SlotPatch {
   maxCellChars?: number;
   headerText?: TableTextStyle | null;
   bodyText?: TableTextStyle | null;
+  fill?: boolean | null;
   maxCategories?: number;
   maxSeries?: number;
   colors?: string[] | null;
@@ -1517,6 +1580,7 @@ interface TemplateManifest {
   language?: string;
   direction: Direction;
   alignOnDirectionChange?: AlignPolicy;
+  chartDirection?: Direction; // 'rtl' draws the charts of a deck that reads right to left from the right
   textScale?: number; // enlarges body text in every deck made from the template
   characterWidth?: number; // how wide PowerPoint sets a character of its running text, as a share of its size, measured (0.3 to 0.8); free slides count their running text with it, and from 0.6.8 a layout's slots of paragraphs what their writers are told
   leastTextSize?: number; // the least size, in points, of a long text set dense on a free slide (5 to 24, up to a half point); left out, by the slide's width
@@ -1543,6 +1607,8 @@ interface RepeatDef {
   span?: { left: number; right: number };
   columns?: number;
   widen?: number; // fewer items on a line than drawn grow up to this factor to fill the row
+  emphasis?: number; // the item the slide draws to stand out; a deck that reads the other way moves the items with their looks
+  spread?: number; // fewer lines than drawn stand up to this factor further apart, within the area they are drawn in
 }
 type SlotDef = TextSlotDef | ImageSlotDef | TableSlotDef | ChartSlotDef;
 
@@ -1586,6 +1652,7 @@ interface TableSlotDef {
   maxCellChars?: number;
   headerText?: TableTextStyle;
   bodyText?: TableTextStyle;
+  fill?: boolean; // with fewer rows than the sample, the table still fills its frame; numbers end on the right
 }
 interface ChartSlotDef {
   kind: 'chart';

@@ -15,6 +15,13 @@ export interface DeckSpec {
   language?: string;
   /** Reading direction of the deck. Defaults to the template's. */
   direction?: Direction;
+  /**
+   * The direction the deck's charts read: `rtl` puts the first category of columns and lines on
+   * the right, with their value axis, and grows horizontal bars from the right. Left out, the
+   * template's `chartDirection` where the deck reads right to left, and left to right otherwise.
+   * A pie is drawn as it is. From 0.7.0.
+   */
+  chartDirection?: Direction;
   /** Values shared by every slide, e.g. the header text. */
   fields?: Record<string, string>;
   /** Size of body text as a factor on the template's: 1 as designed, 1.25 large, 1.5 extra large. */
@@ -171,8 +178,12 @@ export interface ChartValue {
   type: ChartType;
   /** Labels along the axis, or the names of the pie slices. */
   categories: string[];
-  /** One or more series, each with one value per category. A pie takes exactly one. */
-  series: Array<{ name: string; values: number[] }>;
+  /**
+   * One or more series, each with one value per category. A pie takes exactly one. `null` is a
+   * value that is not known: the chart leaves a gap there (no bar, no point, an empty cell in its
+   * data), where 0 would tell the reader it was nothing. From 0.7.0; before, it was drawn as 0.
+   */
+  series: Array<{ name: string; values: Array<number | null> }>;
   /** `percent` shows values with a percent sign (45 is shown as 45%). */
   format?: 'number' | 'percent';
 }
@@ -195,6 +206,9 @@ export function isTableValue(value: unknown): value is TableValue {
   const table = value as TableValue;
   return Array.isArray(table.header) && Array.isArray(table.rows) && table.rows.every((row) => Array.isArray(row));
 }
+
+/** The values of a chart that are known: a value that is not (`null`) has no bar, no point and no number. */
+export const knownValues = (chart: Pick<ChartValue, 'series'>): number[] => chart.series.flatMap((series) => series.values.filter((value): value is number => typeof value === 'number'));
 
 export function isChartValue(value: unknown): value is ChartValue {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;

@@ -10,6 +10,11 @@ export interface PictureFill {
   /** `cover` crops the image to the frame; `contain` shrinks the frame to the image. */
   fit: 'cover' | 'contain';
   alt?: string;
+  /**
+   * The picture is decoration, which a screen reader passes over, where it has no alternative text:
+   * a pictogram beside a heading says nothing the heading does not. Office's own mark for it.
+   */
+  decorative?: boolean;
   /** Area the picture may use, in slide units (EMU), replacing the sample picture's own frame. */
   area?: { x: number; y: number; cx: number; cy: number };
 }
@@ -103,7 +108,35 @@ export function setPicture(pic: Element, fill: PictureFill): void {
   if (props) {
     props.removeAttribute('title');
     props.setAttribute('descr', fill.alt ?? '');
+    setDecorative(props, fill.decorative === true && !fill.alt);
   }
+}
+
+/** The extension by which Office marks a picture as decoration (Alt Text > Mark as decorative). */
+const DECORATIVE_URI = '{C183D7F6-B498-43B3-948B-1728B52AA6E4}';
+const NS_DECORATIVE = 'http://schemas.microsoft.com/office/drawing/2017/decorative';
+
+/** Marks a shape's properties as decoration, or takes the mark away: a picture with words to say is no decoration. */
+function setDecorative(props: Element, decorative: boolean): void {
+  const doc = props.ownerDocument;
+  const prefix = props.lookupPrefix(NS.a) ?? 'a';
+  let list: Element | undefined = childElement(props, NS.a, 'extLst') ?? undefined;
+  for (const extension of list ? childElements(list, NS.a, 'ext') : []) if (extension.getAttribute('uri') === DECORATIVE_URI) removeNode(extension);
+  if (list && childElements(list).length === 0) {
+    removeNode(list);
+    list = undefined;
+  }
+  if (!decorative || !doc) return;
+  if (!list) {
+    list = doc.createElementNS(NS.a, `${prefix}:extLst`);
+    props.appendChild(list);
+  }
+  const extension = doc.createElementNS(NS.a, `${prefix}:ext`);
+  extension.setAttribute('uri', DECORATIVE_URI);
+  const mark = doc.createElementNS(NS_DECORATIVE, 'adec:decorative');
+  mark.setAttribute('val', '1');
+  extension.appendChild(mark);
+  list.appendChild(extension);
 }
 
 /**

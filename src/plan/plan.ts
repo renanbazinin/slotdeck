@@ -1,5 +1,5 @@
 import { parseHex } from '../color/space.ts';
-import { unstatedChartValues } from '../deck/numbers.ts';
+import { unstatedChartValues, unstatedDetails } from '../deck/numbers.ts';
 import { DeckValidationError } from '../deck/validate.ts';
 import type { Issue, LayoutMode } from '../deck/validate.ts';
 import { FREE_PATTERN } from '../deck/spec.ts';
@@ -100,7 +100,7 @@ import { composeForPlan, usedLayouts } from './layouts.ts';
 import type { ComposeLayoutsResult } from './layouts.ts';
 import type { DeckReview } from './review.ts';
 import { cleanText, describeParts, suppliesText, systemPrompt, writeSlides, writtenApart } from './write.ts';
-import type { WriteJob } from './write.ts';
+import type { Delivery, WriteJob } from './write.ts';
 import { isRtlLanguage } from '../util/language.ts';
 
 /** What the person asked for. */
@@ -165,6 +165,13 @@ export type PlanProgress =
 
 export interface PlanOptions {
   llm: LlmProvider;
+  /**
+   * How the decks are used: `present` (the default) for slides a speaker presents, in short phrases;
+   * `read` for decks that are mailed and read on their own: full sentences, no closing slide of
+   * thanks or questions, and an agenda only in a deck of more than ten slides. Set it once for an
+   * app whose decks are read. From 0.7.0.
+   */
+  delivery?: Delivery;
   /**
    * Whether a writer of a template's slot of paragraphs is told what its box holds with the
    * template's own spacing counted (the default), or its stored budget, as 0.6.7 told it. The
@@ -791,7 +798,7 @@ export async function planOutline(template: Template, brief: Brief, options: Pla
   const own = doc && rooms ? Math.max(1, Math.ceil(doc.chars / rooms.target)) : 0;
   const count = given ?? (doc ? { min: 1, max: Math.min(MOST_DOCUMENT_SLIDES, Math.max(10, own + 4)) } : { min: 6, max: 10 });
   // Choosing a pattern for each slide needs little reasoning, and is much quicker with little.
-  const ask = asker(options.llm, systemPrompt(language, 'brief', doc !== undefined), options.signal, 'low');
+  const ask = asker(options.llm, systemPrompt(language, 'brief', doc !== undefined, options.delivery), options.signal, 'low');
   const reading: FreeAnswer | undefined = free ? { ...freeReading(free.kinds, context), offered: true } : undefined;
   const passages = doc?.passages.length;
   const asksCount = brief.slideCount === undefined;
@@ -1669,7 +1676,7 @@ export async function editPlan(
     required: ['summary', 'language', 'title', 'slides', ...Object.keys(more)],
   };
 
-  const ask = asker(options.llm, systemPrompt(language, 'brief', doc !== undefined), options.signal, 'low');
+  const ask = asker(options.llm, systemPrompt(language, 'brief', doc !== undefined, options.delivery), options.signal, 'low');
   // An edit may add slides, so the room is for a plan somewhat longer than the one it starts from.
   // Where slides name their parts, that is a little more for each slide, and for each run of parts
   // the plan has; where they name their passages, a little more again.
@@ -1957,7 +1964,7 @@ export async function writeDeck(loaded: Template, plan: DeckPlan, options: PlanO
     }
     return { number, pattern: asked(pattern), purpose: entry.purpose, ...passage };
   });
-  const system = systemPrompt(language, 'brief', doc !== undefined);
+  const system = systemPrompt(language, 'brief', doc !== undefined, options.delivery);
   // A text written well short of the length asked for it goes back once, with the first answer's
   // problems, and so does a slide that keeps too few of the words of its text from the document.
   // The issues that send them are the writer's alone: the deck is told after the last answer.
@@ -2018,7 +2025,7 @@ export async function writeDeck(loaded: Template, plan: DeckPlan, options: PlanO
   const issues = draft.issues.filter((issue) => !sent.has(issue));
   const shortWritten = writtenUnder(draft.deck, told).map((under) => writtenShort(under, language));
   const keptLeft = doc ? keptWarnings(doc, kept, draft.deck) : [];
-  return { deck: draft.deck, warnings: [...issues, ...unstatedChartValues(template.manifest, draft.deck), ...short, ...keptLeft, ...shortWritten], outline: plan.slides };
+  return { deck: draft.deck, warnings: [...issues, ...unstatedChartValues(template.manifest, draft.deck), ...unstatedDetails(draft.deck), ...short, ...keptLeft, ...shortWritten], outline: plan.slides };
 }
 
 /** Brief to deck spec in one go: {@link planOutline}, then {@link writeDeck}. */

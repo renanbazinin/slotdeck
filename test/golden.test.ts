@@ -136,6 +136,19 @@ const changedSince: Record<string, { version: string; change: string; parts: str
   // changes, lang="he-IL" to lang="en-US"; the rest of the file is as 0.5.2 wrote it.
   'fixture rtl': { version: '0.6.5', change: 'English text in a run the template marks Hebrew is marked English', parts: 'cd85de46fd310f5c' },
   'fixture ltr': { version: '0.6.5', change: 'English text in a run the template marks Hebrew is marked English', parts: '87d825a0520d2578' },
+  // From 0.7.0 a file says more to a screen reader: a chart its values (descr="column chart: 2024,
+  // 2025" becomes "Column chart. 2024: Apr-May 5, ..."), a table its headings and rows ("Table:
+  // Station, Docks, ...; 4 rows"), and an icon no one described is marked as decoration (Office's
+  // adec:decorative). The rest of each file is as 0.5.2 wrote it.
+  'patterns.en.deck.json': { version: '0.7.0', change: 'charts, tables and icons say what they are to a screen reader', parts: 'b15eba1cb9450356' },
+  'patterns.en.deck.json textScale 1.25': { version: '0.7.0', change: 'charts, tables and icons say what they are to a screen reader', parts: 'df3d1d0f6ab74ac0' },
+  'showcase rescue-dog': { version: '0.7.0', change: 'charts, tables and icons say what they are to a screen reader', parts: '0dc60e679d813a38' },
+  'sampleDeck demo min': { version: '0.7.0', change: 'charts, tables and icons say what they are to a screen reader', parts: 'e8c4071600eeaf69' },
+  'sampleDeck demo max': { version: '0.7.0', change: 'charts, tables and icons say what they are to a screen reader', parts: 'feb7b641500d4ff2' },
+  'fixture table': { version: '0.7.0', change: 'a table says its headings and rows to a screen reader', parts: '2b4e43e5a7ba7025' },
+  // The same in Hebrew ("תרשים עמודות. 2024: אפריל-מאי 5, ..."), and the chart's text, whose names
+  // are Hebrew, is marked he-IL where it was marked en-US.
+  'patterns.he.deck.json': { version: '0.7.0', change: 'charts, tables and icons say what they are to a screen reader, in Hebrew, and Hebrew chart text is marked Hebrew', parts: '88ba9a5206373d9e' },
 };
 
 test('the fixture holds the decks rendered here, and no other', () => {

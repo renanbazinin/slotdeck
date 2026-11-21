@@ -8,8 +8,10 @@ import { NS, childElement, descendants, parseXml, path, rootElement } from '../s
 import type { Element } from '../src/pptx/xml.ts';
 import type { ShapeInfo, SlideInfo } from '../src/template/inspect.ts';
 import type { RepeatDef } from '../src/template/manifest.ts';
-import { movedRowSlots, rowCapacity, rowComfort } from '../src/template/rows.ts';
-import { buildFixturePptx, card, cardsManifest, fixtureManifest, fixtureWithSlide, fixtureWithTextCards } from './fixture.ts';
+import { movedRowSlots, rowCapacity, rowComfort, standsOut } from '../src/template/rows.ts';
+import { buildFixturePptx, card, cardsManifest, fixtureManifest, fixtureWithSlide, fixtureWithTextCards, gridManifest } from './fixture.ts';
+import { applyRepeat } from '../src/render/repeat.ts';
+import { indexShapes } from '../src/render/render.ts';
 
 /** A slide with a title and one text box per item, given as left edge and width in fractions of the slide. */
 function slideOf(items: Array<[x: number, w: number]>, more: Array<Partial<ShapeInfo> & { id: string }> = [], titleX = 0.05): SlideInfo {
@@ -354,4 +356,101 @@ test('a slot whose shape lies in an item is part of the row when every item has 
   assert.equal(last.repeat, undefined);
   assert.match(last.reason, /has no row of like items/);
   assert.deepEqual(suggestChanges(loadTemplate(pptx, last.manifest), { kinds: ['row'] }), []);
+});
+
+test('a row whose slide draws one item to stand out moves its items in a deck that reads the other way, and keeps it first for its readers', () => {
+  // The fixture's row of cards, first at the right, with the first card's text on green.
+  const green = fixtureWithSlide(4, (xml) =>
+    xml.replace(/(<p:cNvPr id="11" name="Card text"\/>[\s\S]*?<\/a:xfrm>)(<\/p:spPr>)/, '$1<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="00A252"/></a:solidFill>$2'),
+  );
+  const shapes = cardsManifest.patterns.find((pattern) => pattern.id === 'cards')?.repeat?.shapes ?? [];
+  assert.equal(standsOut(PptxPackage.load(green), 'ppt/slides/slide4.xml', shapes), 1);
+  assert.equal(standsOut(PptxPackage.load(buildFixturePptx()), 'ppt/slides/slide4.xml', shapes), undefined, 'cards alike');
+  assert.equal(standsOut(PptxPackage.load(green), 'ppt/slides/slide4.xml', shapes.slice(0, 2)), undefined, 'two unlike cards do not say which stands out');
+
+  // Suggested, and taken by changeManifest.
+  const template = loadTemplate(green, cardsManifest);
+  const found = suggestChanges(template, { kinds: ['row-emphasis'] });
+  assert.deepEqual(found.map((suggestion) => suggestion.changes), [[{ op: 'setRepeat', pattern: 'cards', emphasis: 1 }]]);
+  assert.match(found[0]?.message ?? '', /^Card 1 of "cards" is drawn unlike the other cards\./);
+  assert.deepEqual(suggestChanges(loadTemplate(buildFixturePptx(), cardsManifest), { kinds: ['row-emphasis'] }), []);
+  const changed = changeManifest(template, [{ op: 'setRepeat', pattern: 'cards', emphasis: 1 }]);
+  assert.deepEqual(changed.rejected, []);
+  assert.match(changed.applied[0]?.message ?? '', /Card 1 stands out: in a deck that reads the other way the cards change places, each with its look, so it is still card 1 for its readers\./);
+  assert.deepEqual(suggestChanges(loadTemplate(green, changed.manifest), { kinds: ['row-emphasis'] }), [], 'asked again, nothing more to do');
+  const marked = loadTemplate(green, changed.manifest);
+
+  /** Where each card of the first slide stands, left edge in EMU, and the text it holds. */
+  const cards = (file: Uint8Array) => {
+    const root = rootElement(parseXml(PptxPackage.load(file).readText('ppt/slides/slide1.xml')));
+    return ['10', '20', '30']
+      .map((id) => {
+        const group = descendants(root, NS.p, 'grpSp').find((element) => path(element, [NS.p, 'nvGrpSpPr'], [NS.p, 'cNvPr'])?.getAttribute('id') === id);
+        if (!group) return undefined;
+        const x = Number(path(group, [NS.p, 'grpSpPr'], [NS.a, 'xfrm'], [NS.a, 'off'])?.getAttribute('x'));
+        const text = descendants(group, NS.a, 't').map((element) => element.textContent).join('');
+        return { card: Number(id) / 10, x, text };
+      })
+      .filter((entry) => entry !== undefined)
+      .sort((a, b) => a.x - b.x);
+  };
+  const deckOf = (direction: 'ltr' | 'rtl', items = 3): DeckSpec => ({
+    version: 1,
+    direction,
+    slides: [{ pattern: 'cards', items, slots: { title: 'T', ...Object.fromEntries(['a', 'b', 'c'].slice(0, items).map((text, at) => [`card${at + 1}Text`, text])) } }],
+  });
+  // Without it, an English deck's first text goes to the card on the left and the green card on the right holds the last.
+  assert.deepEqual(cards(renderDeck(template, deckOf('ltr')).pptx).map((entry) => `${entry.card}:${entry.text}`), ['3:a', '2:b', '1:c']);
+  // With it, the green card moves to the left with its text.
+  const moved = cards(renderDeck(marked, deckOf('ltr')).pptx);
+  assert.deepEqual(moved.map((entry) => `${entry.card}:${entry.text}`), ['1:a', '2:b', '3:c']);
+  assert.deepEqual(
+    moved.map((entry) => entry.x),
+    cards(renderDeck(template, deckOf('ltr')).pptx).map((entry) => entry.x),
+    'the same places, taken by other cards',
+  );
+  assert.deepEqual(cards(renderDeck(marked, deckOf('ltr', 2)).pptx).map((entry) => `${entry.card}:${entry.text}`), ['1:a', '2:b']);
+  // A deck that reads as the template does is the same file with it or without it.
+  assert.deepEqual(renderDeck(marked, deckOf('rtl')).pptx, renderDeck(template, deckOf('rtl')).pptx);
+
+  // A number that is no item is refused, null takes it away, and a manifest written by hand is checked.
+  assert.match(changeManifest(template, [{ op: 'setRepeat', pattern: 'cards', emphasis: 4 }]).rejected[0]?.reason ?? '', /the card that stands out is one of the 3 drawn, by its number from 1/);
+  assert.equal('emphasis' in (changeManifest(marked, [{ op: 'setRepeat', pattern: 'cards', emphasis: null }]).manifest.patterns.find((pattern) => pattern.id === 'cards')?.repeat ?? {}), false);
+  const wrong: TemplateManifest = { ...cardsManifest, patterns: cardsManifest.patterns.map((pattern) => (pattern.repeat ? { ...pattern, repeat: { ...pattern.repeat, emphasis: 9 } } : pattern)) };
+  assert.ok(checkManifest(loadTemplate(green, wrong)).some((issue) => issue.message === 'repeat.emphasis is the number of the item that stands out, from 1 to 3'));
+});
+
+test('fewer lines than drawn stand further apart with spread, up to its factor and as far as the area they are drawn in', () => {
+  // Six topics one under another, 0.5 cm high and 0.7 cm apart from top to top, from 1,000,000 to 5,000,000 EMU.
+  const box = (id: number, y: number) =>
+    `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="Topic"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="1000000" y="${y}"/><a:ext cx="4000000" cy="500000"/></a:xfrm></p:spPr>` +
+    `<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Topic</a:t></a:r></a:p></p:txBody></p:sp>`;
+  const slide =
+    '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree>' +
+    [0, 1, 2, 3, 4, 5].map((n) => box(10 + n, 1000000 + n * 700000)).join('') +
+    '</p:spTree></p:cSld></p:sld>';
+  const tops = (count: number, spread?: number) => {
+    const root = rootElement(parseXml(slide));
+    const repeat: RepeatDef = { item: 'topic', slots: ['topic{n}'], shapes: [0, 1, 2, 3, 4, 5].map((n) => [String(10 + n)]), columns: 1, min: 1, max: 6, ...(spread ? { spread } : {}) };
+    applyRepeat(indexShapes(root), repeat, count, 12192000);
+    return descendants(root, NS.a, 'off').map((off) => Number(off.getAttribute('y')));
+  };
+  // Three of six bunch in the middle at the drawn step.
+  assert.deepEqual(tops(3), [2050000, 2750000, 3450000]);
+  // With 1.6 the step grows by 60%; with 3 it grows only as far as the area, from its top to its foot.
+  assert.deepEqual(tops(3, 1.6), [1630000, 2750000, 3870000]);
+  assert.deepEqual(tops(3, 3), [1000000, 2750000, 4500000]);
+  // As many lines as drawn, or one alone, stand as without it.
+  assert.deepEqual(tops(6, 1.6), tops(6));
+  assert.deepEqual(tops(1, 1.6), tops(1));
+
+  // A studio sets it on a list or grid of several lines, and not on a single row.
+  const grid = loadTemplate(buildFixturePptx(), gridManifest);
+  const set = changeManifest(grid, [{ op: 'setRepeat', pattern: 'grid', spread: 1.6 }]);
+  assert.deepEqual(set.rejected, []);
+  assert.match(set.applied[0]?.message ?? '', /With fewer lines of cards than drawn, the space between them grows up to 1\.6 times, as far as the area they are drawn in\./);
+  assert.equal(set.manifest.patterns.find((pattern) => pattern.id === 'grid')?.repeat?.spread, 1.6);
+  assert.match(changeManifest(grid, [{ op: 'setRepeat', pattern: 'grid', spread: 5 }]).rejected[0]?.reason ?? '', /spread is a factor between 1 and 3/);
+  assert.match(changeManifest(loadTemplate(buildFixturePptx(), cardsManifest), [{ op: 'setRepeat', pattern: 'cards', spread: 1.6 }]).rejected[0]?.reason ?? '', /the cards stand on one line, so there are no lines to spread/);
+  assert.equal('spread' in (changeManifest(loadTemplate(buildFixturePptx(), set.manifest), [{ op: 'setRepeat', pattern: 'grid', spread: null }]).manifest.patterns.find((pattern) => pattern.id === 'grid')?.repeat ?? {}), false);
 });

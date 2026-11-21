@@ -24,6 +24,23 @@ interface GeminiConnection {
   fetch?: typeof fetch;
   /** Gives up on a request that has not answered after this long. Defaults to 3 minutes; 0 waits for ever. */
   timeoutMs?: number;
+  /**
+   * How many times a request that failed for a passing reason is sent again: a rate limit (429)
+   * that is no spending cap or daily quota, a request the service timed out (408), a server error
+   * (500, 502, 503, 504), the recitation filter tripping on an ordinary answer, a network that
+   * failed, or no answer within `timeoutMs` (this only within a `deadlineMs`). Each try waits longer than the last, by a doubling
+   * step with some chance in it, or as long as the service asks. Defaults to 2: three tries in all.
+   * 0 sends every request once. From 0.7.0; before, a text request was sent once more after a
+   * server error, without waiting, and a picture was never sent again.
+   */
+  retries?: number;
+  /**
+   * Gives up on a call, its tries and its waits together, after this long, in milliseconds: no try
+   * runs past it, and no wait is begun that would end after it; an answer sent again after a
+   * cut-off shares it. Left out, only `timeoutMs` limits each try, and a try that timed out is not
+   * sent again. Set it where a person waits for the answer. From 0.7.0.
+   */
+  deadlineMs?: number;
 }
 
 export interface GeminiOptions extends GeminiConnection {
@@ -49,11 +66,131 @@ export interface GeminiImageOptions extends GeminiConnection {
 
 export class GeminiError extends Error {
   readonly status: number | undefined;
+  /** How long the service asked to wait before the next try, in milliseconds, where it said. */
+  readonly retryAfterMs: number | undefined;
+  /** No answer came within `timeoutMs`. */
+  readonly timedOut: boolean;
+  /** The quotas a rate limit names (`QuotaFailure`), such as `GenerateRequestsPerMinutePerProjectPerModel`. */
+  readonly quotas: string[];
 
-  constructor(message: string, status?: number) {
+  constructor(message: string, status?: number, more: { retryAfterMs?: number | undefined; timedOut?: boolean; quotas?: string[] } = {}) {
     super(message);
     this.name = 'GeminiError';
     this.status = status;
+    this.retryAfterMs = more.retryAfterMs;
+    this.timedOut = more.timedOut === true;
+    this.quotas = more.quotas ?? [];
+  }
+}
+
+/** The first wait before another try, and the longest: a longer wait the service asks for is not waited. */
+const FIRST_WAIT = 1_000;
+const LONGEST_WAIT = 60_000;
+
+/**
+ * Whether a request that failed so is worth another try: a passing failure, which the same request
+ * usually does not meet again. A bad key, a bad request, a spending cap or a daily quota is met
+ * again however often it is sent; so is a stop the caller asked for.
+ */
+function passing(error: unknown): boolean {
+  if (error instanceof GeminiError) {
+    if (error.timedOut) return true;
+    // Gemini's limit per minute says "check your plan and billing details" too, and names its
+    // quota and the wait: only a spending cap, a quota of the day or one of nothing is lasting.
+    if (error.status === 429) return !/spending cap|per day|perday|daily|limit: 0\b/i.test(error.message) && !error.quotas.some((quota) => /perday|daily/i.test(quota));
+    return error.status === 408 || error.status === 500 || error.status === 502 || error.status === 503 || error.status === 504 || /recitation/i.test(error.message);
+  }
+  // fetch fails with a TypeError when the network does ("fetch failed"); a stop is an AbortError.
+  return error instanceof TypeError;
+}
+
+/**
+ * How long to wait, in milliseconds, before trying a request again that failed with `error` on try
+ * number `attempt` (from 1); `undefined` where another try is not worth it. The wait doubles from
+ * one second with each try, taken at random between half and all of it so that requests that failed
+ * together do not come back together, up to a minute; where the service says how long to wait, that
+ * long, and no more tries where it asks for more than a minute.
+ */
+export function retryDelay(error: unknown, attempt: number, random: () => number = Math.random): number | undefined {
+  if (!passing(error)) return undefined;
+  const asked = error instanceof GeminiError ? error.retryAfterMs : undefined;
+  if (asked !== undefined) return asked <= LONGEST_WAIT ? Math.max(0, asked) : undefined;
+  const step = Math.min(LONGEST_WAIT, FIRST_WAIT * 2 ** Math.max(0, attempt - 1));
+  return Math.round(step * (0.5 + random() / 2));
+}
+
+/** The wait a failed answer asks for: its Retry-After header (seconds, or a date), or the service's RetryInfo ("37s"). */
+function askedWait(response: Response, parsed: unknown): number | undefined {
+  const header = response.headers.get('retry-after');
+  if (header !== null && header.trim() !== '') {
+    const seconds = Number(header);
+    if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+    const date = Date.parse(header);
+    if (Number.isFinite(date)) return Math.max(0, date - Date.now());
+  }
+  const details = (parsed as { error?: { details?: unknown } } | undefined)?.error?.details;
+  for (const detail of Array.isArray(details) ? details : []) {
+    const delay = (detail as { retryDelay?: unknown } | null)?.retryDelay;
+    const seconds = typeof delay === 'string' ? /^(\d+(?:\.\d+)?)s$/.exec(delay.trim())?.[1] : undefined;
+    if (seconds !== undefined) return Number(seconds) * 1000;
+  }
+  return undefined;
+}
+
+/** The quotas a failed answer names (`google.rpc.QuotaFailure`): what a rate limit is a limit of. */
+function quotasOf(parsed: unknown): string[] {
+  const details = (parsed as { error?: { details?: unknown } } | undefined)?.error?.details;
+  const quotas: string[] = [];
+  for (const detail of Array.isArray(details) ? details : []) {
+    const violations = (detail as { violations?: unknown } | null)?.violations;
+    for (const violation of Array.isArray(violations) ? violations : []) {
+      const id = (violation as { quotaId?: unknown; quotaMetric?: unknown } | null)?.quotaId ?? (violation as { quotaMetric?: unknown } | null)?.quotaMetric;
+      if (typeof id === 'string') quotas.push(id);
+    }
+  }
+  return quotas;
+}
+
+/** When a call made now must end, by the adapter's `deadlineMs`: `Infinity` where it sets none. */
+function deadlineOf(connection: GeminiConnection): number {
+  return connection.deadlineMs !== undefined && connection.deadlineMs > 0 ? Date.now() + connection.deadlineMs : Infinity;
+}
+
+/** Waits so long, or until the caller stops, which ends the wait with the caller's reason. */
+function pause(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  if (signal?.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const stop = () => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', stop);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', stop, { once: true });
+  });
+}
+
+/**
+ * Runs a request, and runs it again after a passing failure, as `retries` allows, until `end` (the
+ * call's deadline, which every send of one call shares). `run` is given the most time its try may
+ * take, in milliseconds (`Infinity` for no limit). A request that timed out is sent again only
+ * within a deadline: without one, three tries of three minutes each would keep a person waiting
+ * nine, and a picture that took too long may have been made, and paid for, all the same.
+ */
+async function withRetries<T>(connection: GeminiConnection, signal: AbortSignal | undefined, run: (most: number) => Promise<T>, end = deadlineOf(connection)): Promise<T> {
+  const tries = 1 + Math.max(0, Math.floor(connection.retries ?? 2));
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await run(end - Date.now());
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      if (error instanceof GeminiError && error.timedOut && end === Infinity) throw error;
+      const wait = attempt < tries ? retryDelay(error, attempt) : undefined;
+      if (wait === undefined || Date.now() + wait >= end) throw error;
+      await pause(wait, signal);
+    }
   }
 }
 
@@ -76,15 +213,19 @@ async function createInteraction(
   body: Record<string, unknown>,
   signal: AbortSignal | undefined,
   acceptCutOff = false,
+  most = Infinity,
 ): Promise<Interaction> {
   const extra = typeof connection.headers === 'function' ? await connection.headers() : connection.headers;
   const headers: Headers = { 'Content-Type': 'application/json', ...extra };
   if (connection.apiKey) headers['x-goog-api-key'] = connection.apiKey;
 
   const init: RequestInit = { method: 'POST', headers, body: JSON.stringify(body) };
-  // A request can hang without failing, so every one has a limit of its own next to the caller's signal.
-  const limit = connection.timeoutMs ?? 180_000;
-  const timeout = limit > 0 ? AbortSignal.timeout(limit) : undefined;
+  // A request can hang without failing, so every one has a limit of its own next to the caller's
+  // signal: its own, or the time left before the call's deadline where that is less.
+  const own = connection.timeoutMs ?? 180_000;
+  if (!(most > 0)) throw new GeminiError('Gemini did not answer before the deadline of the call');
+  const limit = Math.min(own > 0 ? own : Infinity, most);
+  const timeout = Number.isFinite(limit) ? AbortSignal.timeout(Math.max(1, Math.round(limit))) : undefined;
   const combined = signal && timeout ? AbortSignal.any([signal, timeout]) : (signal ?? timeout);
   if (combined) init.signal = combined;
 
@@ -94,7 +235,7 @@ async function createInteraction(
     response = await (connection.fetch ?? fetch)(connection.endpoint ?? GEMINI_DEVELOPER_ENDPOINT, init);
     text = await response.text();
   } catch (error) {
-    if (timeout?.aborted && !signal?.aborted) throw new GeminiError(`Gemini did not answer within ${Math.round(limit / 1000)} seconds`);
+    if (timeout?.aborted && !signal?.aborted) throw new GeminiError(`Gemini did not answer within ${Math.round(limit / 1000)} seconds`, undefined, { timedOut: true });
     throw error;
   }
   let parsed: unknown;
@@ -105,7 +246,7 @@ async function createInteraction(
   }
   if (!response.ok) {
     const message = (parsed as { error?: { message?: string } } | undefined)?.error?.message ?? text.slice(0, 300);
-    throw new GeminiError(`Gemini request failed (${response.status}): ${message}`, response.status);
+    throw new GeminiError(`Gemini request failed (${response.status}): ${message}`, response.status, { retryAfterMs: askedWait(response, parsed), quotas: quotasOf(parsed) });
   }
   const interaction = (parsed ?? {}) as Interaction;
   // An answer cut off at the output limit is for the caller to deal with, when it says it can.
@@ -120,15 +261,6 @@ async function createInteraction(
     throw new GeminiError(`Gemini interaction ended with status "${interaction.status ?? 'unknown'}"${reason ? `: ${reason}` : ''}`);
   }
   return interaction;
-}
-
-/**
- * Failures that the same request usually does not repeat: a server error, or the service's
- * recitation filter tripping on an ordinary answer. Bad keys, quotas and bad requests are not among them.
- */
-function passesByItself(error: unknown): boolean {
-  if (!(error instanceof GeminiError)) return false;
-  return (error.status !== undefined && error.status >= 500 && error.status <= 504) || /recitation/i.test(error.message);
 }
 
 /** The blocks the model wrote. Steps and blocks of another shape than the service's (from a gateway, say) are passed over. */
@@ -211,15 +343,11 @@ export function gemini(options: GeminiOptions): LlmProvider {
       };
       body.generation_config = generationConfig;
 
-      const send = (sent: Record<string, unknown>) => createInteraction(options, sent, request.signal, true);
-      let interaction: Interaction;
-      try {
-        interaction = await send(body);
-      } catch (error) {
-        // A failure that comes and goes by chance is worth one more try; any other is the caller's to see.
-        if (!passesByItself(error)) throw error;
-        interaction = await send(body);
-      }
+      // A failure that comes and goes by chance is worth another try; any other is the caller's to see.
+      // One deadline for the whole call: the answer sent again after a cut-off shares it.
+      const end = deadlineOf(options);
+      const send = (sent: Record<string, unknown>) => withRetries(options, request.signal, (most) => createInteraction(options, sent, request.signal, true, most), end);
+      let interaction = await send(body);
       if (interaction.status === 'incomplete') {
         // Cut off at the limit: by a model running away inside a text field, or by a long reasoning before a short
         // answer, which was seen to fill the limit by itself. Both are a matter of chance, so the request is sent
@@ -278,7 +406,7 @@ export function geminiImages(options: GeminiImageOptions): ImageProvider {
         ],
         store: false,
       };
-      const interaction = await createInteraction(options, body, request.signal);
+      const interaction = await withRetries(options, request.signal, (most) => createInteraction(options, body, request.signal, false, most));
       const image = outputBlocks(interaction).find((block) => block.type === 'image' && block.data);
       if (!image?.data) throw new GeminiError('Gemini returned no image');
       // The picture comes as base64 text. Anything else, or text that is not base64, is no picture.

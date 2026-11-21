@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
-import { TOOL_NAMES, loadTemplate, memoryStore, planEdit, planOutline, planTextFit, presentationTools, validateDeck, writeDeck } from '../src/index.ts';
+import { TOOL_NAMES, loadTemplate, memoryStore, planEdit, planOutline, planTextFit, presentationTools, renderDeck, validateDeck, writeDeck } from '../src/index.ts';
 import type { Brief, DeckSpec, JsonRequest, LlmProvider, TemplateManifest } from '../src/index.ts';
 import { FREE_PATTERN } from '../src/deck/spec.ts';
 import { buildCatalog, describeCatalog, slotNote } from '../src/plan/catalog.ts';
@@ -254,7 +254,8 @@ test("the writer is told the pair, without a length its description states where
 
   // The check is the stored budget: 320 characters in three paragraphs are more than the pair and pass.
   const deck: DeckSpec = { version: 1, title: 'Bikes', fields, slides: [{ pattern: 'text-only', slots: { title: 'Keep it', body: ['A'.repeat(106), 'B'.repeat(107), 'C'.repeat(107)] } }] };
-  assert.deepEqual(validateDeck(demo, deck, { layout: 'adaptive' }).filter((issue) => issue.slot === 'body'), []);
+  // Within the stored budget; its words of a hundred letters are told as words no line holds (0.7.0), and that is all.
+  assert.deepEqual(validateDeck(demo, deck, { layout: 'adaptive' }).filter((issue) => issue.slot === 'body').map((issue) => issue.code), ['word-wider-than-line', 'word-wider-than-line', 'word-wider-than-line']);
 });
 
 /** A model that gives the same outline to every call. */
@@ -308,4 +309,34 @@ test('countSpacing: false tells every slot its stored budget, as 0.6.7 did: in p
     assert.match(prompts[0] ?? '', new RegExp(`body \\(at most ${body} characters in total, at most 3 items\\)`), String(countSpacing));
     assert.match(String(planned.output.note), new RegExp(`slide 1 holds about ${holds} of its 200 words`), String(countSpacing));
   }
+});
+
+test('with fonts, a text in columns is broken at its column less the space between columns, and the space at its ends is counted where the shape says so', async () => {
+  const fontkit = await import('fontkit');
+  const { fontkitMetrics, textMeasurer } = await import('../src/index.ts');
+  const { openFonts } = await import('./fonts.ts');
+  const fonts = fontkitMetrics(fontkit, openFonts());
+  const textOnly = patternOf(demoManifest, 'text-only');
+  const body = slotOf(textOnly, 'body');
+  const fitIn = (pptx: Uint8Array, text: string[]) => textMeasurer(loadTemplate(pptx, demoManifest, { fonts }), fonts).fit(textOnly, body, text);
+  const three = ['Riders rely on the service every day.', 'The city gains from it.', 'Both are easy to see.'];
+  // Two columns half an inch apart: each line is a quarter of an inch narrower than half the box (0.6.10's count left the gap in).
+  const plain = fitIn(bodyChanged((shape) => shape.replace('<a:bodyPr', '<a:bodyPr numCol="2"')), three);
+  const apart = fitIn(bodyChanged((shape) => shape.replace('<a:bodyPr', '<a:bodyPr numCol="2" spcCol="457200"')), three);
+  assert.ok(plain && apart);
+  assert.ok(Math.abs((plain.lineRoom[0] ?? 0) - (apart.lineRoom[0] ?? 0) - 18) < 0.01, `${plain.lineRoom[0]} and ${apart.lineRoom[0]}`);
+  // The body keeps 12 points after each paragraph: with spcFirstLastPara the last one's is drawn too.
+  const ends = fitIn(bodyChanged((shape) => shape.replace('<a:bodyPr', '<a:bodyPr spcFirstLastPara="1"')), three);
+  const usual = fitIn(demoPptx, three);
+  assert.ok(ends && usual);
+  assert.equal(Math.round((ends.height - usual.height) * 100) / 100, 12);
+});
+
+test('a free slide drawn from a shape that draws the space at the ends of its text does not draw it: its plan does not count it', () => {
+  const pptx = bodyChanged((shape) => shape.replace('<a:bodyPr', '<a:bodyPr spcFirstLastPara="1"'));
+  assert.ok(strFromU8(unzipSync(pptx)['ppt/slides/slide2.xml'] as Uint8Array).includes('spcFirstLastPara="1"'));
+  const template = loadTemplate(pptx, { ...demoManifest, free: { styles: { body: { slide: 2, shape: '7' } } } });
+  const deck: DeckSpec = { version: 1, fields, slides: [{ pattern: 'free', blocks: ['text'], slots: { title: 'A title', b1Text: ['One paragraph.', 'And another one.'] } }] };
+  const slide = strFromU8(unzipSync(renderDeck(template, deck, { layout: 'adaptive' }).pptx)['ppt/slides/slide1.xml'] as Uint8Array);
+  assert.ok(slide.includes('One paragraph.') && !slide.includes('spcFirstLastPara'));
 });

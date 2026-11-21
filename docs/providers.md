@@ -256,6 +256,8 @@ Options of both:
 | `headers` | Extra headers, or a function returning them (may be async), for example a fresh `Authorization: Bearer` token. |
 | `fetch` | A custom `fetch`, for proxies and tests. |
 | `timeoutMs` | Gives up on a request after this long. Default 180000 (3 minutes). `0` waits for ever. |
+| `retries` | How many times a request that failed for a passing reason is sent again (from 0.7.0): a rate limit (429) that is no spending cap or daily quota, 408, 500, 502, 503, 504, the recitation filter, a network that failed, or, within a `deadlineMs`, no answer within `timeoutMs`. A 429 is tried again unless it is a spending cap or a quota of the day (by its message, or by the quota it names): Gemini's limit per minute also says to check billing details. Each try waits longer: one second doubled with each try, taken at random between half and all of it, up to a minute, or as long as the service asks (`Retry-After`, or its `RetryInfo`); a wait of more than a minute is not waited. Default 2, three tries in all. `0` sends once. Before 0.7.0 a text request was sent once more after a server error, and a picture never. |
+| `deadlineMs` | Gives up on a call after this long, its tries and its waits together (from 0.7.0): no try runs past it, and no wait is begun that would end after it. One deadline covers the whole call, an answer sent again after a cut-off too. Left out, only `timeoutMs` limits each try, and a try that times out is not sent again. Set it where a person waits, such as `120000`. |
 
 Only for `gemini`: `thinkingLevel` (`minimal`, `low`, `medium`, `high`) and `maxOutputTokens`, the output limit
 of a request with reasoning included. By default the limit is the request's own estimate plus 8,192 tokens, or
@@ -264,7 +266,10 @@ of a request with reasoning included. By default the limit is the request's own 
 Only for `geminiImages`: `imageSize` (`512`, `1K`, `2K`, `4K`; default `1K`) and `style`, a sentence appended to
 every prompt, such as a house photo style.
 
-Failures throw `GeminiError`, which has the HTTP `status` when there was one.
+Failures throw `GeminiError`, which has the HTTP `status` when there was one, the wait the service asked for
+(`retryAfterMs`), and `timedOut` when no answer came in time. `retryDelay(error, attempt)` is the rule the
+adapters wait by, for a provider of your own: the milliseconds to wait before another try after `error` on try
+number `attempt`, or `undefined` where another try is not worth it.
 
 Vertex AI:
 

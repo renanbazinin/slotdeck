@@ -20,6 +20,14 @@ export interface TemplateManifest {
    */
   alignOnDirectionChange?: AlignPolicy;
   /**
+   * The direction the charts of a deck that reads right to left read in. `rtl`: the first category
+   * of columns and lines stands on the right, with their value axis, horizontal bars grow from the
+   * right, and the chart's data sheet is right to left. Left out, or `ltr`: charts read left to
+   * right, as many charts of time do in Hebrew too. A deck that reads left to right has charts
+   * that read left to right; a deck may state its own (`DeckSpec.chartDirection`). From 0.7.0.
+   */
+  chartDirection?: Direction;
+  /**
    * Enlarges the body text of every deck made from this template, as a factor on the designed
    * size: 1.3 turns 9 pt into about 12 pt. For a template whose body text is too small to read
    * comfortably. Budgets shrink with it, and a deck's own text size is applied on top.
@@ -136,6 +144,15 @@ export function templateTextSetting(manifest: Pick<TemplateManifest, 'characterW
   return name === 'leastTextSize' ? Math.ceil((value as number) * 2 - 1e-9) / 2 : (value as number);
 }
 
+/**
+ * Whether the charts of a deck read right to left: as the deck states (`chartDirection`), or else
+ * as the template states for a deck that reads right to left. Anything but `rtl` reads left to right.
+ */
+export function chartsReadRightToLeft(manifest: Pick<TemplateManifest, 'direction' | 'chartDirection'>, deck: { direction?: Direction | undefined; chartDirection?: Direction | undefined }): boolean {
+  const stated = deck.chartDirection ?? ((deck.direction ?? manifest.direction) === 'rtl' ? manifest.chartDirection : undefined);
+  return stated === 'rtl';
+}
+
 /** The factor on body text for a deck: the template's own setting times the deck's. A deck's factor that is null, as an application stores a number that is not set, is 1. */
 export function bodyTextScale(manifest: Pick<TemplateManifest, 'textScale'>, deckScale: number | null = 1): number {
   return (manifest.textScale ?? 1) * (deckScale ?? 1);
@@ -196,6 +213,23 @@ export interface RepeatDef {
    * and text boxes widen; pictures keep their size and their side. Left out, items keep their size.
    */
   widen?: number;
+  /**
+   * The item, by its number from 1 in reading order, that the template draws to stand out from the
+   * others: a card in another colour, an option marked as recommended. In a deck that reads the
+   * other way, the items of each line then change places, each with its look, where otherwise
+   * their values do: so the item that stands out is the same one for the deck's readers (the first
+   * card of an English deck made from a Hebrew template is the one on the left, still in green).
+   * `suggestChanges` finds it (kind `row-emphasis`). From 0.7.0.
+   */
+  emphasis?: number;
+  /**
+   * Lets the lines of a row or grid stand further apart when there are fewer of them than the
+   * template draws, as an agenda of three in a list drawn for six: the space from one line to the
+   * next grows up to this factor on the drawn step, as far as the area the lines are drawn in, so
+   * that they spread down it and do not bunch in its middle. Only the number of items decides it.
+   * Left out, the lines keep the drawn step. From 0.7.0.
+   */
+  spread?: number;
 }
 
 /**
@@ -235,7 +269,8 @@ export function slotSources(pattern: PatternDef, mirrored: boolean, items?: numb
   const sources = new Map<string, string>(effectiveSlots(pattern, items).map((slot) => [slot.name, slot.name]));
   if (!mirrored) return sources;
   const rows = [...(pattern.sequences ?? [])];
-  if (pattern.repeat) {
+  // A row with an item that stands out moves its items, not their values (see `RepeatDef.emphasis`).
+  if (pattern.repeat && pattern.repeat.emphasis === undefined) {
     // Each row of items is mirrored on its own, so a grid keeps its rows.
     const repeat = pattern.repeat;
     let next = 1;
@@ -354,6 +389,13 @@ export interface TableSlotDef extends SlotBase {
   maxCellChars?: number;
   headerText?: TableTextStyle;
   bodyText?: TableTextStyle;
+  /**
+   * The table fills its frame: with fewer rows than the sample table, its rows share the height the
+   * sample takes, with their text in the middle, where without it the table ends higher up. A column
+   * of numbers ends on the right in a deck that reads left to right, as numbers are read by their
+   * last digits. Left out, a table is drawn as before. From 0.7.0.
+   */
+  fill?: boolean;
 }
 
 /**

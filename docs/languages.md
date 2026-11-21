@@ -29,9 +29,9 @@ await generateDeck(template, { prompt: '...', language: 'he' }, options);
 | --- | --- |
 | Paragraph direction | Every paragraph gets the direction of its own text. In a deck that reads right to left, one right-to-left letter is enough, so "AI בשירות הלקוחות" reads right to left; in a deck that reads left to right, the first letter decides. A line with no right-to-left letter is left to right in either, so a Hebrew deck may hold an English line. A figure without letters ("+12%", "4.6 / 5") is left to right in a deck that reads left to right, where the template reads right to left; other text without letters keeps the template paragraph's direction. |
 | Alignment | Left and right alignment are swapped (`alignOnDirectionChange: "flip"`, the default). A paragraph that states no alignment counts as left-aligned. Centred text stays centred. |
-| Rows and grids of items | Filled mirror-wise within each line, so the deck's first item is where its readers start: at the right in a right-to-left deck. Shapes do not move; the values go to the mirrored positions. |
-| Tables | Run in the deck's direction, with text aligned to its start. |
-| Charts | Labels are set right to left. |
+| Rows and grids of items | Filled mirror-wise within each line, so the deck's first item is where its readers start: at the right in a right-to-left deck. Shapes do not move; the values go to the mirrored positions. A row whose slide draws one item to stand out (`repeat.emphasis`, from 0.7.0) moves its items instead, each with its look, so the item that stands out keeps its number for the deck's readers. |
+| Tables | Run in the deck's direction, with text aligned to its start. From 0.7.0 a cell of a figure without letters ("+12%") reads left to right in a deck that reads left to right from a template that reads right to left, as other text does. |
+| Charts | Labels are set right to left. From 0.7.0 a chart whose names have a right-to-left letter is marked with that language (`he-IL`), so PowerPoint places its brackets and punctuation as Hebrew. Its categories run from the left unless the template or the deck says otherwise: see "Charts that read right to left" below. |
 | Run language | Each run is marked with the language of its text: right-to-left text with a right-to-left language, and English (or a figure, in a deck that reads left to right) in a run the template marks right to left with a left-to-right one. See "Why runs are marked with a language" below. |
 | Shapes | Do not move. A photo on the right stays on the right. Bullets and their indent follow the paragraph direction automatically. |
 
@@ -46,6 +46,24 @@ run into a neighbouring shape.
 
 A common case for a per-slot `keep` is a line next to a logo: it should stay beside the logo in either
 direction.
+
+## Charts that read right to left
+
+A chart in a deck that reads right to left has its labels set right to left, but its first category stands on
+the left, as Excel and PowerPoint draw it, unless the template or the deck says otherwise. Whether it should is a
+choice: many Hebrew reports keep time running from left to right, and many draw the first category on the right.
+So it is a setting, off unless set:
+
+- For every deck that reads right to left: `"chartDirection": "rtl"` in the manifest (in a studio,
+  `changeManifest` with `{ op: 'setManifest', chartDirection: 'rtl' }`).
+- For one deck: `"chartDirection": "rtl"` or `"ltr"` on the deck, which wins over the manifest.
+
+A chart that reads right to left has the first category of its columns and lines on the right and its value axis
+on the right; its horizontal bars grow from the right, with their names on the right, the first one still at the
+top. A chart whose place the software works out (on a free slide) keeps its room for the value axis mirrored with
+it. A legend of its own stands upright at the left, first series at the top: PowerPoint sets a legend under a
+chart from the left whatever direction the chart reads, while the bars of a group follow the chart. The data behind it (Edit Data) is a sheet that reads right to left. A pie is drawn as it is. A
+deck that reads left to right has charts that read left to right, whatever the manifest says.
 
 ## Why runs are marked with a language
 

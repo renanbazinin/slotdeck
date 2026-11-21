@@ -256,7 +256,8 @@ export function prepareManifest(template: Template, options: PrepareOptions): Pr
   // offered: the template's own pictogram stays instead. That comes after the rows and the
   // variants, so that a row is found with its pictograms in it and a variant's slots are kept
   // like its pattern's. What it opens is taken in one more turn.
-  const rows: SuggestionKind[] = widen === false ? ['row-max'] : ['row-max', 'row-widen'];
+  // An item that the slide draws to stand out is a fact of the slide, as the room of a row is.
+  const rows: SuggestionKind[] = widen === false ? ['row-max', 'row-emphasis'] : ['row-max', 'row-widen', 'row-emphasis'];
   const kinds: SuggestionKind[] = ['icon', 'row', ...rows, ...(variants.size > 0 ? (['variant', 'row'] as const) : []), ...rows];
   const take = (kind: SuggestionKind) => {
     for (let turn = 0; turn < 3; turn++) {

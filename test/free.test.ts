@@ -1124,7 +1124,7 @@ test('characters that no file can hold are left out of every part of a free slid
   // A vertical tab is the line break of a text box: a new paragraph in a text, a space in one line.
   for (const text of ['Riverbend', 'Rides by station', 'First line', 'second line', 'Tram Square', 'Docks', '24']) assert.ok(texts.includes(text), `${text}: ${JSON.stringify(texts)}`);
   assert.match(xml, /descr="The pier at dawn"/);
-  assert.match(xml, /descr="column chart: Rides 2025"/);
+  assert.match(xml, /descr="Column chart of Rides 2025: Spring 7, Summer 19"/);
   const drawn = strFromU8(all['ppt/charts/chart1.xml'] as Uint8Array);
   for (const label of ['<c:v>Spring</c:v>', '<c:v>Summer</c:v>', '<c:v>Rides 2025</c:v>']) assert.ok(drawn.includes(label), label);
   assert.ok(sheet.includes('>Summer</t>') && sheet.includes('>Rides 2025</t>'));

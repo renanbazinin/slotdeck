@@ -274,6 +274,7 @@ Every change is an object with `op`. `pattern` is a pattern id, `slot` a slot na
   language?: string,
   direction?: 'ltr' | 'rtl',
   alignOnDirectionChange?: 'flip' | 'keep',
+  chartDirection?: 'rtl' | 'ltr' | null,
   textScale?: number | null,
   characterWidth?: number | null,
   leastTextSize?: number | null,
@@ -284,6 +285,10 @@ Every change is an object with `op`. `pattern` is a pattern id, `slot` a slot na
 
 `textScale` enlarges the body text of every deck made from the template (`1.3` for 30% larger); `null` or `1`
 returns to the designed size.
+
+`chartDirection: 'rtl'` draws the charts of a deck that reads right to left from the right: the first category on
+the right, with the value axis (from 0.7.0). `null` or `'ltr'` draws them left to right, as before. See "Charts
+that read right to left" in [languages.md](languages.md).
 
 `characterWidth` says how wide PowerPoint sets a character of the template's running text, as a share of its
 size (`0.44`): the running text of free slides is then counted with it and set larger, and from 0.6.8 what a
@@ -426,6 +431,7 @@ The shape goes back to being part of the design.
 | `imageKind`, `fit` | image | `photo`, `icon` or `graphic`; `cover` or `contain`. |
 | `maxColumns`, `maxRows`, `maxCellChars` | table | Limits. |
 | `headerText`, `bodyText` | table | `{ size?, bold?, color?, font? }`, merged into what is already set. |
+| `fill` | table | `true`: with fewer rows than the sample the table still fills its frame, and its columns of numbers end on the right in a deck read from the left (from 0.7.0). `false` or `null` draws it as designed. |
 | `maxCategories`, `maxSeries`, `colors`, `text`, `lineColor` | chart | Limits and styling. |
 
 A property that does not apply to the slot's kind is refused (`"title" is a text slot; maxColumns does not apply to it`).
@@ -433,7 +439,7 @@ A property that does not apply to the slot's kind is refused (`"title" is a text
 #### `setRepeat`
 
 ```ts
-{ op: 'setRepeat', pattern: string, min?: number, max?: number, item?: string, span?: { left: number, right: number } | null, widen?: number | null }
+{ op: 'setRepeat', pattern: string, min?: number, max?: number, item?: string, span?: { left: number, right: number } | null, widen?: number | null, emphasis?: number | null, spread?: number | null }
 ```
 
 Sets how many items a row or grid takes. When the pattern has no row yet, it is found from numbered slot names:
@@ -461,6 +467,17 @@ ones; `setSlot` with `box: null` takes the box away.
 three cards fill a row drawn for four. It is the most an item may grow, as a factor on its drawn width,
 between 1 and 4; `null` or `1` turns it off. See "Fewer items that fill the row" in
 [layout-freedom.md](layout-freedom.md). Render `sampleDeck(template, { items: 'min' })` to look at the result.
+
+`emphasis` is the item, by its number from 1, that the slide draws to stand out (from 0.7.0): a first card in
+green among white ones. In a deck that reads the other way, the items then change places with their looks, so
+the green card is still the first for the deck's readers; without it their texts change places and the green
+card marks the last. `suggestChanges` finds it (`row-emphasis`). `null` says no item stands out.
+
+`spread` lets the lines of a row or grid stand further apart when there are fewer of them than the slide draws
+(from 0.7.0): an agenda of three in a list drawn for six spreads down the slide instead of bunching in its
+middle. It is the most the space from one line to the next may grow, as a factor on the drawn step, between 1
+and 3, and never past the area the lines are drawn in; `1.6` suits most lists. `null` or `1` turns it off. A
+row whose items stand on one line has no lines to spread, and is refused.
 
 #### `removeRepeat`
 
@@ -642,7 +659,7 @@ What it does, in this order:
    be rendered. They are taken out, unless `remove` is `false`; then they stay, and no variant is made of
    them. Two patterns with one id are left for a person: nothing says which is meant. A grid said to take
    more than it draws takes what it draws, unless `remove` is `false`: a stored deck may have that many.
-4. Takes what the slides allow, as `suggestChanges` (below) lists it: `icon`, `row` and `row-max`, widening by
+4. Takes what the slides allow, as `suggestChanges` (below) lists it: `icon`, `row`, `row-max` and (from 0.7.0) `row-emphasis`, widening by
    the factor in `widen`, the variants in `variants`, and then the rows of those variants, because a layout
    without its picture has room its pattern did not have.
 5. With `icons: false`, sets every icon slot that would have to be filled to keep the template's own
@@ -728,9 +745,10 @@ apply as they stand.
 | `row` | Slots that name several items alike (`card1Text`, `card2Text`) in a pattern with no row, so every slide draws them all. | `setRepeat`, which finds the row. |
 | `row-max` | A row with room for more items than it takes, at a third of the drawn spacing or more. Never a grid, a row with an arrow, a line or a highlight among its items, or a row whose items touch or differ in width by more than the spacing can absorb. | `setRepeat` with `max`, and `span` when the row has to spread for it. |
 | `row-widen` | A row or grid where some number of items it takes leaves a line short of what the template draws, and the items keep their drawn width. Never a row with an arrow, a line or a highlight among its items. | `setRepeat` with `widen`. |
+| `row-emphasis` | A row or grid of three items or more whose slide draws one of them unlike the rest (another fill or outline), as a first card in green among white ones. In a deck that reads the other way their texts change places and the look stays where it is drawn, so it would mark another item. From 0.7.0. | `setRepeat` with `emphasis`. |
 | `variant` | A mirrored, text-only or shortened layout the slide allows and the manifest does not have. `variant` says which, and `slot` the text a `without` leaves out. A variant is known by the id a derived pattern gets, or by what it does to the slide (which shapes it takes away, what fills its pictures, on which side they sit), so one that was renamed and tuned is not offered again. | `derivePattern`. |
 
-`SUGGESTION_KINDS` lists the kinds. `row` and `row-max` are facts of the slide and safe to take. `icon` is a
+`SUGGESTION_KINDS` lists the kinds. `row`, `row-max` and `row-emphasis` are facts of the slide and safe to take. `icon` is a
 fact too, with one condition: icon slots are filled from the icon set the app gives the planner, and without
 one a pattern with a required icon slot is not offered. `row-widen` and `variant` are choices about how a deck
 should look.

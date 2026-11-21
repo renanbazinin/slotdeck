@@ -119,6 +119,7 @@ template's own font files: line counts depend on the real letter widths.
 | `validateDeck` (pass `measure`), `renderDeck` warnings | `text is 410 characters; the slot fits about 352` | `text takes 7 lines at 18 pt; the box holds 5 (2 lines too many). Text of about 290 characters fits.` |
 | Text longer than its budget that does fit | warning | no warning: the measurement decides |
 | Text within its budget that does not fit | no warning | warning |
+| A word that no line of its box holds (an address, a long number) | from 0.7.0, `validateDeck` and `renderDeck` with a loaded template tell it (`word-wider-than-line`), counted by the kinds of its letters at the slot's size; PowerPoint breaks such a word inside it | the measurement decides |
 | `planDeck`, `writeDeck`, `generateDeck`, `planEdit`, `editDeck`, the chat tools | a draft over a character budget goes back to the model | a draft that runs over its box goes back to the model, with the lines it takes and the length that fits |
 | `renderDeck` with `shrinkText` in the manifest | nothing | text that does not fit is set smaller, within the limit you state |
 | `checkManifest` | checks that slots point at real shapes | also tries every budget out and reports one that lets text run over |

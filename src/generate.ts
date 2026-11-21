@@ -9,6 +9,7 @@ import { planDeck } from './plan/plan.ts';
 import type { Brief, OutlineEntry, PlanOptions, PlanProgress } from './plan/plan.ts';
 import { renderDeck } from './render/render.ts';
 import type { Template } from './render/render.ts';
+import type { DeckProperties } from './render/properties.ts';
 
 export type GenerateProgress = PlanProgress | { stage: 'images'; done: number; total: number } | { stage: 'render' };
 
@@ -20,6 +21,12 @@ interface PictureOptions {
   /** How many pictures to generate at once. Defaults to 3. */
   imageConcurrency?: number;
   onProgress?: (event: GenerateProgress) => void;
+  /**
+   * What the file says of itself (see `RenderOptions.properties`): its title, language, number of
+   * slides and the version that made it, in place of the template's. Set unless `false`; an object
+   * adds an author, a date or the deck kept in the file. From 0.7.0.
+   */
+  properties?: DeckProperties | false;
 }
 
 export interface GenerateOptions extends Omit<PlanOptions, 'onProgress'>, PictureOptions {}
@@ -69,7 +76,7 @@ async function picturesAndPptx(
   const assets = await resolveAssets(template, deck, resolve);
 
   options.onProgress?.({ stage: 'render' });
-  const rendered = renderDeck(template, deck, options.layout ? { assets, layout: options.layout } : { assets });
+  const rendered = renderDeck(template, deck, { assets, ...(options.layout ? { layout: options.layout } : {}), ...(options.properties === false ? {} : { properties: options.properties ?? {} }) });
   return { pptx: rendered.pptx, assets };
 }
 

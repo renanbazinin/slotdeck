@@ -3,6 +3,123 @@
 What changed in each version, newest first, with what to do when upgrading. The version you have installed is
 in `node_modules/slotdeck/package.json`.
 
+## 0.7.0
+
+Hebrew decks read right, and mailed files are clean. Every change here is small, none needs the template's
+fonts, and each one changes what a reader of a mailed deck sees today: charts that can read from the right,
+a highlighted card that stays on the right option in an English deck, file properties that describe the deck
+and not its template, no links, comments or broken animations left over from the template's samples, and text
+a screen reader can use. The chat tools now carry their own system-prompt lines, and model calls ride out a
+short rate limit instead of failing.
+
+### Added
+
+- **Charts that read right to left** (`chartDirection` on the manifest, for decks that read right to left, or on
+  the deck). The first category of columns and lines stands on the right, with the value axis; horizontal bars
+  grow from the right with their names on the right; the room around a free slide's chart is mirrored, and a
+  legend of its own stands upright at the left, first series at the top (PowerPoint sets a legend under a chart
+  from the left whatever the chart reads); the data behind it (Edit Data) is a sheet that reads right to left. A pie is drawn as it is. Off
+  unless set: many Hebrew charts of time read from the left. See "Charts that read right to left" in
+  [languages.md](languages.md). `changeManifest` sets it with `{ op: 'setManifest', chartDirection: 'rtl' }`.
+- **An item drawn to stand out keeps its place in a deck that reads the other way** (`repeat.emphasis`). In an
+  English deck from a Hebrew template, the green "recommended" card used to stay on the right while the first
+  option's text moved left: the emphasis landed on the last option. With `emphasis`, the items change places
+  with their looks. `suggestChanges` finds such a row from the slide's fills (kind `row-emphasis`) and
+  `prepareManifest` takes it; on the right-to-left template it finds the one row that has it.
+- **Fewer lines spread down their area** (`repeat.spread`). An agenda of three in a list drawn for six bunched in
+  the middle beside a full-height divider; with `spread: 1.6` the space between lines grows up to 1.6 times,
+  within the area they are drawn in.
+- **Tables on a layout fill their frame** (`fill: true` on a table slot). A table with fewer rows than its sample
+  keeps the sample's height, its rows in the sample's proportions, and its columns of numbers end on the right
+  in a deck read from the left.
+- **File properties** (`RenderOptions.properties`, set by `generateDeck`, `editDeck` and the chat tools unless
+  their `properties` is `false`). The file has the deck's title, language, real number of slides and the
+  version of slotdeck that made it (custom property `slotdeck`), and no longer shows the template's sample
+  cover as its thumbnail in Outlook and Explorer. The template's other custom properties, such as a
+  confidentiality label, stay. A title that is no text is not written. `embedDeck: true` keeps the deck (without its brief and document) in the file;
+  `readEmbeddedDeck(pptx)` takes it out with its pictures, also after PowerPoint saved the file again. See
+  "File properties" in [rendering.md](rendering.md).
+- **`tools.instructions`**: the lines the chat model's system prompt needs for the tools, made from the same
+  options as the tool definitions. Add them to the app's own prompt in place of lines written by hand; they
+  change with an update as the tools do. See "The chat model's system prompt" in [chat-tools.md](chat-tools.md).
+- **`delivery: 'read'`** (on `PlanOptions` and the chat tools) for decks that are mailed and read: full
+  sentences, no closing slide of thanks or questions, and an agenda only in decks of more than ten slides.
+- **Retries** on `gemini()` and `geminiImages()`: `retries` (default 2) and `deadlineMs`. A rate limit that is no
+  spending cap or daily quota, 408, 500, 502, 503, 504, the recitation filter, a network that failed and a
+  timeout within a `deadlineMs` are tried again after a doubling wait with chance in it, or the wait the service
+  asks for; one deadline covers a whole call. Pictures are retried too. `retryDelay(error, attempt)` is the rule, for a provider of your own.
+- **Warnings a person should check** (planner only, with codes and Hebrew sentences, never sent back to the
+  model): contact details and figures the brief does not give (`text-details-unstated`: an email or web
+  address, a phone number, "24/7", a percentage), stand-ins such as "XX%" or "[name]" (`text-stand-in`), and
+  text about the slide itself such as "this slide" or "בשקף זה" (`text-about-slide`). On the 14 stored decks of
+  the right-to-left template they tell only the two invented "24/7" hotlines.
+- **A word no line of its box holds** (`word-wider-than-line`): without fonts, `validateDeck` and `renderDeck`
+  with a loaded template tell an address or a long number that PowerPoint can only break inside it.
+- **`null` in a chart's values** is a value that is not known: a gap in the chart and an empty cell in its data,
+  where it was drawn as 0. A chart written again in an edit keeps its gaps, unless the request gives the numbers
+  (a writer is given numbers only, and code puts a gap it filled back).
+
+### Changed
+
+- **What a screen reader is told.** A chart's frame says its kind and its values ("Column chart of Revenue: Q1
+  12, Q2 15"), a table's its headings and number of rows, both in Hebrew for a Hebrew deck; an icon that no one
+  described is marked as decoration (Office's "Mark as decorative"). Before, a chart said "column chart:" and
+  its series, a table nothing, and an icon was an unnamed picture.
+- **A chart's text is marked with the language of its names.** In a deck that reads right to left, a chart whose
+  categories or series have a Hebrew letter is marked `he-IL`, so PowerPoint places its brackets and punctuation
+  as Hebrew; it was `en-US`. A chart in English is written as before.
+- **A figure in a table cell** ("+12%") reads left to right in a deck that reads left to right from a template
+  that reads right to left, as text boxes have since 0.6.5.
+- **Every writer is told** never to state the organisation's own procedures, terms, prices, contacts, results or
+  plans that the brief does not give, and never to write about the slide itself as slide text. In a live check of
+  three thin briefs (six calls), no deck invented a contact, a hotline or a price, and decks set to be read were
+  written in sentences with no thank-you slide; a table still gave its plans terms of its own ("Unlimited 45m").
+  Review a deck made from a thin brief.
+
+### Fixed
+
+- **Cloned slides leave the template's sample leftovers behind.** A link on a sample run made the person's whole
+  paragraph a link to the template's page; it is taken off the filled run. A slide keeps only its layout and
+  what its own shapes point at, so the sample's comments and add-in tags go with their parts, and add-in data
+  on the slide and its shapes is dropped. An animation of a shape or a paragraph the slide no longer has is
+  taken out, and one with nothing left to animate goes whole: PowerPoint refused to open 0.6.9's file of a
+  template whose animated optional text a deck left out. A link of the design, such as a logo that links to a
+  website, stays.
+- **With fonts, a text in columns is measured at its column's width less the space between columns**
+  (`spcCol`), and the space before a first paragraph and after a last one is counted where the shape says
+  PowerPoint draws it (`spcFirstLastPara`). A free slide's copy of a shape no longer keeps `spcFirstLastPara`,
+  which its plan does not count. (These were planned as 0.6.10.)
+- The package no longer ships source maps that point at sources it does not include: 2.8 MB unpacked, from 4.2.
+
+### Upgrading from 0.6.9
+
+Nothing breaks. To get what 0.7.0 brings, the app does a few things once:
+
+- Add `tools.instructions` to the chat model's system prompt, and take out the lines about the tools that were
+  written there by hand.
+- In the studio, for a template whose Hebrew charts should read from the right:
+  `changeManifest(template, [{ op: 'setManifest', chartDirection: 'rtl' }])`. Prepare the template again, or
+  apply `suggestChanges(template, { kinds: ['row-emphasis'] })`, to mark rows with a card that stands out. Set
+  `spread` on lists and `fill` on tables where wanted. [prompts/upgrade-0.7.0.md](prompts/upgrade-0.7.0.md)
+  says all of it to the app's coding agent.
+- For an app whose decks are mailed and read, set `delivery: 'read'` on the chat tools.
+- Set `deadlineMs` on the Gemini adapters where a person waits for the answer.
+
+A stored deck changes where it renders again: the alternative text of its charts, tables and icons, and the
+language mark of a Hebrew chart. Its slides are otherwise the same file: on 14 stored decks of the right-to-left
+template nothing else changed, and the demo template's decks change only in those words (the golden test lists
+each). A deck renders with the template's file properties unless `properties` is given; the chat tools and
+`generateDeck` give it. Tests that pinned a chart's `descr`, retried a 503 exactly once, or expected a picture
+call to fail on the first 503, see the new behaviour. Decks are now told the new warnings above.
+
+### Known limits
+
+- The highlighted item is found only where exactly one item of three or more looks unlike the rest; two unlike
+  items do not say which stands out, and a pair of columns (`sequences`) is not moved.
+- Counting capitals and wide letters against character budgets without fonts was tried and left out: an
+  ordinary sentence near its budget came out a few hundredths over, and the count is not checked against
+  PowerPoint for that use.
+
 ## 0.6.9
 
 On a free slide, spacing gives way before size. A text a little too long for its box was set half a point

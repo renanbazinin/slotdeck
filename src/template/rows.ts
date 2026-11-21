@@ -1,8 +1,50 @@
 // Rows and grids of like items: finding one from the names of a pattern's slots, and working
 // out how many items a row has room for.
+import type { PptxPackage } from '../pptx/package.ts';
+import { NS, descendants, parseXml, rootElement, serializeXml } from '../pptx/xml.ts';
+import type { Element } from '../pptx/xml.ts';
 import type { Box, ShapeInfo, SlideInfo } from './inspect.ts';
 import type { PatternDef, RepeatDef, SlotDef } from './manifest.ts';
 import { rowRoom } from './measure.ts';
+
+/** What of a shape's properties is its look: how it is filled and outlined, and the theme style it takes these from. */
+const LOOK = new Set(['solidFill', 'gradFill', 'pattFill', 'blipFill', 'noFill', 'grpFill', 'ln', 'effectLst']);
+
+/** The look of an item: the fills and outlines of its shapes and of the shapes in them, with nothing of their place, size or text. */
+function lookOf(shapes: Element[]): string {
+  const parts: string[] = [];
+  for (const shape of shapes) {
+    for (const element of [shape, ...descendants(shape, NS.p, 'sp'), ...descendants(shape, NS.p, 'cxnSp')]) {
+      for (const child of Array.from(element.childNodes)) {
+        const node = child as Element;
+        if (node.nodeType !== 1) continue;
+        if (node.localName === 'style') parts.push(serializeXml(node as unknown as Parameters<typeof serializeXml>[0]));
+        if (node.localName === 'spPr') for (const property of Array.from(node.childNodes) as Element[]) if (property.nodeType === 1 && LOOK.has(property.localName ?? '')) parts.push(serializeXml(property as unknown as Parameters<typeof serializeXml>[0]));
+      }
+    }
+  }
+  return parts.join('');
+}
+
+/**
+ * The item of a row that the slide draws to stand out from the others, by its number from 1: the
+ * one item whose fills and outlines are not those of the rest, as a card in another colour among
+ * cards alike. `undefined` where the items all look alike, where more than one differs, or where
+ * the row has fewer than three items, as two unlike items do not say which of them stands out.
+ */
+export function standsOut(pkg: PptxPackage, slidePart: string, shapes: string[][]): number | undefined {
+  if (shapes.length < 3 || !pkg.has(slidePart)) return undefined;
+  const byId = new Map<string, Element>();
+  for (const props of descendants(rootElement(parseXml(pkg.readText(slidePart))), NS.p, 'cNvPr')) {
+    const shape = props.parentNode?.parentNode;
+    const id = props.getAttribute('id');
+    if (id && shape && shape.nodeType === 1) byId.set(id, shape as Element);
+  }
+  const looks = shapes.map((ids) => lookOf(ids.map((id) => byId.get(id)).filter((shape): shape is Element => shape !== undefined)));
+  const odd = looks.filter((look) => looks.filter((other) => other === look).length === 1);
+  const alike = new Set(looks.filter((look) => !odd.includes(look)));
+  return odd.length === 1 && alike.size === 1 ? looks.indexOf(odd[0] as string) + 1 : undefined;
+}
 
 /** A numbered slot name: what the item is called, its number, and what of the item it is (card, 2, Heading). */
 const NUMBERED = /^([a-z][A-Za-z]*?)(\d+)([A-Z][A-Za-z0-9]*)?$/;

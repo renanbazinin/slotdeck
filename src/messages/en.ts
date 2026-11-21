@@ -44,6 +44,10 @@ export const EN: IssueCatalogue = {
   'chart-over-series': (v) => `the chart has ${v.series} series; the slot fits ${v.most}`,
   'chart-format-unknown': (v) => `chart format ${v.format} is not known and is ignored; use "number" or "percent"`,
   'chart-values-unstated': (v) => `chart values not stated in the brief: ${v.numbers}. Check them before using the deck.`,
+  'text-details-unstated': (v) => `${v.count === 1 ? 'a detail' : 'details'} not stated in the brief: ${v.details}. Check ${v.count === 1 ? 'it' : 'them'} before using the deck.`,
+  'word-wider-than-line': (v) => `"${v.word}" (${characters(v.chars)}) is wider than a line of its box, so PowerPoint breaks it inside the word`,
+  'text-stand-in': (v) => `a stand-in where a value belongs: ${v.found}. Write the real value, or leave it out.`,
+  'text-about-slide': (v) => `the text speaks about the slide ("${v.found}") where it should say its content.`,
   'text-orphan': (v) => `the last of its ${lines(v.lines)} holds one word, ${v.word}. Text of about ${v.chars} characters ends a line sooner; a few words more fill the line.`,
   'text-empty': (v) =>
     `text takes ${lines(v.lines)} ${v.sampleLines !== undefined ? `where the template's own text takes ${v.sampleLines}` : `in a box that holds ${v.capacity}`}, so its box will look empty. Text of about ${v.chars} characters fills it as designed.`,

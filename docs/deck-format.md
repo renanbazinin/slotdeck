@@ -87,6 +87,7 @@ manifest.
 | `brief` | string | no | The request the deck was written from. `editDeck` uses it as background. |
 | `language` | string | no | BCP 47 tag of the deck's text, such as `en` or `he`. |
 | `direction` | `"ltr"` or `"rtl"` | no | Reading direction. Defaults to the template's. See [languages.md](languages.md). |
+| `chartDirection` | `"ltr"` or `"rtl"` | no | The direction the deck's charts read. `rtl` puts the first category of columns and lines on the right, with their value axis, and grows horizontal bars from the right. Left out, the manifest's `chartDirection` for a deck that reads right to left, and left to right otherwise. A pie is drawn as it is. See "Charts that read right to left" in [languages.md](languages.md). From 0.7.0. |
 | `fields` | object of strings | no | Values shared by every slide, by field name. See "Deck fields" below. |
 | `textScale` | number | no | Size of body text as a factor on the template's: `1` as designed, `1.25` large, `1.5` extra large. See [layout-freedom.md](layout-freedom.md). From 0.6.0 a value that is no number, or one outside 0.1 to 300, is an error. `null` is read as not set, and a number written as text, such as `"1.25"`, as that number. A size that this factor times the manifest's `textScale` takes past 4000 pt or under 1 pt, which PowerPoint does not open, is written as 4000 pt or 1 pt. |
 | `layouts` | `PatternDesign[]` | no | Layouts made for this deck (see "New layouts for a deck" in [generating.md](generating.md)). Slides use them by their `id`, like the template's patterns. |
@@ -146,7 +147,7 @@ An `ImageRef`:
 | Field | Type | Required | Meaning |
 | --- | --- | --- | --- |
 | `asset` | string | yes | The id of the picture. The bytes are passed to `renderDeck` in `options.assets` under this id. |
-| `alt` | string | no | Alternative text for screen readers, stored on the picture. |
+| `alt` | string | no | Alternative text for screen readers, stored on the picture. From 0.7.0 an icon without it is marked as decoration (Office's "Mark as decorative"), so that a screen reader passes over it instead of reading out an unnamed picture. |
 | `prompt` | string | no | A description the picture can be generated from. Written by the planner for photos; lets the picture be made again later. |
 
 How the picture is placed depends on the slot (`fit` in the manifest):
@@ -171,6 +172,8 @@ A `TableValue`:
 - The template table's first row supplies the header style and its following rows supply the body styles in
   turn (so banding is kept). Columns share the table's width equally.
 - Limits (`maxColumns`, `maxRows`, `maxCellChars`) are soft.
+- From 0.7.0 the table's frame carries alternative text that says its headings and how many rows it has, such as
+  "Table: Station, Docks; 2 rows", in Hebrew for a deck in Hebrew that reads right to left.
 
 ### Chart slot
 
@@ -189,10 +192,18 @@ A `ChartValue`, which becomes a native PowerPoint chart that can be changed with
 | --- | --- | --- | --- |
 | `type` | `"column"`, `"bar"`, `"line"` or `"pie"` | yes | `column` has vertical bars, `bar` horizontal ones. |
 | `categories` | string[] | yes | Labels along the axis, or the names of the pie slices. At least one. |
-| `series` | `{ name, values }[]` | yes | At least one. Each `values` array must have exactly one number per category. A pie takes exactly one series. |
+| `series` | `{ name, values }[]` | yes | At least one. Each `values` array must have exactly one number per category, or `null` for a value that is not known. A pie takes exactly one series. |
 | `format` | `"number"` or `"percent"` | no | `percent` shows values with a percent sign (45 is shown as 45%). Any other value is ignored with a warning. |
 
 Bars start at zero. Colours and fonts come from the manifest.
+
+A value that is not known is `null`: the chart leaves a gap there (no bar, no point on a line, an empty cell in
+Edit Data), where a 0 would tell the reader it was nothing. A chart needs at least one value that is known. Before
+0.7.0, `null` was drawn as 0.
+
+The chart's frame carries alternative text that says its kind and its values, such as "Column chart of Revenue:
+Q1 12, Q2 15, Q3 19", in Hebrew for a deck in Hebrew that reads right to left. From 0.7.0; before, it named the
+kind and the series only.
 
 ### Leaving a slot out
 

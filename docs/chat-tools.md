@@ -41,6 +41,8 @@ const tools = presentationTools({
   review,                                       // optional DeckReview: a second look at every draft (design-checks.md)
   free: true,                                   // optional: free slides, for content no layout shows; on unless false (see below)
   countSpacing: true,                           // optional: a layout's budget told with its template's spacing counted (generating.md); on unless false
+  delivery: 'read',                             // optional, 0.7.0: decks read on their own, not presented: full sentences, no thank-you slide (generating.md)
+  properties: { author: 'Studio' },             // optional, 0.7.0: what each file says of itself (rendering.md); set unless false
   composeLayouts: 2,                            // optional: new layouts for such slides in place of free slides; needs free: false (generating.md)
   patterns: ['cover', 'text-only', 'free'],     // optional: the only layouts the tools may use
   colors: true,                                 // optional: whether a person may ask for another colour; false leaves accent_color and color_slides out
@@ -561,36 +563,42 @@ async function runTurn(messages) {
 `chatModel`, `offerDownload` and the message shape are your application's; only `tools.definitions` and
 `tools.call` come from slotdeck.
 
-## Guidance for the chat model's system prompt
+## The chat model's system prompt
 
-The tool descriptions already tell the model the order to work in. It helps to add, in your own system prompt:
+The tool descriptions tell the model how to call each tool. What holds for the whole conversation (pass a
+number of slides on, tell the person about a cut before going on, show the plan before making the
+presentation) belongs in the chat model's system prompt. From 0.7.0 the tools carry those lines themselves, in
+`tools.instructions`, made from the same options as `tools.definitions`. Add them to your own prompt as they
+are:
 
-- When the person wants their own text on the slides, have the chat model name it in `documents` and keep
-  `topic` to what the presentation is for. A shorter paste, which is not listed, goes in `instructions`, whole
-  and word for word, in quotation marks. Otherwise put every fact, figure and name the person gave into
-  `topic`. A number that is in none of these is not used.
-- Set `slide_count` whenever the person names a number of slides, and pass an amount of text on in
-  `instructions` as they said it. The chat model should not split slides or shorten text itself: the planner
-  sets long text smaller.
-- When a tool's result has `note`, `not_on_slides` or `warnings`, the chat model tells the person before it goes
-  on. It sets `accept_cut` only after the person accepted the cut.
-- The chat model speaks the language the person writes in. What the tools say is English: it retells it in its
-  own words, in the person's language, with the same slide numbers and figures, and never pastes it as it is.
-  The results say so in `next` (from 0.6.4); a line in the system prompt makes it hold for the whole
-  conversation.
-- Pass wishes about the kind of slides on, in the person's words ("no tables", "only cards"), in `topic` or
-  `instructions`. For a presentation of text only, set `text_only: true`: "no pictures" alone
-  (`image_density: "none"`) still allows cards, tables and charts.
-- A slide can hold several charts or tables, or any number of cards or figures, and several pictures where your
-  app has an image provider or pictures of its own. When the person asks for that ("all six charts on one
-  slide", "twelve logos on one page"), pass the wish on in `instructions` in their words, with the number they
-  said. Do not answer that the template has no such layout.
-- Every number a chart is to show must appear in `topic`. A chart the person gave no numbers for is left off the
-  slide, and the result says so in `warnings`: pass that on. The check looks for each number of a chart in what
-  the person gave; it does not tell whether the number stands in the right chart.
-- Show the plan and wait for approval before calling `create_presentation`.
-- For a change to a finished presentation, call `edit_presentation` with the person's words; do not plan again
-  from scratch. That goes for a slide of many parts too: "add a chart for the new store to slide 3" or "take the
-  second picture off" changes those parts and leaves the others as they are. Give the numbers of a new chart in
-  the instruction.
-- Refer to presentations and plans by id only. Never ask for or produce deck JSON.
+```ts
+const tools = presentationTools({ template, llm, store, images, documents: true, fields });
+const system = [yourOwnPrompt, tools.instructions].join('\n\n');
+```
+
+They change with an update of slotdeck as the tools do, so the prompt never lags behind the tools; do not copy
+them into your code. For the demo template, with an image provider, `documents: true` and free slides on, they
+read:
+
+```text
+Making presentations with the tools plan_presentation, edit_presentation_plan, create_presentation and edit_presentation:
+- When the user wants their own text on the slides, name it in "documents" and keep "topic" to what the presentation is for. A shorter text of theirs that is not listed goes in "instructions", whole and word for word, in quotation marks. Otherwise put every fact, figure and name the user gave into "topic": a number that is in none of these is not used.
+- Set "slide_count" whenever the user names a number of slides, and pass an amount of text on in "instructions" as they said it. Do not split slides or shorten text yourself: the planner sets long text smaller.
+- When a result has "note", "not_on_slides" or "warnings", tell the user before you go on. Set "accept_cut" only after the user accepted the cut.
+- Speak the language the user writes in. What the tools say is English: retell it in your own words, in the user's language, with the same slide numbers and figures, and never paste it as it is.
+- Pass wishes about the kind of slides on in the user's words ("no tables", "only cards"), in "topic" or "instructions". For a presentation of text only, set "text_only": true; "no pictures" alone ("image_density": "none") still allows cards, tables and charts.
+- A slide can hold several charts, tables or pictures, or any number of cards or figures. When the user asks for that ("all six charts on one slide"), pass the wish on in "instructions" in their words, with the number they said. Do not answer that the template has no such layout.
+- Every number a chart is to show must be in "topic". A chart the user gave no numbers for is left off the slide, and the result says so in "warnings": pass that on.
+- Show the plan to the user and wait for their approval before you call create_presentation.
+- For a change to a finished presentation, call edit_presentation with the user's words; do not plan again from scratch. That goes for a slide of many parts too ("add a chart for the new store to slide 3"). Give the numbers of a new chart in the instruction.
+- Refer to presentations and plans by their ids only. Never ask for or write deck JSON.
+```
+
+A chart the person gave no numbers for is left off its slide, and the result says so in `warnings`. The check
+looks for each number of a chart in what the person gave; it does not tell whether the number stands in the right
+chart.
+
+A line that needs what the tools were not built with is left out or worded for it: without `documents`, the
+person's own text goes whole into `instructions`; without free slides, nothing is said of several charts on one
+slide or of long text set smaller. An app that wrote these lines into its prompt by hand before 0.7.0 takes
+them out and adds `tools.instructions` in their place.

@@ -1,6 +1,6 @@
 import { DeckValidationError, validateDeck } from '../deck/validate.ts';
 import type { Issue } from '../deck/validate.ts';
-import { unstatedChartValues } from '../deck/numbers.ts';
+import { keptGaps, statedNumbers, unstatedChartValues, unstatedDetails } from '../deck/numbers.ts';
 import { FREE_PATTERN, isChartValue, isFreeSlide, isImageRef, toParagraphs } from '../deck/spec.ts';
 import type { DeckColors, DeckSpec, FreeArrange, FreeBlockKind, SlideSpec, SlotValue } from '../deck/spec.ts';
 import { isFreeBlockKind } from '../free/blocks.ts';
@@ -743,7 +743,7 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
   const partsNow = freeSlides.reduce((sum, slide) => sum + (slide.blocks?.length ?? 0), 0);
   const room =
     planRoom(deck.slides.length + 10) * 1.5 + (freeIn ? FREE_ENTRY_ROOM * (deck.slides.length + 10) + partsRoom(partsNow, instruction) : 0) + (docNow ? 8 * (deck.slides.length + 10) : 0);
-  const planSystem = systemPrompt(currentLanguage, 'deck', docNow !== undefined);
+  const planSystem = systemPrompt(currentLanguage, 'deck', docNow !== undefined, options.delivery);
   let plan = readPlan(await asker(options.llm, planSystem, options.signal, 'low')(planRequest, planSchema, room));
   if (plan.problem) {
     const retry = `${planRequest}\n\nYour previous answer could not be used: ${plan.problem}. Answer again.`;
@@ -1477,7 +1477,7 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
       .filter(Boolean)
       .join('\n\n');
 
-  const system = systemPrompt(language, 'deck', doc !== undefined);
+  const system = systemPrompt(language, 'deck', doc !== undefined, options.delivery);
   // A text written well short of the length asked for it goes back once, with the first answer's
   // problems, and so does a slide that keeps too few of the words of its text from the document.
   // The issues that send them are the writer's alone: the deck is told after the last answer.
@@ -1509,6 +1509,12 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
 
   const errors = draft.issues.filter((issue) => issue.severity === 'error');
   if (errors.length > 0) throw new DeckValidationError(errors);
+  // A chart's values that were not known stay so where the request gives no number for them.
+  const statedNow = statedNumbers([instruction, deck.brief ?? '', deck.document ?? ''].join('\n'));
+  for (const job of jobs) {
+    const now = draft.deck.slides[job.number - 1];
+    if (now && job.source) draft.deck.slides[job.number - 1] = keptGaps(job.source, now, statedNow);
+  }
   if (doc) notes.push(...keptWarnings(doc, keptChecks, draft.deck));
   notes.push(...writtenUnder(draft.deck, told).map((under) => writtenShort(under, language)));
   // A slide the plan had words for and named no part of to write: its title was offered. Where
@@ -1530,5 +1536,7 @@ export async function planEdit(template: Template, deck: DeckSpec, instruction: 
     return kept !== undefined && !kept.has(JSON.stringify(draft.deck.slides[(issue.slide as number) - 1]?.slots[issue.slot ?? '']));
   });
   const rewritten = [...jobs.map((job) => job.number).filter((number) => !same.has(number)), ...reshaped].sort((a, b) => a - b);
-  return result(draft.deck, rewritten, [...draft.issues.filter((issue) => !sent.has(issue)), ...unstated]);
+  // The details of the slides written now, as their chart numbers.
+  const details = unstatedDetails(draft.deck, new Set(rewritten));
+  return result(draft.deck, rewritten, [...draft.issues.filter((issue) => !sent.has(issue)), ...unstated, ...details]);
 }

@@ -132,7 +132,7 @@ test('a draft can keep rows as drawn, or let their items widen', async () => {
   await assert.rejects(draftManifest(pptx, { llm: labelling().llm, slides: [4], rows: 'Fit' as unknown as 'fit' }), /rows is "fit" or "drawn", not "Fit"/);
   await assert.rejects(draftManifest(pptx, { llm: labelling().llm, slides: [4], variants: ['without' as unknown as 'mirror'] }), /a draft adds the variants "mirror" and "text-only", not "without"/);
   // The same for a kind of suggestion that does not exist. A factor is looked at only when widening is asked about.
-  assert.throws(() => suggestChanges(loadTemplate(pptx, cardsManifest), { kinds: ['rows' as unknown as 'row'] }), /"rows" is not a kind of suggestion; the kinds are icon, row, row-max, row-widen, variant/);
+  assert.throws(() => suggestChanges(loadTemplate(pptx, cardsManifest), { kinds: ['rows' as unknown as 'row'] }), /"rows" is not a kind of suggestion; the kinds are icon, row, row-max, row-widen, row-emphasis, variant/);
   assert.doesNotThrow(() => suggestChanges(loadTemplate(pptx, cardsManifest), { kinds: ['row-max'], widen: 9 }));
 });
 
@@ -162,7 +162,7 @@ test('suggestChanges lists what the slides allow that a manifest does not use, a
 
   assert.deepEqual(kindsOf(suggestChanges(template, { kinds: ['row-max'] })), ['row-max cards']);
   assert.deepEqual(suggestChanges(template, { kinds: ['row-widen'], widen: 1.5 })[0]?.changes, [{ op: 'setRepeat', pattern: 'cards', widen: 1.5 }]);
-  assert.deepEqual([...SUGGESTION_KINDS], ['icon', 'row', 'row-max', 'row-widen', 'variant']);
+  assert.deepEqual([...SUGGESTION_KINDS], ['icon', 'row', 'row-max', 'row-widen', 'row-emphasis', 'variant']);
 
   // Taking them all leaves nothing more to suggest.
   const result = changeManifest(template, suggestions.flatMap((suggestion) => suggestion.changes));

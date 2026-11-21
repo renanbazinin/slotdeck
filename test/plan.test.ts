@@ -545,14 +545,15 @@ test('a text-only deck is offered the plain text patterns and nothing else', asy
   await assert.rejects(planOutline(cardsOnly, { prompt: 'Dogs', textOnly: true }, { llm, icons }), /has no plain text pattern, so a text-only deck cannot be planned/);
 });
 
-test('gemini() asks once more after a failure that passes by itself, and not after one that will not', async () => {
+test('gemini() asks again after a failure that passes by itself, and not after one that will not', async () => {
   const good = { status: 'completed', steps: [{ type: 'model_output', content: [{ type: 'text', text: '{"ok":true}' }] }] };
   const sequence = (answers: Array<[status: number, body: unknown]>) => {
     let calls = 0;
     const fetch = (async () => {
       const [status, body] = answers[Math.min(calls, answers.length - 1)] as [number, unknown];
       calls++;
-      return new Response(JSON.stringify(body), { status });
+      // A failure asks for no wait, so that the test does not wait the seconds a service would be given.
+      return new Response(JSON.stringify(body), { status, headers: status === 200 ? {} : { 'retry-after': '0' } });
     }) as typeof globalThis.fetch;
     return { fetch, calls: () => calls };
   };
@@ -566,10 +567,13 @@ test('gemini() asks once more after a failure that passes by itself, and not aft
   const overloaded = sequence([[503, { error: { message: 'The model is overloaded' } }], [200, good]]);
   assert.deepEqual(await gemini({ model: 'm', fetch: overloaded.fetch }).generateJson(request), { ok: true });
 
-  // A second failure in a row is reported.
+  // A third failure in a row is reported; retries: 0 sends once.
   const down = sequence([[503, { error: { message: 'The model is overloaded' } }]]);
   await assert.rejects(gemini({ model: 'm', fetch: down.fetch }).generateJson(request), /overloaded/);
-  assert.equal(down.calls(), 2);
+  assert.equal(down.calls(), 3);
+  const once = sequence([[503, { error: { message: 'The model is overloaded' } }]]);
+  await assert.rejects(gemini({ model: 'm', fetch: once.fetch, retries: 0 }).generateJson(request), /overloaded/);
+  assert.equal(once.calls(), 1);
 
   // A bad key, a spending cap or a bad request will fail the same way again, so it is not repeated.
   for (const [status, message] of [[401, 'API key not valid'], [429, 'Your project has exceeded its monthly spending cap'], [400, 'Schema is too complex']] as const) {

@@ -2642,3 +2642,20 @@ test('the pages on planning show the answer a model gives and quote the messages
   assert.ok(sixty.requests.some((request) => request.prompt.includes(`\n${quoted}\n`)), quoted);
   assert.ok(page('free-slides.md').includes('(`the 31st to the 60th chart of the slide`)'));
 });
+
+test('a chart written again in a change keeps the values it did not know, unless the request gives them', async () => {
+  const slide = storesSlide();
+  const gapped: ChartValue = { ...chartOf('North'), series: [{ name: 'North', values: [10, null, 12, 18] }] };
+  slide.slots.b1Chart = gapped;
+  const deck = storesDeck(slide);
+  const translate = { ...changeOf(stay(1, 'cover'), stay(2, 'free', { side_by_side: 3 }), stay(3, 'closing')), language: 'fr' };
+  // The writer is given numbers only: it fills the gap, here with 0, and renames what it translates.
+  const written = (q2: number) => ({ ...slide.slots, title: 'Ventes par magasin', b1Chart: { type: 'column', categories: ['T1', 'T2', 'T3', 'T4'], series: [{ name: 'Nord', values: [10, q2, 12, 18] }] } });
+  const filled = scripted(translate, { s1: { title: 'Magasins' }, s2: written(0), s3: { title: 'Merci' } });
+  const result = await planEdit(demo, deck, 'In French', { llm: filled.llm, ...adaptive });
+  assert.deepEqual(result.deck.slides[1]?.slots.b1Chart, { type: 'column', categories: ['T1', 'T2', 'T3', 'T4'], series: [{ name: 'Nord', values: [10, null, 12, 18] }] });
+  // A number the request gives fills it.
+  const given = scripted(translate, { s1: { title: 'Magasins' }, s2: written(14), s3: { title: 'Merci' } });
+  const told = await planEdit(demo, deck, 'In French. North sold 14 in Q2.', { llm: given.llm, ...adaptive });
+  assert.deepEqual((told.deck.slides[1]?.slots.b1Chart as ChartValue).series[0]?.values, [10, 14, 12, 18]);
+});

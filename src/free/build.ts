@@ -321,7 +321,8 @@ function prepareText(copy: Element, shape: MadeShape, kit: FreeKit, writing: Wri
   box.setAttribute('tIns', '0');
   box.setAttribute('bIns', '0');
   box.setAttribute('anchor', shape.anchor === 'ctr' ? 'ctr' : shape.anchor === 'b' ? 'b' : 't');
-  for (const name of ['vert', 'numCol', 'spcCol', 'rtlCol', 'rot']) box.removeAttribute(name);
+  // Nor does it draw space before its first paragraph or after its last, which the plan does not count.
+  for (const name of ['vert', 'numCol', 'spcCol', 'rtlCol', 'rot', 'spcFirstLastPara']) box.removeAttribute(name);
   if (shape.columns && shape.columns > 1) {
     box.setAttribute('numCol', String(shape.columns));
     box.setAttribute('spcCol', String(Math.round(kit.gap * kit.slideWidth)));

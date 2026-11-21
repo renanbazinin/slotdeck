@@ -144,3 +144,19 @@ test('operations, roles and tools are documented under their real names', () => 
     }
   }
 });
+
+test('the system prompt lines in chat-tools.md are the ones the tools carry', () => {
+  const shown = /## The chat model's system prompt[\s\S]*?```text\n([\s\S]*?)\n```/.exec(read('chat-tools.md'))?.[1];
+  assert.ok(shown, 'chat-tools.md shows the lines');
+  const manifest = JSON.parse(readFileSync(join(root, 'templates', 'demo.manifest.json'), 'utf8')) as TemplateManifest;
+  const template = loadTemplate(readFileSync(join(root, 'templates', 'demo.pptx')), manifest);
+  const tools = presentationTools({
+    template,
+    llm: { generateJson: async () => ({}) as never },
+    store: memoryStore(),
+    images: { generateImage: async () => new Uint8Array() },
+    documents: true,
+    fields: { organizationDepartment: 'Strategy office' },
+  });
+  assert.equal(shown, tools.instructions);
+});
