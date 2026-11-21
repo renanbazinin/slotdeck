@@ -32,6 +32,8 @@ import { inheritedBackground, ownBackground, ownTheBackground, paletteOf, recolo
 import { contrast } from '../color/space.ts';
 import { CHART_CONTENT_TYPE, CHART_REL_TYPE, WORKBOOK_CONTENT_TYPE, WORKBOOK_REL_TYPE, buildChartWorkbook, buildChartXml, chartFrameXml } from './chart.ts';
 import { chartAlt } from './alt.ts';
+import { writeProperties } from './properties.ts';
+import type { DeckProperties } from './properties.ts';
 import { setPicture } from './picture.ts';
 import type { PictureFill } from './picture.ts';
 import { fitTable, setTable } from './table.ts';
@@ -80,6 +82,14 @@ export interface RenderOptions {
    * `adaptive`: optional slots may be left out, and their shapes are removed.
    */
   layout?: LayoutMode;
+  /**
+   * Writes what the file says of itself, as a deck and not as its template: its title, language,
+   * author and date, its number of slides, and the version of slotdeck that made it; the
+   * template's picture of its cover, which Outlook and Explorer show, is taken out. `embedDeck`
+   * keeps the deck in the file (see `readEmbeddedDeck`). Left out, the file keeps the template's
+   * properties, as before 0.7.0, and is the same file. `generateDeck` and the chat tools set it.
+   */
+  properties?: DeckProperties;
 }
 
 export interface RenderResult {
@@ -216,6 +226,8 @@ ${colors?.key}` : assetId;
     return shapes.get(shapeId);
   };
   const usedSlideParts = new Set<string>();
+  /** Where each picture of the deck stands, by slide and shape: what a deck kept in its file names its pictures by. */
+  const placed: Array<{ asset: string; slide: number; shape: string }> = [];
 
   const newSlideParts: string[] = [];
   deck.slides.forEach((slide, index) => {
@@ -309,6 +321,8 @@ ${colors?.key}` : assetId;
           };
         }
         setPicture(shape, fill);
+        // A pictogram in other colours is not the picture the deck names.
+        if (media.get(action.image.asset) === image) placed.push({ asset: action.image.asset, slide: number, shape: slot.shapeId });
       } else if (action.type === 'table' && slot.kind === 'table') {
         // The colours of its text are written onto the slide, and change with the slide below.
         const box = (slot as { box?: SlideBox }).box;
@@ -406,6 +420,8 @@ ${colors?.key}` : assetId;
 
   out.write(pres.part, serializeXml(presDoc));
   writeRels(out, pres.part, presRels);
+
+  if (options.properties) writeProperties(out, types, pres.part, deck, newSlideParts.length, options.properties, { language: manifest.language }, placed);
 
   pruneUnreachable(out, types);
   types.save(out);

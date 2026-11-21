@@ -30,6 +30,35 @@ function renderDeck(template: Template, deck: DeckSpec, options?: RenderOptions)
 
 Deck JSON to pptx bytes. Synchronous, no model. Throws `DeckValidationError` when the deck has errors.
 
+With `options.properties` (from 0.7.0) the file says what it is as a deck, not as its template: a title (the
+given one, else the deck's `title`, else its first slide's title), a language, an author and a date where they
+are given, its real number of slides, and the version of slotdeck that made it as the custom property
+`slotdeck`. The template's own title, author, dates, its lists of sample slide titles and its picture of its
+cover, which Outlook and Explorer show for the file, are taken out; its other custom properties, such as a
+label of how confidential it is, stay. A date is written only where it is given, so that the same deck gives
+the same file. Without the option the file keeps the template's properties and is the same file as before
+0.7.0. `generateDeck`, `editDeck` and the chat tools set it unless their `properties` is `false`.
+
+### `readEmbeddedDeck`
+
+```ts
+function readEmbeddedDeck(pptx: Uint8Array): EmbeddedDeck | undefined;
+interface EmbeddedDeck { deck: DeckSpec; version: string; assets: Record<string, Uint8Array> }
+```
+
+Takes out of a pptx the deck that `renderDeck` kept in it with `properties: { embedDeck: true }`, the version
+of slotdeck that made the file, and the bytes of its pictures by asset id: `renderDeck(template, found.deck,
+{ assets: found.assets })` renders it again. The deck kept has no `brief` and no `document`. `undefined` for a
+file that keeps none; PowerPoint keeps it when the file is saved again. Throws for bytes that are no pptx.
+
+### `SLOTDECK_VERSION`
+
+```ts
+const SLOTDECK_VERSION: string; // '0.7.0'
+```
+
+The version of the package, as a file rendered with `properties` states it.
+
 ### `validateDeck`
 
 ```ts
@@ -90,7 +119,14 @@ Tell the kinds of slot value apart when walking a deck.
 interface Template { pkg: PptxPackage; manifest: TemplateManifest; fonts?: FontMetrics }
 interface TemplateOptions { fonts?: FontMetrics }
 
-interface RenderOptions { assets?: Record<string, Uint8Array>; layout?: LayoutMode }
+interface RenderOptions { assets?: Record<string, Uint8Array>; layout?: LayoutMode; properties?: DeckProperties }
+interface DeckProperties {
+  title?: string;        // left out: the deck's title, else its first slide's
+  language?: string;     // left out: the deck's, else the template's
+  author?: string;       // left out: no one is named
+  date?: Date | string;  // left out: no date, so the same deck gives the same file
+  embedDeck?: boolean;   // keeps the deck in the file, for readEmbeddedDeck
+}
 interface RenderResult {
   pptx: Uint8Array;
   warnings: Issue[];
@@ -627,12 +663,14 @@ interface GenerateOptions extends Omit<PlanOptions, 'onProgress'> {
   cache?: Map<string, Uint8Array>;
   imageConcurrency?: number;
   onProgress?: (event: GenerateProgress) => void;
+  properties?: DeckProperties | false; // what the file says of itself (RenderOptions.properties); set unless false
 }
 interface EditDeckOptions extends Omit<EditOptions, 'onProgress'> {
   images?: ImageProvider;
   cache?: Map<string, Uint8Array>;
   imageConcurrency?: number;
   onProgress?: (event: GenerateProgress) => void;
+  properties?: DeckProperties | false; // what the file says of itself (RenderOptions.properties); set unless false
 }
 type GenerateProgress = PlanProgress | { stage: 'images'; done: number; total: number } | { stage: 'render' };
 
@@ -831,6 +869,7 @@ interface PresentationToolsOptions {
   assets?: AssetDef[];
   layout?: LayoutMode;
   fields?: Record<string, string>;
+  properties?: DeckProperties | false; // what a presentation's file says of itself (RenderOptions.properties); set unless false
   numberPatterns?: 'from-brief' | 'always' | 'never';
   review?: DeckReview; // a second look at every draft the tools write
   composeLayouts?: number; // new layouts for a new plan, as for planOutline; none while free slides are on offer

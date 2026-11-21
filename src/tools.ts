@@ -24,6 +24,7 @@ import { previewExtension } from './preview/provider.ts';
 import type { PreviewProvider, SlidePreview } from './preview/provider.ts';
 import { renderDeck } from './render/render.ts';
 import type { Template } from './render/render.ts';
+import type { DeckProperties } from './render/properties.ts';
 import { readJson, writeJson } from './store.ts';
 import type { BlobStore } from './store.ts';
 import type { PatternDef } from './template/manifest.ts';
@@ -48,6 +49,12 @@ export interface PresentationToolsOptions {
   layout?: LayoutMode;
   /** Deck-level values every deck gets, e.g. the unit shown in the header. */
   fields?: Record<string, string>;
+  /**
+   * What a presentation's file says of itself (see `RenderOptions.properties`): its title,
+   * language, number of slides and the version that made it, in place of the template's. Set
+   * unless `false`; an object adds an author, a date or the deck kept in the file. From 0.7.0.
+   */
+  properties?: DeckProperties | false;
   numberPatterns?: PlanOptions['numberPatterns'];
   /**
    * Whether the writer of a layout's slot of paragraphs is told what its box holds with the
@@ -951,7 +958,7 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
     await Promise.all([...cache].filter(([asset]) => !stored.has(asset)).map(([asset, data]) => store.set(storeKeys.asset(asset), data)));
 
     options.onProgress?.({ stage: 'render' }, tool);
-    const rendered = renderDeck(template, deck, options.layout ? { assets, layout: options.layout } : { assets });
+    const rendered = renderDeck(template, deck, { assets, ...(options.layout ? { layout: options.layout } : {}), ...(options.properties === false ? {} : { properties: options.properties ?? {} }) });
     const { pptx } = rendered;
     // What the file alone can tell of the deck as a whole (a colour close to the page it lands on)
     // is told too, once: the deck's own check may have said it already.
