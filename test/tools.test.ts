@@ -371,7 +371,16 @@ test('with documents the plan tool takes names', () => {
   const [plan, ...rest] = presentationTools({ template: demo, llm: noModel, store: memoryStore(), documents: true }).definitions;
   const properties = propertiesOf(plan);
   const before = propertiesOf(without[0]);
-  assert.deepEqual(Object.keys(properties), ['topic', 'slide_count', 'language', 'image_density', 'text_size', 'text_only', 'instructions', 'documents', 'accent_color', 'layouts']);
+  assert.deepEqual(Object.keys(properties), ['topic', 'slide_count', 'language', 'image_density', 'text_size', 'text_only', 'instructions', 'documents', 'document_parts', 'accent_color', 'layouts']);
+  assert.deepEqual(properties.document_parts, {
+    type: 'array',
+    items: { type: 'string' },
+    description:
+      'Only with documents, for a text too long to make a presentation of whole: the parts of it the presentation is made from. ' +
+      'Give each by the number or heading this tool listed for it ("2", "4-6", "Risks"), or by a heading the user named. ' +
+      'With several texts, put the text\'s name before a number ("report.pdf: 2"). A named text none of whose parts is named here is taken whole. ' +
+      'Leave it out to use the named texts whole: for some parts of a text that is not too long, say which in instructions.',
+  });
   assert.deepEqual(properties.documents, {
     type: 'array',
     items: { type: 'string' },
@@ -523,9 +532,15 @@ test('an unknown, empty or too long text is an error the chat model can act on',
   // A name is found by its own beginning only: "notes" begins no name here.
   assert.equal(String(await plan('notes', conversation)).startsWith('"documents" names a text the app does not have: "notes".'), true);
   assert.equal(await plan('notes', [{ name: 'notes', text: ' \n ' }]), 'The text "notes" is empty: tell the user it could not be read.');
+  // A text too long is answered with its parts, for the chat model to choose from: the person is never sent to paste a part.
+  const gardenLine = 'The garden grows. The garden grows. The…';
   assert.equal(
     await plan(['long.txt'], [{ name: 'long.txt', text: 'The garden grows. '.repeat(700) }]),
-    'The text is 12599 characters, and a presentation is made from at most 12000 (about 1,800 words). Ask the user to paste the part the presentation is about, and name that.',
+    'The text "long.txt" is 12599 characters, and a presentation is made from at most 12000 (about 1,800 words). ' +
+      'Do not ask the user to paste a part of it: call plan_presentation again with the same documents, and name in document_parts the parts the presentation is about, by number or heading, up to 12000 characters in all. ' +
+      'If the user did not say which parts they want, ask them first, and say what the parts are about. The slides carry only the parts named.\n' +
+      'The parts of "long.txt" (12599 characters, no headings), each with its characters:\n' +
+      [1, 2, 3, 4, 5].map((number) => `${number}. begins "${gardenLine}" (2521)`).join('\n'),
   );
   // Two texts, each of half of that: two texts and not one under two names, which is carried once.
   assert.equal(
@@ -533,13 +548,270 @@ test('an unknown, empty or too long text is an error the chat model can act on',
       { name: 'one', text: 'Seeds are shared. '.repeat(340) },
       { name: 'two', text: 'Beds are watered. '.repeat(340) },
     ]),
-    'The texts are 12240 characters, and a presentation is made from at most 12000 (about 1,800 words). Ask the user to paste the part the presentation is about, and name that.',
+    'The texts "one" and "two" are 12240 characters together, and a presentation is made from at most 12000 (about 1,800 words). ' +
+      'Do not ask the user to paste a part of them: call plan_presentation again with the same documents, and name in document_parts the parts the presentation is about, by number or heading, up to 12000 characters in all. ' +
+      'With several texts, put the text\'s name before a number ("one: 2"). A named text none of whose parts is named is taken whole. ' +
+      'If the user did not say which parts they want, ask them first, and say what the parts are about. The slides carry only the parts named.\n' +
+      'The parts of "one" (6119 characters, no headings), each with its characters:\n' +
+      '1. begins "Seeds are shared. Seeds are shared.…" (2035)\n2. begins "Seeds are shared. Seeds are shared.…" (2053)\n3. begins "Seeds are shared. Seeds are shared.…" (2035)\n' +
+      'The parts of "two" (6119 characters, no headings), each with its characters:\n' +
+      '1. begins "Beds are watered. Beds are watered. Beds…" (2035)\n2. begins "Beds are watered. Beds are watered. Beds…" (2053)\n3. begins "Beds are watered. Beds are watered. Beds…" (2035)',
   );
   assert.equal(requests.length, 0, 'no model is asked');
 });
 
 const LIBRARY = readFileSync(new URL('./fixtures/library-he.txt', import.meta.url), 'utf8');
 const libraryOutline = { title: 'הספרייה', slides: [{ pattern: 'content', purpose: 'למה לשפץ' }, { pattern: 'closing', purpose: 'תודה' }] };
+
+// --- parts of a text too long to take whole ---
+
+const BIKE_SECTIONS = ['Background', 'Riders', 'Costs', 'Stations', 'Risks', 'Next steps'].map((title) => `# ${title}\n\n${'The garden grows. '.repeat(120).trim()}`);
+const BIKE = BIKE_SECTIONS.join('\n\n');
+const BIKE_LIST =
+  'The parts of "bike-share.md" (13032 characters), each with its characters:\n' +
+  '1. Background (2175)\n2. Riders (2171)\n3. Costs (2170)\n4. Stations (2173)\n5. Risks (2170)\n6. Next steps (2175)';
+const bikeList: ChatDocument[] = [{ name: 'bike-share.md', text: BIKE }];
+/** Paragraphs of different sentences, at least `chars` characters, so that two texts are not one under two names. */
+const paragraphOf = (seed: number, chars: number): string => {
+  const lines: string[] = [];
+  for (let at = 0; lines.join('\n\n').length < chars; at++) lines.push(`Point ${seed}.${at} says what the review found about item ${seed * 100 + at}, in a full sentence.`);
+  return lines.join('\n\n');
+};
+/** An outline that puts every passage of the document on one free slide. */
+const everyPassage = (request: JsonRequest): unknown => {
+  const passages = Number(/in (\d+) numbered passages/.exec(request.prompt)?.[1] ?? 0);
+  return { title: 'Parts', left_out: [], asked_slides: 0, document_language: 'en', slides: [{ pattern: 'free', purpose: 'All of it', passages: Array.from({ length: passages }, (_, at) => at + 1), ...freeText }] };
+};
+/** Plans from named texts and parts, with a planner that places every passage. */
+const fromParts = async (documents: unknown, parts: unknown, list: ChatDocument[], more: Partial<PresentationToolsOptions> = {}) => {
+  const { tools, requests } = toolsOn(demo, [everyPassage, everyPassage], { fields: demoFields, layout: 'adaptive', documents: true, ...more });
+  const result = await tools.call(TOOL_NAMES.plan, { topic: 'The review', language: 'en', documents, ...(parts === undefined ? {} : { document_parts: parts }) }, { documents: list });
+  return { result, error: result.output.error as string | undefined, document: result.plan?.brief.document, requests };
+};
+const TOO_LONG_TAIL =
+  'Do not ask the user to paste a part of it: call plan_presentation again with the same documents, and name in document_parts the parts the presentation is about, by number or heading, up to 12000 characters in all. ' +
+  'If the user did not say which parts they want, ask them first, and say what the parts are about. The slides carry only the parts named.';
+
+test('a text too long lists its parts by heading, or by their first words where it has none', async () => {
+  const bike = await fromParts(['bike-share.md'], undefined, bikeList);
+  assert.equal(bike.error, `The text "bike-share.md" is 13032 characters, and a presentation is made from at most 12000 (about 1,800 words). ${TOO_LONG_TAIL}\n${BIKE_LIST}`);
+  assert.equal(bike.requests.length, 0, 'no model is asked');
+  const pasted = Array.from({ length: 40 }, (_, at) => `Part ${String(at + 1).padStart(2, '0')}. ${'Seeds are shared. '.repeat(19).trim()}`).join('\n\n');
+  const plain = await fromParts(['pasted text 3'], undefined, [{ name: 'pasted text 3', text: pasted }]);
+  assert.equal(
+    plain.error,
+    `The text "pasted text 3" is 14078 characters, and a presentation is made from at most 12000 (about 1,800 words). ${TOO_LONG_TAIL}\n` +
+      'The parts of "pasted text 3" (14078 characters, no headings), each with its characters:\n' +
+      [1, 9, 17, 25, 33].map((first, at) => `${at + 1}. begins "Part ${String(first).padStart(2, '0')}. Seeds are shared. Seeds are…" (2816)`).join('\n'),
+  );
+});
+
+test('document_parts takes parts by number, range, heading and label', async () => {
+  const chosen = await fromParts(['bike-share.md'], ['Riders', '3-4', 'risks'], bikeList);
+  assert.equal(chosen.error, undefined, String(chosen.error));
+  assert.equal(chosen.document, BIKE_SECTIONS.slice(1, 5).join('\n\n'));
+  const output = chosen.result.output as { document: { parts_used: string[] }; next: string };
+  assert.deepEqual(output.document.parts_used, ['bike-share.md: 2. Riders', 'bike-share.md: 3. Costs', 'bike-share.md: 4. Stations', 'bike-share.md: 5. Risks']);
+  assert.ok(output.next.startsWith('Only some parts of "bike-share.md" are in this plan, as document.parts_used lists: tell the user which. '), output.next);
+  // A number with the label the list gave it is read by the label: a number that disagrees gives way.
+  for (const parts of [['3. Risks'], ['5. Risks (2170)'], 'part 5', [5], '5, 6']) {
+    const picked = await fromParts(['bike-share.md'], parts, bikeList);
+    assert.equal(picked.error, undefined, String(picked.error));
+    assert.ok(picked.document?.startsWith('# Risks\n\n'), JSON.stringify(parts));
+  }
+  // A heading that begins with a number is found as it is.
+  const methods = '# Intro\n\nA start.\n\n# Aims\n\nWhat we want.\n\n# 2. Methods\n\nHow we work.';
+  assert.equal((await fromParts(['notes.md'], ['2. Methods'], [{ name: 'notes.md', text: methods }])).document, '# 2. Methods\n\nHow we work.');
+  // All of a text's parts give the text, and so does its name.
+  assert.equal((await fromParts(['bike-share.md'], ['1-3', 'Stations', '5', '6'], bikeList, { maxDocumentChars: 13100 })).document, BIKE);
+  // A selection of a text that fits is honoured too.
+  assert.equal((await fromParts(['Garden notes.docx'], ['Plans'], conversation)).document, GARDEN.split('\n').slice(4).join('\n'));
+});
+
+test('a piece of a long section chosen alone gets its heading back', async () => {
+  const lines = Array.from({ length: 10 }, (_, at) => `Part ${String(at + 1).padStart(2, '0')}. ${'Seeds are shared. '.repeat(19).trim()}`);
+  const costs = `# Costs\n\n${lines.join('\n\n')}`;
+  const list = [{ name: 'costs.md', text: costs }];
+  for (const parts of [['2'], ['Costs, 2 of 2'], ['costs, 2 of 2…']]) {
+    const picked = await fromParts(['costs.md'], parts, list);
+    assert.equal(picked.error, undefined, String(picked.error));
+    assert.equal(picked.document, `# Costs\n\n${lines.slice(5).join('\n\n')}`, JSON.stringify(parts));
+  }
+  // The heading takes every piece of its section.
+  assert.equal((await fromParts(['costs.md'], ['Costs'], list)).document, costs);
+});
+
+test('parts that are still too long are said with the parts', async () => {
+  const all = await fromParts(['bike-share.md'], ['1-6'], bikeList);
+  assert.equal(
+    all.error,
+    'All of "bike-share.md" comes to 13032 characters, and a presentation is made from at most 12000 (about 1,800 words). ' +
+      'Name fewer parts, up to 12000 characters in all, and call plan_presentation again with the same documents. ' +
+      `If the user wants all of it, tell them it is too much for one presentation and ask which parts to leave out.\n${BIKE_LIST}`,
+  );
+  // Parts whose listed counts add up to the limit fit: each count holds what joins it to another.
+  const fits = await fromParts(['bike-share.md'], ['1-5'], bikeList, { maxDocumentChars: 10859 });
+  assert.equal(fits.error, undefined, String(fits.error));
+  const over = await fromParts(['bike-share.md'], ['1-5'], bikeList, { maxDocumentChars: 10856 });
+  assert.ok(over.error?.startsWith('Parts 1-5 of "bike-share.md" come to 10857 characters, and a presentation is made from at most 10856 (about 1,600 words). '), String(over.error));
+  // A table longer than the limit is one part, which cannot be cut.
+  const rows = Array.from({ length: 200 }, (_, at) => `Row ${String(at).padStart(3, '0')}\t${'cell '.repeat(14).trim()}`).join('\n');
+  const table = await fromParts(['table.txt'], ['2'], [{ name: 'table.txt', text: `# Intro\n\nA table follows.\n\n# Data\n\n${rows}\n\n# End\n\nThat is all.` }]);
+  assert.match(String(table.error), /^Part 2 of "table\.txt" comes to \d+ characters, .* Part 2 of "table\.txt" cannot be cut and is more than a presentation is made from: leave it out, or ask the user which rows or lines of it they want\.\n/);
+  assert.match(String(table.error), /\n2\. Data \(\d+, too long to make a presentation of alone\)\n/);
+});
+
+test('an unknown or ambiguous part is an error with the list', async () => {
+  const notes = [{ name: 'notes.md', text: '# Summary\n\nSales grew.\n\n# Costs\n\nRent rose.\n\n# Summary\n\nWe hire.' }];
+  const list = 'The parts of "notes.md" (64 characters), each with its characters:\n1. Summary, begins "Sales grew.…" (24)\n2. Costs (21)\n3. Summary, begins "We hire.…" (21)';
+  assert.equal((await fromParts(['notes.md'], ['Summary'], notes)).error, `"document_parts" names "Summary", which could be part 1 or part 3: name the parts meant by their numbers.\n${list}`);
+  assert.equal(
+    (await fromParts(['notes.md'], ['Pricing', '9'], notes)).error,
+    `"document_parts" names parts the text does not have: "Pricing" and "9". Name parts by the numbers or headings below, with the same documents.\n${list}`,
+  );
+  // The label tells two sections of one name apart.
+  assert.equal((await fromParts(['notes.md'], ['Summary, begins "We hire.…"'], notes)).document, '# Summary\n\nWe hire.');
+  assert.equal((await fromParts([], ['2'], notes)).error, '"document_parts" needs "documents"');
+});
+
+test('with several texts a number needs the name of its text', async () => {
+  const both = [
+    { name: 'one', text: 'Seeds are shared. '.repeat(340) },
+    { name: 'two', text: 'Beds are watered. '.repeat(340) },
+  ];
+  const ambiguous = await fromParts(['one', 'two'], ['2'], both);
+  assert.ok(ambiguous.error?.startsWith('"document_parts" names "2", and more than one text is named: put the text\'s name before the number, as "one: 2".\nThe parts of "one" '), String(ambiguous.error));
+  // A text with no part named is taken whole; the numbers of a text do not change with the order of the texts.
+  const second = `${'Beds are watered. '.repeat(114).trim()}`;
+  const named = await fromParts(['one', 'two'], ['two: 2'], both);
+  assert.equal(named.error, undefined, String(named.error));
+  assert.equal(named.document, `${both[0]?.text.trim()}\n\n${second}`);
+  assert.ok(String(named.result.output.next).startsWith('Only some parts of "two" are in this plan, as document.parts_used lists: tell the user which. '), String(named.result.output.next));
+  assert.deepEqual(
+    ((await fromParts(['one', 'two'], ['two: 2, 3'], both)).result.output as { document: { parts_used: string[] } }).document.parts_used.map((used) => used.split('.')[0]),
+    ['two: 2', 'two: 3'],
+  );
+  assert.equal((await fromParts(['two', 'one'], ['two: 2'], both)).document, `${second}\n\n${both[0]?.text.trim()}`);
+  // A text named twice is said, and only the one that holds it is listed.
+  const twice = await fromParts(['a.txt', 'b.txt'], undefined, [
+    { name: 'a.txt', text: BIKE },
+    { name: 'b.txt', text: `${BIKE}\n\nMore.` },
+  ]);
+  assert.match(String(twice.error), / The slides carry only the parts named\. "a\.txt" is in "b\.txt" word for word, so only "b\.txt" is used\.\nThe parts of "b\.txt" /);
+  assert.doesNotMatch(String(twice.error), /The parts of "a\.txt"/);
+  // A name with a part after it is told where the part goes.
+  assert.ok(String((await fromParts(['bike-share.md, Risks'], undefined, bikeList)).error).endsWith(' To make it from a part of "bike-share.md", name "bike-share.md" in documents and the part in document_parts.'));
+});
+
+test('Hebrew headings are found as a chat model gives them back', async () => {
+  const lines = LIBRARY.replace(/\r\n?/g, '\n').split('\n');
+  const plan = lines.findIndex((line) => line.trim() === 'התוכנית');
+  const first = await fromParts(['library'], ['‏רקע'], [{ name: 'library', text: LIBRARY }]);
+  assert.equal(first.error, undefined, String(first.error));
+  assert.equal(first.document, lines.slice(0, plan).join('\n').trim());
+  assert.ok((await fromParts(['library'], ['תקציב'], [{ name: 'library', text: LIBRARY }])).document?.startsWith('תקציב וסיכונים\n'));
+  const report = [{ name: 'report', text: '# דו"ח שנתי\n\nטקסט.\n\n# אחר\n\nעוד.' }];
+  assert.equal((await fromParts(['report'], ['דו״ח שנתי'], report)).document, '# דו"ח שנתי\n\nטקסט.');
+});
+
+test('chosen parts the planner leaves out are not taken as instructions', async () => {
+  const chosen = BIKE_SECTIONS.slice(1, 3).join('\n\n');
+  const allOut = { ...gardenOutline, left_out: documentPassages(chosen).map((passage) => passage.number), slides: [{ pattern: 'cover', purpose: 'Bikes' }, { pattern: 'text-only', purpose: 'Riders' }] };
+  const { tools, requests } = toolsOn(demo, [allOut], { fields: demoFields, layout: 'adaptive', documents: true });
+  const result = await tools.call(TOOL_NAMES.plan, { topic: 'Bikes', language: 'en', documents: ['bike-share.md'], document_parts: ['2-3'] }, { documents: bikeList });
+  assert.equal(result.output.error, undefined, String(result.output.error));
+  assert.equal(requests.length, 1);
+  assert.equal(result.plan?.brief.document, chosen);
+  assert.ok(String(result.output.next).startsWith('The planner put none of the parts named on a slide. Ask the user what the presentation should carry, and plan again. '), String(result.output.next));
+});
+
+test('maxDocumentChars sets how much text the tools take', async () => {
+  const long = [{ name: 'long.txt', text: 'The garden grows. '.repeat(700) }];
+  const taken = await fromParts(['long.txt'], undefined, long, { maxDocumentChars: 13000 });
+  assert.equal(taken.error, undefined, String(taken.error));
+  assert.equal(taken.document, long[0]?.text.trim());
+  assert.throws(() => presentationTools({ template: demo, llm: noModel, store: memoryStore(), maxDocumentChars: 12 }), new RangeError('maxDocumentChars must be a whole number from 1000 to 30000, not 12'));
+  assert.throws(() => presentationTools({ template: demo, llm: noModel, store: memoryStore(), maxDocumentChars: Number.NaN }), new RangeError('maxDocumentChars must be a whole number from 1000 to 30000, not NaN'));
+});
+
+test('more ways to name parts, and the next line for them', async () => {
+  // A reversed range, a list of numbers in one string, a text's own name.
+  assert.equal((await fromParts(['bike-share.md'], ['6-5'], bikeList)).document, BIKE_SECTIONS.slice(4).join('\n\n'));
+  assert.equal((await fromParts(['bike-share.md'], '5, 6', bikeList)).document, BIKE_SECTIONS.slice(4).join('\n\n'));
+  const named = await fromParts(['bike-share.md'], ['bike-share.md'], bikeList, { maxDocumentChars: 13100 });
+  assert.equal(named.document, BIKE);
+  // All of a text's parts are not some of them.
+  assert.ok(!String(named.result.output.next).startsWith('Only some parts'), String(named.result.output.next));
+  // A text in Windows line ends with a byte order mark is read as the same text.
+  const windows = [{ name: 'bike-share.md', text: `\uFEFF${BIKE.replace(/\n/g, '\r\n')}` }];
+  assert.equal((await fromParts(['bike-share.md'], ['Riders', '3-4', 'risks'], windows)).document, BIKE_SECTIONS.slice(1, 5).join('\n\n'));
+  // A direction mark before the "#" of a heading: the heading is found, and listed, without its marks.
+  const marked = [{ name: 'bike-share.md', text: BIKE_SECTIONS.map((section) => `\u200F${section}`).join('\n\n') }];
+  const risks = await fromParts(['bike-share.md'], ['Risks'], marked);
+  assert.equal(risks.error, undefined, String(risks.error));
+  assert.deepEqual((risks.result.output as { document: { parts_used: string[] } }).document.parts_used, ['bike-share.md: 5. Risks']);
+});
+
+test('a heading that is a number and a label is found as it is, and a heading in two texts is ambiguous', async () => {
+  const body = (at: number) => paragraphOf(at, 1400);
+  const annual = ['# Annual report', `## 1. Summary\n\n${body(0)}`, `## 2. Risks\n\n${body(1)}`, `## 3. Outlook\n\n${body(2)}`, `## Risks and mitigations\n\n${body(3)}`].join('\n\n');
+  const exact = await fromParts(['annual.md'], ['2. Risks'], [{ name: 'annual.md', text: annual }]);
+  assert.equal(exact.error, undefined, String(exact.error));
+  assert.ok(exact.document?.startsWith('## 2. Risks\n\n'), String(exact.document).slice(0, 40));
+  // The same heading in two named texts could be either.
+  const v1 = { name: 'report v1.md', text: `# Intro\n\nOne.\n\n# Risks\n\n${body(4)}` };
+  const v2 = { name: 'report v2.md', text: `# Intro\n\nTwo.\n\n# Risks\n\n${body(5)}` };
+  assert.match(String((await fromParts(['report v1.md', 'report v2.md'], ['Risks'], [v1, v2])).error), /^"document_parts" names "Risks", which could be part 2 of "report v1\.md" or part 2 of "report v2\.md": name the parts meant by their numbers, with the text's name before each \("report v1\.md: 2"\)\.\n/);
+  // A list line copied back with several texts is read by its label, and the text's name is read in any case, with quotes.
+  const two = [{ name: 'bike-share.md', text: BIKE }, v1];
+  assert.ok((await fromParts(['bike-share.md', 'report v1.md'], ['2. Riders (2171)'], two)).document?.startsWith('# Riders\n\n'));
+  assert.ok((await fromParts(['bike-share.md', 'report v1.md'], ['bike-share.md: "Risks"'], two)).document?.startsWith('# Risks\n\n'));
+  assert.ok((await fromParts(['bike-share.md', 'report v1.md'], ['"BIKE-SHARE.MD": 5, 6'], two)).document?.startsWith('# Risks\n\n'));
+  // Of two names that differ only in case, the one named exactly.
+  const cased = [
+    { name: 'Notes.txt', text: 'Seeds are shared. '.repeat(340) },
+    { name: 'notes.txt', text: 'Beds are watered. '.repeat(340) },
+  ];
+  const picked = await fromParts(['Notes.txt', 'notes.txt'], ['notes.txt: 2'], cased);
+  assert.equal(picked.error, undefined, String(picked.error));
+  assert.ok(picked.document?.endsWith(`\n\n${'Beds are watered. '.repeat(114).trim()}`));
+  assert.ok(String(picked.result.output.next).startsWith('Only some parts of "notes.txt" are in this plan'), String(picked.result.output.next));
+  // Two listed names in one string are each named on their own, not as a part.
+  const both = [{ name: 'report.pdf', text: 'A report.' }, { name: 'notes.docx', text: 'Some notes.' }];
+  assert.ok(String((await fromParts('report.pdf, notes.docx', undefined, both)).error).endsWith(' Name each text on its own in documents: "report.pdf" and "notes.docx".'));
+});
+
+test('a text over 12000 characters the planner leaves out is not taken as instructions', async () => {
+  const text = 'The garden grows. '.repeat(700);
+  const out = { ...gardenOutline, left_out: documentPassages(text).map((passage) => passage.number), slides: [{ pattern: 'cover', purpose: 'Garden' }, { pattern: 'text-only', purpose: 'Why' }] };
+  const { tools, requests } = toolsOn(demo, [out], { fields: demoFields, layout: 'adaptive', documents: true, maxDocumentChars: 13000 });
+  const result = await tools.call(TOOL_NAMES.plan, { topic: 'The garden', language: 'en', documents: ['long.txt'] }, { documents: [{ name: 'long.txt', text }] });
+  assert.equal(result.output.error, undefined, String(result.output.error));
+  assert.equal(requests.length, 1);
+  assert.ok(String(result.output.next).startsWith('The planner put none of "long.txt" on a slide. Ask the user what the presentation should carry, and plan again. '), String(result.output.next));
+});
+
+test('describeDocuments says that a text too long is named all the same', () => {
+  const book = [{ name: 'book.pdf', text: 'The "garden" grows. '.repeat(700) }];
+  const said = describeDocuments(book);
+  assert.ok(
+    said.endsWith(
+      ' A text marked too long is named all the same: put the part the user wants in "document_parts", by its heading as the user said it, or leave that out and plan_presentation answers with the parts to choose from. Never ask the user to paste a part of a text they gave.',
+    ),
+    said,
+  );
+  const roomy = describeDocuments(book, { maxDocumentChars: 20000 });
+  assert.doesNotMatch(roomy, /too long/);
+  assert.equal(roomy, said.replace(', too long to make a presentation of whole', '').replace(/ A text marked too long .*$/, ''));
+  // A second argument that is no object, as from map, is left out.
+  assert.equal(describeDocuments(book, null), said);
+  assert.equal(describeDocuments(book, 3), said);
+  assert.deepEqual([book].map(describeDocuments), [said]);
+  // Only the last ten are listed, and only they are said to be too long.
+  const eleven = [...book, ...Array.from({ length: 10 }, (_, at) => ({ name: `pasted text ${at + 1}`, text: 'Seeds are shared.' }))];
+  assert.doesNotMatch(describeDocuments(eleven), /too long/);
+  assert.throws(() => describeDocuments(book, { maxDocumentChars: 0 }), new RangeError('maxDocumentChars must be a whole number from 1000 to 30000, not 0'));
+});
 
 test('a topic that copies a listed text is an error; one that retells it is a note', async () => {
   // A fictional Hebrew text of 416 words, listed as a long message of the person's.

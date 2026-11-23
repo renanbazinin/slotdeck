@@ -10,10 +10,36 @@ import type { DeckSpec, SlideSpec, SlotValue } from '../deck/spec.ts';
 import type { Issue } from '../deck/validate.ts';
 import type { JsonSchema } from '../llm/provider.ts';
 import { said } from '../messages/en.ts';
-import { charsOfWords, readWords } from './length.ts';
+import { charsOfWords, readWords, wordsOfChars } from './length.ts';
 
-/** The most characters of a document a deck is made from: about 1,800 words, which one writing call carries. */
+/** The most characters of a document a deck is made from, unless `maxDocumentChars` sets another: about 1,800 words, which one writing call carries. */
 export const MOST_DOCUMENT_CHARS = 12000;
+/** The least `maxDocumentChars` may be: a smaller number is a slip (12 for 12000), and apps list a pasted text from 1,000 characters. */
+const LEAST_DOCUMENT_CHARS = 1000;
+/**
+ * The most `maxDocumentChars` may be, and what a later stage reads of a stored plan's document: one
+ * call writes the slides, the outline lists every passage, and a deck made from a document has at
+ * most {@link MOST_DOCUMENT_SLIDES} slides.
+ */
+export const LARGEST_DOCUMENT_CHARS = 30000;
+
+/**
+ * The most characters of a new document, as the option `maxDocumentChars` gives it:
+ * {@link MOST_DOCUMENT_CHARS} when it is left out (`undefined` or `null`). Anything but a whole
+ * number from 1000 to 30000 is a RangeError.
+ */
+export function documentLimit(value: unknown): number {
+  if (value === undefined || value === null) return MOST_DOCUMENT_CHARS;
+  if (typeof value === 'number' && Number.isInteger(value) && value >= LEAST_DOCUMENT_CHARS && value <= LARGEST_DOCUMENT_CHARS) return value;
+  const shown = typeof value === 'string' ? JSON.stringify(value) : typeof value === 'bigint' ? `${value}n` : typeof value === 'object' || typeof value === 'function' ? 'an object' : String(value);
+  throw new RangeError(`maxDocumentChars must be a whole number from ${LEAST_DOCUMENT_CHARS} to ${LARGEST_DOCUMENT_CHARS}, not ${shown}`);
+}
+
+/**
+ * About how many words a limit of so many characters holds, as messages say it: counted as Hebrew,
+ * whose words are the longer, rounded down to a hundred, and at least 100 ("1,800" for 12000).
+ */
+export const aboutWords = (chars: number): string => String(Math.max(100, Math.floor(wordsOfChars(chars, 'he') / 100) * 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 /** The most slides a deck made from a document has when no number of slides was asked for. */
 export const MOST_DOCUMENT_SLIDES = 30;
 
@@ -78,6 +104,8 @@ export interface DocumentPlan {
 
 /** Marks that set the direction of text: kept in the text, never counted. */
 const BIDI = /[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
+/** One mark that sets the direction of text. */
+const BIDI_MARK = /[\u200E\u200F\u202A-\u202E\u2066-\u2069]/;
 /**
  * A line that is an item of a list: a bullet, or a number or a letter with a stop or a bracket. An
  * "o" or a "§" before a tab is a bullet too: a word processor writes the bullets of a list within a
@@ -109,7 +137,7 @@ function linesOf(document: string): string[] {
     .map((line) => line.trimEnd());
 }
 
-/** The characters of a document as it is counted against {@link MOST_DOCUMENT_CHARS}. */
+/** The characters of a document as it is counted against the most a deck is made from ({@link MOST_DOCUMENT_CHARS}, or `maxDocumentChars`). */
 export const documentChars = (document: string): number => charsIn(linesOf(document).join('\n').trim());
 
 type LineKind = 'row' | 'item' | 'heading' | 'text';
@@ -173,7 +201,10 @@ function sentenceEnds(text: string): Array<{ end: number; next: number }> {
   for (const match of text.matchAll(SENTENCE_END)) {
     const at = match.index;
     if (text[at - 1] === '.') {
-      const word = (text.slice(0, at - 1).split(/\s/).pop() ?? '').replace(/^[(["'“‘«]+/u, '');
+      // The word before the stop, read back from it to the space before it, so that a long line is not split for every stop in it.
+      let begin = at - 1;
+      while (begin > 0 && !/\s/.test(text[begin - 1] as string)) begin--;
+      const word = text.slice(begin, at - 1).replace(/^[(["'“‘«]+/u, '');
       if (NO_END.has(word.toLowerCase()) || /^\p{L}$/u.test(word)) continue;
     }
     ends.push({ end: at + match[0].replace(/\s+$/u, '').length, next: at + match[0].length });
@@ -243,18 +274,12 @@ function joined(a: Unit, b: Unit, kind: Unit['kind']): Unit {
 }
 
 /**
- * The passages of a document, as the planner numbers them. A line ends a paragraph, and a
- * paragraph is a passage; a paragraph longer than about 500 characters is cut at the ends of its
- * sentences into pieces of about even length, and short lines of one section go together. A run
- * of lines that start with a bullet or a number is a list, and a run of lines with a tab between
- * cells or with bars, with no blank line between them, a table. A short line on its own, or one
- * that starts with "#", is a heading: the passages after it stand under it. The text of each
- * passage is as the document has it. Pure: the same text always gives the same passages.
+ * How each line of a document is read, worked out from the end: its kind, or `undefined` for a blank
+ * line. A heading is one only over a line that is none. Passages and parts read lines with this one
+ * function.
  */
-export function documentPassages(document: string): DocumentPassage[] {
-  const lines = linesOf(document);
+function lineKinds(lines: readonly string[]): Array<LineKind | undefined> {
   const filled = (at: number): boolean => (lines[at] ?? '').trim() !== '';
-  // Each line is one kind, worked out from the end: a heading is one only over a line that is none.
   const kinds: Array<LineKind | undefined> = lines.map(() => undefined);
   for (let at = lines.length - 1; at >= 0; at--) {
     const line = lines[at] as string;
@@ -277,6 +302,26 @@ export function documentPassages(document: string): DocumentPassage[] {
       kinds[at] = heading ? 'heading' : 'text';
     }
   }
+  return kinds;
+}
+
+/** A heading as a section is named by it: without its "#" marks and the spaces around it. */
+const headingName = (line: string): string => line.trim().replace(MARKED, '');
+
+/**
+ * The passages of a document, as the planner numbers them. A line ends a paragraph, and a
+ * paragraph is a passage; a paragraph longer than about 500 characters is cut at the ends of its
+ * sentences into pieces of about even length, and short lines of one section go together. A run
+ * of lines that start with a bullet or a number is a list, and a run of lines with a tab between
+ * cells or with bars, with no blank line between them, a table. A short line on its own, or one
+ * that starts with "#", is a heading: the passages after it stand under it. The text of each
+ * passage is as the document has it. Pure: the same text always gives the same passages.
+ */
+export function documentPassages(document: string): DocumentPassage[] {
+  const lines = linesOf(document);
+  const filled = (at: number): boolean => (lines[at] ?? '').trim() !== '';
+  const kinds = lineKinds(lines);
+
 
   // A long line that ends in no stop goes on in the next line of text, where no blank line comes between.
   // `apart` marks a line with a blank line above it.
@@ -301,7 +346,7 @@ export function documentPassages(document: string): DocumentPassage[] {
   let last: LineKind | undefined;
   for (const { kind, text, apart } of read) {
     if (kind === 'heading') {
-      headings.push(text.trim().replace(MARKED, ''));
+      headings.push(headingName(text));
       last = kind;
       continue;
     }
@@ -362,6 +407,343 @@ export function documentPassages(document: string): DocumentPassage[] {
     chars: unitChars(unit),
     paragraphs: shownOf(unit).length,
   }));
+}
+
+// --- parts of a long document ---
+
+/** A text is cut into about this many parts at most: short sections are put together and pieces grow, so that a list shows every part. */
+const MOST_PARTS = 40;
+/** What joining a part to another adds at most: a blank line. */
+const PART_JOIN = 2;
+/** The stops under which a line of text may start a part: those that end a line's going on (see `lineKinds`), without the colon. */
+const PART_STOPS = '.!?…;׃';
+
+/** The first words of a text, up to 40 characters, with "…" after them, as lists show a text: so that a chat model can tell which is which. */
+export function firstWords(text: string): string {
+  let start = '';
+  for (const word of text.replace(/\s+/g, ' ').trim().split(' ')) {
+    if (start && start.length + 1 + word.length > 40) break;
+    start = start ? `${start} ${word}` : word.slice(0, 40);
+  }
+  return `${start.replace(/"/g, "'")}…`;
+}
+
+/** A part of a document a chat model may choose, where the document is too long to make a deck of whole. */
+export interface DocumentPart {
+  /** From 1, in the document's order. Each document numbers its own parts. */
+  number: number;
+  /**
+   * The sections it holds, by name as `documentPassages` gives a passage's `section`: none for text
+   * before the first heading or in a text with none; more than one where short sections were put together.
+   */
+  headings: string[];
+  /** The same sections by their place in the document, from 0. Text before the first heading is a section with no heading. */
+  sections: number[];
+  /** Which piece of a long section it is, and of how many. */
+  piece?: { at: number; of: number };
+  /** Where it starts and ends in `linesOf(document).join('\n')`: at the start of a line or a sentence, at the end of a filled line or a sentence. */
+  start: number;
+  end: number;
+  /** Where its section's heading lines are, for a piece after the first: set over it when it is chosen without the piece before it. */
+  heads?: { start: number; end: number };
+  /** How it follows the part before it in the text: ' ' inside a line, '\n' on the next line, '\n\n' after a blank line. */
+  after: ' ' | '\n' | '\n\n';
+  /** The first words of its own text, without heading lines (see {@link firstWords}). */
+  begins: string;
+  /** Its characters standing alone, its heading lines too for a later piece, and 2 for what joins it to another part: parts whose counts add up to a limit fit in it. */
+  chars: number;
+}
+
+/** A run of blank lines as one blank line, as a part's text has it. */
+const squeeze = (text: string): string => text.replace(/\n{3,}/g, '\n\n');
+
+/** A section of a document as parts read it: its heading lines, where it has them, and its lines by their indexes. */
+interface PartSection {
+  name?: string;
+  /** The indexes of its first and last heading line. */
+  heads?: { first: number; last: number };
+  /** Its first line (a heading or not), its first line under its headings, its last filled line. */
+  first: number;
+  body: number;
+  last: number;
+}
+
+/**
+ * The sections of a document, named as {@link documentPassages} names them: a run of heading lines
+ * over a line that is none starts one, a run with nothing after it is text of the section before,
+ * and the text before the first heading is a section with no name.
+ */
+function partSections(lines: readonly string[], kinds: ReadonlyArray<LineKind | undefined>): PartSection[] {
+  const sections: PartSection[] = [];
+  let run: number[] = [];
+  let current: PartSection | undefined;
+  for (let at = 0; at < lines.length; at++) {
+    const kind = kinds[at];
+    if (kind === undefined) continue;
+    if (kind === 'heading') {
+      run.push(at);
+      continue;
+    }
+    if (run.length > 0) {
+      const first = run[0] as number;
+      current = { name: run.map((index) => headingName(lines[index] as string)).join(' / '), heads: { first, last: run.at(-1) as number }, first, body: at, last: at };
+      sections.push(current);
+      run = [];
+    } else if (current) current.last = at;
+    else {
+      current = { first: at, body: at, last: at };
+      sections.push(current);
+    }
+  }
+  if (run.length > 0) {
+    if (current) current.last = run.at(-1) as number;
+    else sections.push({ first: run[0] as number, body: run[0] as number, last: run.at(-1) as number });
+  }
+  return sections;
+}
+
+/** A place a section may be cut: where the next piece starts, where the piece before ends, and how. */
+interface PartCut {
+  at: number;
+  end: number;
+  kind: 'line' | 'sentence' | 'space';
+  after: DocumentPart['after'];
+  /** The characters of the section's body before it. */
+  pos: number;
+}
+
+/**
+ * The parts of a document for a limit of `most` characters. A section that fits in a piece of about a
+ * quarter of the limit is one part; a longer one is cut in pieces of about even length, at the start
+ * of a line where every line keeps the kind it has in the whole text, else at a sentence, else at a
+ * space, and never inside a table. Where a text would have more than about forty parts, short sections
+ * are put together and the pieces grow. Pure: the same text and limit always give the same parts.
+ */
+export function documentParts(document: string, most: number): DocumentPart[] {
+  const lines = linesOf(document);
+  const kinds = lineKinds(lines);
+  const work = lines.join('\n');
+  const starts: number[] = [];
+  let offset = 0;
+  for (const line of lines) {
+    starts.push(offset);
+    offset += line.length + 1;
+  }
+  const endOf = (index: number): number => (starts[index] as number) + (lines[index] as string).length;
+  // The characters before each place of the text, without the marks that set direction.
+  const counted: number[] = [0];
+  for (let at = 0; at < work.length; at++) counted.push((counted[at] as number) + (BIDI_MARK.test(work[at] as string) ? 0 : 1));
+  const between = (from: number, to: number): number => (counted[to] as number) - (counted[from] as number);
+  const filled = (index: number): boolean => (lines[index] ?? '').trim() !== '';
+  const charsOf = (from: number, to: number, heads?: { start: number; end: number }): number =>
+    charsIn((heads ? `${squeeze(work.slice(heads.start, heads.end))}\n\n` : '') + squeeze(work.slice(from, to))) + PART_JOIN;
+  const sections = partSections(lines, kinds);
+
+  /** Where a section may be cut, in its order. */
+  const cutsOf = (section: PartSection, longer: number): PartCut[] => {
+    const bodyStart = starts[section.body] as number;
+    const cuts: PartCut[] = [];
+    let before = section.body;
+    for (let index = section.body; index <= section.last; index++) {
+      if (!filled(index)) continue;
+      const line = lines[index] as string;
+      const kind = kinds[index];
+      if (index > section.body) {
+        const above = lines[index - 1] as string;
+        const aboveKind = kinds[index - 1];
+        const blank = !filled(index - 1);
+        // A lead-in keeps its list, and a piece that opens with a line ending in a colon would be read as a request.
+        let open = lastOf(lines[before] as string) !== ':' && lastOf(line) !== ':';
+        // A short line of text right over an item or a row would be read as a heading over the part after another.
+        const overList = !blank && aboveKind === 'text' && headingLike(above.trim());
+        if (open) {
+          if (kind === 'item') open = !overList;
+          else if (kind === 'row') open = (blank || aboveKind !== 'row') && !overList;
+          // A line of text keeps its kind where nothing goes on into it: a blank line, an item, a row or a stop above it.
+          else if (kind === 'text') open = blank || aboveKind === 'item' || aboveKind === 'row' || (PART_STOPS.includes(lastOf(above)) && !headingLike(above.trim()));
+          else open = false;
+        }
+        if (open) cuts.push({ at: starts[index] as number, end: endOf(before), kind: 'line', after: index - before > 1 ? '\n\n' : '\n', pos: between(bodyStart, starts[index] as number) });
+      }
+      // Inside a long line of text: at a sentence, or at a space, with more than a heading's length on each side.
+      // Not in a lead-in: the piece after the cut would open with it, and be read as a request.
+      if (kind === 'text' && charsIn(line) > longer && lastOf(line) !== ':') {
+        const base = starts[index] as number;
+        const lead = line.length - line.trimStart().length;
+        // Counted from the places of the text, so that a long line is not copied for every place in it.
+        const fits = (end: number, next: number): boolean => {
+          const rest = line.slice(next, next + 24);
+          return between(base + lead, base + end) > HEADING_MOST && between(base + next, base + line.length) > HEADING_MOST && !ITEM.test(rest) && !MARKED.test(rest);
+        };
+        const sentences = new Set<number>();
+        for (const end of sentenceEnds(line)) {
+          if (end.next >= line.length || !fits(end.end, end.next)) continue;
+          sentences.add(end.next);
+          cuts.push({ at: base + end.next, end: base + end.end, kind: 'sentence', after: ' ', pos: between(bodyStart, base + end.next) });
+        }
+        for (const space of line.matchAll(/\s+/g)) {
+          const next = space.index + space[0].length;
+          if (space.index === 0 || next >= line.length || sentences.has(next) || !fits(space.index, next)) continue;
+          cuts.push({ at: base + next, end: base + space.index, kind: 'space', after: ' ', pos: between(bodyStart, base + next) });
+        }
+      }
+      before = index;
+    }
+    return cuts.sort((a, b) => a.at - b.at);
+  };
+
+  /**
+   * The cuts of `pieces` pieces of about even length between two places of the body, from the cuts
+   * there: the nearest to each even place, a line before a sentence before a space, and never one that
+   * leaves a piece of less than half of that length. Where no cut is near an even place, the nearest
+   * one that leaves no such piece.
+   */
+  const chosen = (cuts: readonly PartCut[], from: number, to: number, pieces: number): PartCut[] => {
+    const share = (to - from) / pieces;
+    const gap = share / 2;
+    /** The index of the first cut at or after a place of the body: cuts are in their order. */
+    const firstAt = (pos: number): number => {
+      let low = 0;
+      let high = cuts.length;
+      while (low < high) {
+        const middle = (low + high) >> 1;
+        if ((cuts[middle] as PartCut).pos < pos) low = middle + 1;
+        else high = middle;
+      }
+      return low;
+    };
+    const taken: PartCut[] = [];
+    let last = from;
+    for (let piece = 1; piece < pieces; piece++) {
+      const target = from + piece * share;
+      const least = last + gap;
+      const most = to - gap;
+      if (least > most) break;
+      const low = Math.max(least, target - gap);
+      const high = Math.min(most, target + gap);
+      let pick: PartCut | undefined;
+      for (const kind of ['line', 'sentence', 'space'] as const) {
+        for (let index = firstAt(low); index < cuts.length && (cuts[index] as PartCut).pos <= high; index++) {
+          const cut = cuts[index] as PartCut;
+          if (cut.kind === kind && (!pick || Math.abs(cut.pos - target) < Math.abs(pick.pos - target))) pick = cut;
+        }
+        if (pick) break;
+      }
+      if (!pick) {
+        const index = firstAt(Math.min(Math.max(target, least), most));
+        const after = cuts[index];
+        const before = cuts[index - 1];
+        const options = [after && after.pos <= most ? after : undefined, before && before.pos >= least ? before : undefined].filter((cut): cut is PartCut => cut !== undefined);
+        pick = options.sort((a, b) => Math.abs(a.pos - target) - Math.abs(b.pos - target))[0];
+      }
+      if (!pick) break;
+      taken.push(pick);
+      last = pick.pos;
+    }
+    return taken;
+  };
+
+  const cut = (section: PartSection, at: number, size: number): DocumentPart[] => {
+    const start = starts[section.first] as number;
+    const end = endOf(section.last);
+    const bodyStart = starts[section.body] as number;
+    const heads = section.heads ? { start: starts[section.heads.first] as number, end: endOf(section.heads.last) } : undefined;
+    const names = section.name !== undefined ? [section.name] : [];
+    const after: DocumentPart['after'] = section.first > 0 && !filled(section.first - 1) ? '\n\n' : '\n';
+    const whole = charsOf(start, end);
+    if (whole <= size) return [{ number: 0, headings: names, sections: [at], start, end, after, begins: firstWords(work.slice(bodyStart, end)), chars: whole }];
+    // What a piece has room for: its heading lines, set over every piece, and the join take some.
+    const heading = heads ? charsIn(squeeze(work.slice(heads.start, heads.end))) + 2 : 0;
+    const roomIn = (limit: number): number => Math.max(1, limit - heading - PART_JOIN);
+    const body = between(bodyStart, end);
+    const pick = (from: number, to: number, limit: number): PartCut[] => {
+      const pieces = Math.max(2, Math.ceil((to - from) / roomIn(limit)));
+      return chosen(cutsOf(section, (to - from) / pieces), from, to, pieces);
+    };
+    let taken = pick(0, body, size);
+    // A piece still longer than the limit, its heading lines and its join counted, is cut again where it can be.
+    for (let round = 0; round < 4; round++) {
+      const more: PartCut[] = [];
+      for (let piece = 0; piece <= taken.length; piece++) {
+        const from = piece === 0 ? start : (taken[piece - 1] as PartCut).at;
+        const to = piece === taken.length ? end : (taken[piece] as PartCut).end;
+        if (charsOf(from, to, piece > 0 ? heads : undefined) > most) more.push(...pick(piece === 0 ? 0 : (taken[piece - 1] as PartCut).pos, piece === taken.length ? body : (taken[piece] as PartCut).pos, most));
+      }
+      if (more.length === 0) break;
+      taken = [...taken, ...more].sort((a, b) => a.at - b.at);
+    }
+    const pieces = taken.length + 1;
+    return Array.from({ length: pieces }, (_, piece): DocumentPart => {
+      const from = piece === 0 ? start : (taken[piece - 1] as PartCut).at;
+      const to = piece === taken.length ? end : (taken[piece] as PartCut).end;
+      const own = piece > 0 && heads ? heads : undefined;
+      return {
+        number: 0,
+        headings: names,
+        sections: [at],
+        ...(pieces > 1 ? { piece: { at: piece + 1, of: pieces } } : {}),
+        start: from,
+        end: to,
+        ...(own ? { heads: own } : {}),
+        after: piece === 0 ? after : (taken[piece - 1] as PartCut).after,
+        begins: firstWords(work.slice(piece === 0 ? bodyStart : from, to)),
+        chars: charsOf(from, to, own),
+      };
+    });
+  };
+
+  const total = documentChars(document);
+  /**
+   * Where there are too many parts, whole sections with headings put together in their order: each
+   * run grows to about a fortieth of the text, and never past `size`. A piece of a long section, and
+   * the text before the first heading, stay as they are.
+   */
+  const merge = (parts: DocumentPart[], size: number): DocumentPart[] => {
+    if (parts.length <= MOST_PARTS) return parts;
+    const target = Math.ceil(total / MOST_PARTS);
+    const whole = (part: DocumentPart): boolean => part.headings.length > 0 && !part.piece;
+    const runs: DocumentPart[][] = [];
+    for (const part of parts) {
+      const run = runs.at(-1);
+      const first = run?.[0];
+      const last = run?.at(-1);
+      if (run && first && last && whole(last) && whole(part) && between(first.start, last.end) < target && between(first.start, part.end) <= size) run.push(part);
+      else runs.push([part]);
+    }
+    return runs.map((run) => {
+      const first = run[0] as DocumentPart;
+      if (run.length === 1) return first;
+      const last = run.at(-1) as DocumentPart;
+      return { number: 0, headings: run.flatMap((part) => part.headings), sections: run.flatMap((part) => part.sections), start: first.start, end: last.end, after: first.after, begins: first.begins, chars: charsOf(first.start, last.end) };
+    });
+  };
+
+  // Pieces of about a quarter of the limit, or of a fortieth of the text with its join where that is more;
+  // larger, a quarter at a time, while there are too many parts.
+  let size = Math.min(most, Math.max(Math.floor(most / 4), Math.ceil(total / MOST_PARTS) + PART_JOIN));
+  let parts: DocumentPart[];
+  for (;;) {
+    parts = merge(
+      sections.flatMap((section, at) => cut(section, at, size)),
+      size,
+    );
+    if (parts.length <= MOST_PARTS || size >= most) break;
+    size = Math.min(most, Math.ceil(size * 1.25));
+  }
+  return parts.map((part, at) => ({ ...part, number: at + 1 }));
+}
+
+/** The text of some parts of one document, in its order and its own words, as a deck is made from them. A piece chosen without the one before it gets its section's heading lines back. */
+export function partsText(document: string, parts: readonly DocumentPart[]): string {
+  const work = linesOf(document).join('\n');
+  const chosen = [...new Map(parts.map((part) => [part.number, part])).values()].sort((a, b) => a.number - b.number);
+  let text = '';
+  chosen.forEach((part, at) => {
+    const follows = at > 0 && part.number === (chosen[at - 1] as DocumentPart).number + 1;
+    const head = !follows && part.heads ? `${squeeze(work.slice(part.heads.start, part.heads.end))}\n\n` : '';
+    text += (at === 0 ? '' : follows ? part.after : '\n\n') + head + squeeze(work.slice(part.start, part.end));
+  });
+  return text;
 }
 
 // --- counting words ---

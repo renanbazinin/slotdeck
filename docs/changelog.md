@@ -3,6 +3,83 @@
 What changed in each version, newest first, with what to do when upgrading. The version you have installed is
 in `node_modules/slotdeck/package.json`.
 
+## 0.7.1
+
+A text too long for one presentation is no longer a dead end. The plan tool used to tell the chat model to ask
+the person to paste the part the presentation is about, though the person had given the whole text already.
+Now it lists the text's parts, by heading or by first words, and the chat model names the ones wanted in a new
+argument, `document_parts`. An app can also set how much text a presentation is made from.
+
+### Added
+
+- **`maxDocumentChars`** (on `PlanOptions` and the chat tools): the most characters of a new brief's document,
+  a whole number from 1,000 to 30,000, and 12,000 (`MOST_DOCUMENT_CHARS`, about 1,800 words) unless set.
+  `undefined` and `null` leave it out; any other value is a `RangeError`, from `presentationTools` when the
+  tools are built, from every planning stage, and from `planEdit` and `editDeck`. Only `planOutline` holds a new brief to it, and so
+  `planDeck`, `generateDeck` and the plan tool. The messages say the words it holds ("about 3,000 words" for
+  20,000). More text makes a longer planning call and a longer writing call, and a deck made from a text has at
+  most 30 slides, so more of it is set small or cut. See "Texts the person gave" in
+  [chat-tools.md](chat-tools.md).
+- **`document_parts`** on `plan_presentation`, with `documents: true`: the parts of a text too long to take
+  whole that the presentation is made from, by the number or heading the tool listed (`"2"`, `"4-6"`,
+  `"Risks"`), or by a heading the person named. Each text numbers its own parts; with several texts named, a
+  number goes after the text's name (`"report.pdf: 2"`). A named text none of whose parts is named is taken
+  whole. A text is cut at its headings, a long section in pieces of about a quarter of the limit, into about 40
+  parts at most, and every part is listed. Each listed count holds 2 for the join, so parts whose counts add up
+  to the limit fit. See "A text too long to take whole" in [chat-tools.md](chat-tools.md).
+- **`document.parts_used`** in the plan tool's output, where parts were chosen: each part the plan is made from,
+  as `"bike-share.md: 2. Riders"`. Where only some parts of a text were chosen, `next` begins
+  `Only some parts of "bike-share.md" are in this plan, as document.parts_used lists: tell the user which.`
+- **A second argument for `describeDocuments`**: the tools' options, or any object with their
+  `maxDocumentChars`, so that a text is marked too long by the same limit as the tools. Where a listed text is
+  too long, the line ends with one more sentence, which tells the chat model to name it all the same and use
+  `document_parts`, and never to ask the person to paste a part. Left out, it judges by 12,000 as before.
+
+### Changed
+
+- **The error for a text too long lists its parts** instead of sending the person to paste. It was
+  `The text is 15230 characters, and a presentation is made from at most 12000 (about 1,800 words). Ask the
+  user to paste the part the presentation is about, and name that.` It now names the text, tells the chat model
+  to call again with the parts in `document_parts`, and ends with the parts of every named text, one to a line:
+  `1. Background (2175)`. New errors say when the parts chosen are still too long, when a part is not in the
+  text, when a heading or a number could be more than one part, and when `document_parts` comes without
+  `documents`. The error for a name the list does not have adds a hint where the name has a part after it
+  (`"bike-share.md, Risks"`), or more listed names after it (`"report.pdf, notes.docx"`). The messages are in "Errors" in [chat-tools.md](chat-tools.md).
+- **The later stages read a stored plan's document up to 30,000 characters**, whatever their own
+  `maxDocumentChars`: `editPlan`, `writeDeck`, `composeLayouts`, `planTextFit` and `freeSlidesOff`, and so the
+  tools that change a plan and create a presentation. A plan made under a larger limit is written by tools built
+  with a smaller one.
+- **No second planning call for chosen parts, or for a text of more than 12,000 characters**, that the planner
+  put on no slide. A named text the planner puts on no slide is made again as instructions only where it is
+  12,000 characters or fewer and no parts were chosen: chosen parts are what the presentation is about, and no
+  request is that long. Otherwise `next` begins `The planner put none of the parts named on a slide. Ask the
+  user what the presentation should carry, and plan again.`, with the text's name in place of
+  `the parts named` where no parts were chosen.
+- **A document's sentences are found faster on a long line with many stops**: the word before a stop is read
+  back from the stop to the space before it, not from the start of the line. The passages are the same.
+
+### Upgrading from 0.7.0
+
+Nothing breaks. With no `maxDocumentChars` and no `document_parts`, every tool output, message and system-prompt
+line for texts of 12,000 characters or fewer is as in 0.7.0. To get what 0.7.1 brings:
+
+- Give `describeDocuments` the tools' options: `describeDocuments(list, toolOptions)`. Without them it marks a
+  text too long by 12,000, whatever the tools take.
+- If the app filters the arguments of tool calls or what the tools answer, let `document_parts` and
+  `document.parts_used` through.
+- Set `maxDocumentChars` where people give long texts and the app's deadline allows the longer calls.
+
+Tests that pinned the old text of the too-long error see the new one, which names the text and lists its parts.
+
+### Known limits
+
+- A limit above 12,000 is not measured with a live model. A translated document is written whole in one call:
+  try a text of the limit's length into another language within the app's deadline before raising it.
+- A table, or a line with no sentence end and no space, longer than the limit is one part that cannot be cut: it
+  can only be left out, or narrowed with the person.
+- A part number holds for one text and one limit. A number from an earlier turn means another part if the app
+  changes the limit or reads the same file into other text; a heading does not.
+
 ## 0.7.0
 
 Hebrew decks read right, and mailed files are clean. Every change here is small, none needs the template's

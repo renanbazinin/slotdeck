@@ -30,6 +30,7 @@ import {
   passageLabel,
   passageText,
   passagesChangeProperty,
+  documentLimit,
   readDocument,
   readLanguageTag,
   openingSection,
@@ -499,6 +500,8 @@ function planSchemaBase(patternIds: string[], slideCount: number): JsonSchema {
  * give them in the options (`colors`, `colorSlides`, `deckPatterns`) and code sets them.
  */
 export async function planEdit(template: Template, deck: DeckSpec, instruction: string, options: EditOptions): Promise<EditResult> {
+  // A deck's document is read as it is, whatever the limit for a new one; a wrong limit is still the app's error, here as in every stage.
+  documentLimit(options.maxDocumentChars);
   // A slide stored without its slots, or with slots that are no object, is read as a slide whose slots are empty.
   const slotless = (slide: SlideSpec) => typeof slide.slots !== 'object' || slide.slots === null;
   if (deck.slides.some(slotless)) deck = { ...deck, slides: deck.slides.map((slide) => (slotless(slide) ? { ...slide, slots: {} } : slide)) };

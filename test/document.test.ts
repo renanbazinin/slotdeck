@@ -15,13 +15,18 @@ import type { CatalogContext, UsablePattern } from '../src/plan/catalog.ts';
 import {
   DOCUMENT_CHANGE_RULES,
   DOCUMENT_EDIT_RULE,
+  aboutWords,
+  documentChars,
   documentKept,
+  documentLimit,
+  documentParts,
   fillParagraphs,
   isFixedCount,
   needOf,
   packPassages,
   passageLabel,
   passageText,
+  partsText,
   passageWords,
   purposeOf,
   readAskedSlides,
@@ -32,6 +37,7 @@ import {
   scriptOf,
   tokensOf,
 } from '../src/plan/document.ts';
+import type { DocumentPart } from '../src/plan/document.ts';
 import { charsOfWords, documentRoom, withPassages } from '../src/plan/length.ts';
 import { systemPrompt } from '../src/plan/write.ts';
 import { buildFixturePptx, fixtureManifest } from './fixture.ts';
@@ -398,6 +404,249 @@ test('a document that is not text or is too long is a PlanError', async () => {
     new PlanError(`The document is ${long.length} characters, and a deck is made from at most 12000 (about 1,800 words): pass the part the deck is about`),
   );
   assert.equal(MOST_DOCUMENT_CHARS, 12000);
+});
+
+test('maxDocumentChars sets how long a new document may be', async () => {
+  const short = paragraph(0, 5100);
+  await assert.rejects(
+    planOutline(demo, { ...brief, document: short }, { llm: scripted().llm, ...options, maxDocumentChars: 5000 }),
+    new PlanError(`The document is ${short.length} characters, and a deck is made from at most 5000 (about 700 words): pass the part the deck is about`),
+  );
+  // Under a larger limit the planner is asked: the scripted model has no answer, which shows the document was let in.
+  const long = paragraph(0, MOST_DOCUMENT_CHARS + 100);
+  await assert.rejects(planOutline(demo, { ...brief, document: long }, { llm: scripted().llm, ...options, maxDocumentChars: 20000 }), new Error('the scripted model has no answer left'));
+  await assert.rejects(planOutline(demo, { ...brief, document: long }, { llm: scripted().llm, ...options, maxDocumentChars: null as unknown as number }), PlanError);
+});
+
+test('a wrong maxDocumentChars is a RangeError in every stage', async () => {
+  const plan: DeckPlan = { version: 1, title: 'Bikes', brief, slides: [{ pattern: 'text-only', purpose: 'All of it', passages: [1] }] };
+  const wrong: Array<[unknown, string]> = [
+    [Number.NaN, 'NaN'],
+    [Number.POSITIVE_INFINITY, 'Infinity'],
+    [0, '0'],
+    [-5, '-5'],
+    [999, '999'],
+    [30001, '30001'],
+    [12000.5, '12000.5'],
+    ['20000', '"20000"'],
+    [true, 'true'],
+    [{}, 'an object'],
+    [12000n, '12000n'],
+  ];
+  for (const [value, shown] of wrong) {
+    const error = new RangeError(`maxDocumentChars must be a whole number from 1000 to 30000, not ${shown}`);
+    const more = { ...options, maxDocumentChars: value as number };
+    assert.throws(() => documentLimit(value), error);
+    await assert.rejects(planOutline(demo, brief, { llm: scripted().llm, ...more }), error);
+    await assert.rejects(writeDeck(demo, plan, { llm: scripted().llm, ...more }), error);
+    await assert.rejects(planDeck(demo, brief, { llm: scripted().llm, ...more }), error);
+  }
+  assert.equal(documentLimit(undefined), MOST_DOCUMENT_CHARS);
+  assert.equal(documentLimit(null), MOST_DOCUMENT_CHARS);
+  assert.equal(documentLimit(20000), 20000);
+});
+
+test('a stored plan is read whatever maxDocumentChars says, up to 30000', async () => {
+  const sized = (chars: number): string => {
+    const paragraphs: string[] = [];
+    for (let at = 0; paragraphs.join('\n\n').length < chars; at++) paragraphs.push(paragraph(at, 450));
+    return paragraphs.join('\n\n');
+  };
+  const roomy = sized(15000);
+  const plan: DeckPlan = { version: 1, title: 'Bikes', brief: { ...brief, document: roomy }, slides: [{ pattern: 'free', purpose: 'All of it', passages: [1, 2], blocks: ['text'] }] };
+  // Without the option the later stages read it, as they read a plan made under a larger limit.
+  assert.notDeepEqual(planTextFit(demo, plan, options), []);
+  const written = await writeDeck(demo, plan, { llm: scripted(titles).llm, ...options });
+  assert.equal(written.deck.document, roomy);
+  // Nor with a smaller limit: the limit is for a new document.
+  const small = { ...options, maxDocumentChars: 1000 };
+  assert.notDeepEqual(planTextFit(demo, plan, small), []);
+  assert.equal((await writeDeck(demo, plan, { llm: scripted(titles).llm, ...small })).deck.document, roomy);
+  const every = documentPassages(roomy).map((passage) => passage.number);
+  for (const more of [options, small]) {
+    const answer = { summary: 'Done.', language: 'en', title: 'Bikes', left_out: [], asked_slides: 0, document_language: 'en', slides: [entry('free', 'All of it', every, freeText)] };
+    const { plan: edited } = await editPlan(demo, plan, 'Shorter titles', { llm: scripted(answer).llm, ...more });
+    assert.equal(edited.brief.document, roomy);
+  }
+  // A deck's document is read as it is, but a wrong limit is an error in a change of a deck too.
+  await assert.rejects(planEdit(demo, written.deck, 'Shorter titles', { llm: scripted().llm, ...options, maxDocumentChars: 'abc' as unknown as number }), new RangeError('maxDocumentChars must be a whole number from 1000 to 30000, not "abc"'));
+  const huge = sized(30100);
+  await assert.rejects(
+    writeDeck(demo, { ...plan, brief: { ...brief, document: huge } }, { llm: scripted(titles).llm, ...options }),
+    new PlanError(`The document is ${huge.length} characters, and a deck is made from at most 30000 (about 4,600 words): pass the part the deck is about`),
+  );
+});
+
+test('the words a limit holds are said in hundreds', () => {
+  assert.deepEqual(
+    [12000, 13000, 20000, 30000, 5000, 1000].map(aboutWords),
+    ['1,800', '2,000', '3,000', '4,600', '700', '100'],
+  );
+});
+
+/** A document as parts and passages work on it: one kind of line end, no spaces at line ends, trimmed. */
+const workOf = (text: string): string =>
+  text
+    .replace(/^﻿/, '')
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .join('\n')
+    .trim();
+/** Sections in their order, each once in a row. */
+const runs = (sections: ReadonlyArray<string | undefined>): string[] => sections.filter((section): section is string => section !== undefined).filter((section, at, all) => section !== all[at - 1]);
+// Lines that change their kind where they are cut badly: short lines with no stop, a lead-in and its list, a table.
+const MIXED = [
+  'Opening words of a text that has no heading over them, which end in a stop.',
+  '',
+  '# Plans',
+  '',
+  paragraph(0, 700),
+  'first line with no stop',
+  'second line with no stop',
+  'third line with no stop',
+  paragraph(3, 600),
+  '',
+  'What we will buy:',
+  '- twenty raised beds for the north side',
+  '- a greenhouse for winter seedlings',
+  '- tools for the new members',
+  '',
+  'Item\tCost\tWhen',
+  'Beds\t12000\tMay',
+  'Greenhouse\t18000\tJune',
+  '',
+  paragraph(5, 900),
+  'Budget',
+  paragraph(7, 500),
+].join('\n');
+
+test('parts name sections as passages do, and keep every line as it is read in the whole text', () => {
+  for (const [name, text] of [
+    ['english', FIXTURE_EN],
+    ['report', REPORT],
+    ['hebrew', hebrewDocument()],
+    ['mixed', MIXED],
+    ['stacked', `# Part one\n\nIntro\n\n## Details\n\n${paragraph(0, 400)}\n\n# Last`],
+    ['windows', `\uFEFF${MIXED.replace(/\n/g, '\r\n')}`],
+    ['lead-ins', Array.from({ length: 30 }, (_, at) => (at % 3 === 0 ? 'The committee agreed on these steps for the coming season ahead' : `- buy twenty raised beds for the north side of the garden, item ${at}`)).join('\n')],
+  ] as const) {
+    const whole = documentPassages(text);
+    for (const most of [30000, 1000, 400]) {
+      const parts = documentParts(text, most);
+      assert.deepEqual(runs(parts.flatMap((part) => part.headings)), runs(whole.map((passage) => passage.section)), `${name} at ${most}`);
+      assert.equal(partsText(text, parts), workOf(text), `${name} at ${most}: all parts give the text`);
+      // No part ends in a lead-in that has its list in the next part.
+      for (const part of parts) assert.doesNotMatch(partsText(text, [part]), /:$/, `${name} at ${most}: part ${part.number} ends in a lead-in`);
+      // Each part on its own, and each pair, is read as the whole text reads it: its passages are of the same kind and section.
+      const chosen = [...parts.map((part) => [part]), ...parts.flatMap((part, at) => parts.slice(at + 1).map((other) => [part, other]))].slice(0, 400);
+      for (const some of chosen) {
+        const own = partsText(text, some);
+        assert.ok(documentChars(own) <= some.reduce((sum, part) => sum + part.chars, 0), `${name}: counts hold their parts`);
+        for (const passage of documentPassages(own)) {
+          const first = passage.text.split('\n')[0] as string;
+          // The sentences of these texts come again in other paragraphs: one of the passages that has the line is read the same.
+          // A piece that starts inside a paragraph starts its passages at other sentences: they are found by their first words.
+          const there = whole.filter((one) => one.text.includes(first.slice(0, 40)));
+          assert.ok(there.length > 0, `${name} at ${most}: "${first.slice(0, 40)}" is a passage of the whole text`);
+          assert.ok(
+            there.some((one) => one.kind === passage.kind && one.section === passage.section),
+            `${name} at ${most}: "${first.slice(0, 40)}" keeps its kind and section (${passage.kind}, ${passage.section})`,
+          );
+        }
+      }
+    }
+  }
+});
+
+test('a paragraph broken into lines is not cut where a line goes on', () => {
+  const wrapped = ['Plans', ...Array.from({ length: 12 }, (_, at) => paragraph(at, 450).replace(/(.{1,70})(\s|$)/g, '$1\n').trim())].join('\n\n');
+  const parts = documentParts(wrapped, 1000);
+  assert.ok(parts.length > 4);
+  for (const part of parts) assert.match(part.begins, /^\p{Lu}/u, part.begins);
+});
+
+test('a text is cut at its headings, its lines and its sentences', () => {
+  const bike = ['Background', 'Riders', 'Costs', 'Stations', 'Risks', 'Next steps'].map((title) => `# ${title}\n\n${'The garden grows. '.repeat(120).trim()}`).join('\n\n');
+  assert.deepEqual(
+    documentParts(bike, 12000).map((part) => [part.number, part.headings, part.chars]),
+    [
+      [1, ['Background'], 2175],
+      [2, ['Riders'], 2171],
+      [3, ['Costs'], 2170],
+      [4, ['Stations'], 2173],
+      [5, ['Risks'], 2170],
+      [6, ['Next steps'], 2175],
+    ],
+  );
+  // A long section, in even pieces under its heading.
+  const lines = Array.from({ length: 10 }, (_, at) => `Part ${String(at + 1).padStart(2, '0')}. ${'Seeds are shared. '.repeat(19).trim()}`);
+  const costs = `# Costs\n\n${lines.join('\n\n')}`;
+  const pieces = documentParts(costs, 12000);
+  assert.deepEqual(
+    pieces.map((part) => [part.piece, part.chars]),
+    [
+      [{ at: 1, of: 2 }, 1769],
+      [{ at: 2, of: 2 }, 1769],
+    ],
+  );
+  assert.equal(partsText(costs, [pieces[1] as DocumentPart]), `# Costs\n\n${lines.slice(5).join('\n\n')}`);
+  // One long line, at its sentences.
+  const garden = documentParts('The garden grows. '.repeat(700), 12000);
+  assert.deepEqual(
+    garden.map((part) => [part.chars, part.after]),
+    [
+      [2521, '\n'],
+      [2521, ' '],
+      [2521, ' '],
+      [2521, ' '],
+      [2521, ' '],
+    ],
+  );
+  assert.deepEqual(
+    documentParts('Seeds are shared. '.repeat(340), 12000).map((part) => part.chars),
+    [2035, 2053, 2035],
+  );
+});
+
+test('a long text gives at most about forty parts, all of them listed', () => {
+  const long = documentParts('The garden grows. '.repeat(7000), 12000);
+  assert.equal(long.length, 40);
+  assert.ok(long.every((part) => part.chars === 3151));
+  // Many short sections are put together, never split.
+  const many = Array.from({ length: 300 }, (_, at) => `# Q${at + 1}\n\n${'Seeds are shared. '.repeat(3).trim()}`).join('\n\n');
+  const parts = documentParts(many, 12000);
+  assert.ok(parts.length <= 40, String(parts.length));
+  assert.ok(parts.every((part) => part.piece === undefined));
+  assert.ok(parts.some((part) => part.headings.length > 1));
+  assert.deepEqual(documentParts(many, 12000), parts, 'the same text gives the same parts');
+  assert.equal(partsText(many, parts), many);
+  // Twelve thousand characters of one-line sections, as in SD-031, is read at once.
+  const tiny = Array.from({ length: 1200 }, (_, at) => `# H${at}\nx.`).join('\n');
+  assert.ok(documentParts(tiny, 12000).length <= 40);
+});
+
+test('a table is never cut, and one longer than the limit is one part', () => {
+  const rows = Array.from({ length: 200 }, (_, at) => `Row ${String(at).padStart(3, '0')}\t${'cell '.repeat(14).trim()}`);
+  const text = `${paragraph(0, 300)}\n\n${rows.join('\n')}\n\n${paragraph(2, 300)}`;
+  const parts = documentParts(text, 12000);
+  const table = parts.filter((part) => part.chars > 12000);
+  assert.equal(table.length, 1);
+  assert.ok(partsText(text, table).includes(rows.join('\n')));
+  // What comes after a stretch that cannot be cut is cut in pieces, never in slivers of a word or two.
+  const tail = documentParts(`${rows.join('\n')}\n\n${paragraph(2, 3000)}`, 12000);
+  assert.ok(tail.every((part) => part.chars > 100), JSON.stringify(tail.map((part) => part.chars)));
+});
+
+test('a piece is never over the limit where it can be cut, its heading lines counted', () => {
+  // Three long sections of short paragraphs, under a small limit: every piece carries its heading.
+  const text = Array.from({ length: 3 }, (_, section) => `# Section ${section}\n\n${Array.from({ length: 120 }, (_, at) => paragraph(at, 200)).join('\n\n')}`).join('\n\n');
+  const parts = documentParts(text, 1000);
+  assert.ok(parts.every((part) => part.chars <= 1000), JSON.stringify(parts.filter((part) => part.chars > 1000).map((part) => part.chars)));
+  for (const part of parts) assert.ok(documentChars(partsText(text, [part])) <= part.chars);
+  // A heading over a lone piece is set back, with a blank line under it.
+  const later = parts.find((part) => part.piece && part.piece.at > 1) as DocumentPart;
+  assert.match(partsText(text, [later]), /^# Section \d\n\n/);
 });
 
 test('the outline shows the passages after the brief, and the rules last', async () => {

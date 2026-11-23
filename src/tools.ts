@@ -12,8 +12,8 @@ import { resolveAssets } from './plan/assets.ts';
 import type { ResolveOptions } from './plan/assets.ts';
 import { planPattern } from './plan/catalog.ts';
 import type { AssetDef, CatalogContext, IconDef, ImageDensity } from './plan/catalog.ts';
-import { MOST_DOCUMENT_CHARS, documentChars, documentKept, documentPassages, passageLabel, passageWords, readPassageNumbers } from './plan/document.ts';
-import type { DocumentPassage } from './plan/document.ts';
+import { MOST_DOCUMENT_CHARS, aboutWords, documentChars, documentKept, documentLimit, documentParts, documentPassages, firstWords, partsText, passageLabel, passageWords, readPassageNumbers } from './plan/document.ts';
+import type { DocumentPart, DocumentPassage } from './plan/document.ts';
 import { TextCutError, planEdit, recolorDeck } from './plan/edit.ts';
 import type { EditOptions, EditResult } from './plan/edit.ts';
 import { entryBlocks, freeOnOffer, isFreeEntry, severalOnOneSlide } from './plan/free.ts';
@@ -114,6 +114,14 @@ export interface PresentationToolsOptions {
    * prompt with `describeDocuments`. Off unless `true`: the plan tool is then declared without it.
    */
   documents?: boolean;
+  /**
+   * The most characters of the person's texts a presentation is made from, as `maxDocumentChars` of
+   * `planOutline`: a whole number from 1000 to 30000, and 12000 (`MOST_DOCUMENT_CHARS`) unless set.
+   * Named texts longer than that together are answered with a list of their parts, for the chat model
+   * to choose from in `document_parts`. Give `describeDocuments` the same options. Any other value is a
+   * `RangeError` when the tools are built. From 0.7.1.
+   */
+  maxDocumentChars?: number;
 }
 
 /** A text the person gave in a conversation, as the app lists it for the chat model. */
@@ -394,6 +402,15 @@ function toolDefinitions(layouts: Array<Pick<PatternDef, 'id' | 'description'>>,
         'The slides carry every part of them in their own words and order. Name a text whenever the user wants it on the slides, and also when they want a presentation about it, ' +
         'a summary of it or some parts of it: say which in instructions. Leave it out when the presentation is not made from a text the user gave.',
     };
+    planProperties.document_parts = {
+      type: 'array',
+      items: { type: 'string' },
+      description:
+        'Only with documents, for a text too long to make a presentation of whole: the parts of it the presentation is made from. ' +
+        'Give each by the number or heading this tool listed for it ("2", "4-6", "Risks"), or by a heading the user named. ' +
+        'With several texts, put the text\'s name before a number ("report.pdf: 2"). A named text none of whose parts is named here is taken whole. ' +
+        'Leave it out to use the named texts whole: for some parts of a text that is not too long, say which in instructions.',
+    };
   }
   if (colors) planProperties.accent_color = { type: 'string', description: ACCENT_COLOR };
   if (limitable) {
@@ -646,12 +663,15 @@ function readableDocuments(list: unknown): ChatDocument[] {
   return list.filter((item): item is ChatDocument => typeof item === 'object' && item !== null && typeof item.name === 'string' && typeof item.text === 'string');
 }
 
+/** A name or a part as a chat model passed it: trimmed, without the quotes around it. */
+const unquoted = (item: string): string => item.trim().replace(/^["'\u201C\u201D\u201E]+|["'\u201C\u201D\u201E]+$/g, '').trim();
+
 /** The names a chat model passed in `documents`: trimmed, without the quotes around them, each once. */
 function documentNames(value: unknown): string[] {
   const given: unknown[] = Array.isArray(value) ? value : typeof value === 'string' ? [value] : [];
   const names = given
     .filter((item): item is string => typeof item === 'string')
-    .map((item) => item.trim().replace(/^["'\u201C\u201D\u201E]+|["'\u201C\u201D\u201E]+$/g, '').trim())
+    .map(unquoted)
     .filter(Boolean);
   return [...new Set(names)];
 }
@@ -676,6 +696,243 @@ function findDocument(list: readonly ChatDocument[], name: string): ChatDocument
     if (found.length === 1) return found[0];
   }
   return undefined;
+}
+
+// --- parts of a text too long to take whole ---
+
+/** A part number, or a range of them: "2", "part 4", "4-6", "4 to 6". */
+const PART_NUMBERS = /^(?:parts?\s*)?(\d+)(?:\s*(?:-|–|—|to)\s*(\d+))?$/i;
+/** A part number with the label the list gave it: "4. Risks", "4) Risks (2170)". */
+const NUMBERED_LABEL = /^(\d+)[.)]\s+(.+?)(?:\s+\(\d+\))?$/;
+/** A list of part numbers and ranges: "2, 4-6". */
+const numberList = (text: string): string[] | undefined => {
+  const pieces = text.split(',').map((piece) => piece.trim());
+  return pieces.every((piece) => PART_NUMBERS.test(piece)) ? pieces : undefined;
+};
+
+/** The parts a chat model named in `document_parts`: trimmed, without the quotes around them, a list of numbers split at its commas, each once. */
+function partNames(value: unknown): string[] {
+  const given: unknown[] = Array.isArray(value) ? value : value === undefined || value === null ? [] : [value];
+  const names = given
+    .map((item) => (typeof item === 'number' && Number.isInteger(item) ? String(item) : item))
+    .filter((item): item is string => typeof item === 'string')
+    .map(unquoted)
+    .flatMap((item) => numberList(item) ?? [item])
+    .filter(Boolean);
+  return [...new Set(names)];
+}
+
+/** Quote marks, as headings are compared: a Hebrew gershayim is a double quote, as a chat model may give it back. */
+const QUOTE_MARKS = /["'״׳“”„‘’]/g;
+/** "#" marks before a heading, which stay in its name where a direction mark came before them. */
+const HEADING_MARKS = /^#{1,6}\s+/;
+/** A heading as headings are compared: in one form, without direction marks or "#" marks, with one kind of quote and of space, without "…" at its end. */
+const headingKey = (text: string): string =>
+  nameKey(text)
+    .replace(HEADING_MARKS, '')
+    .replace(QUOTE_MARKS, "'")
+    .replace(/\s+/g, ' ')
+    .replace(/\s*(?:…|\.\.\.)$/, '')
+    .trim();
+/** A label of the list as labels are compared: as a heading, in lower case, without the quotes and dots at its end. */
+const labelKey = (text: string): string => headingKey(text).toLowerCase().replace(/(?:['\s…]|\.\.\.)+$/, '');
+/** A heading as a list shows it: on one line, cut at 80 characters. */
+const shownHeading = (heading: string): string => {
+  const points = [...nameKey(heading).replace(HEADING_MARKS, '').replace(/\s+/g, ' ')];
+  return points.length > 80 ? `${points.slice(0, 79).join('')}…` : points.join('');
+};
+
+/** A named text with its parts for the limit, and the label of each part as the list shows it. */
+interface TextParts {
+  document: ChatDocument;
+  parts: DocumentPart[];
+  labels: string[];
+  /** Whether any part has a heading. */
+  headed: boolean;
+}
+
+function textParts(document: ChatDocument, most: number): TextParts {
+  const parts = documentParts(document.text, most);
+  const headed = parts.some((part) => part.headings.length > 0);
+  // The sections of each heading, so that two sections of one name are told apart by their first words.
+  const sections = new Map<string, Set<number>>();
+  for (const part of parts) {
+    part.headings.forEach((heading, at) => {
+      const key = headingKey(heading);
+      const set = sections.get(key) ?? new Set<number>();
+      set.add(part.sections[at] ?? -1);
+      sections.set(key, set);
+    });
+  }
+  const labels = parts.map((part) => {
+    const [first, ...rest] = part.headings;
+    if (first === undefined) return `${headed ? 'before the first heading, ' : ''}begins "${part.begins}"`;
+    if (rest.length > 0) return `${shownHeading(first)} … ${shownHeading(rest.at(-1) as string)}, ${part.headings.length} headings`;
+    const piece = part.piece ? `, ${part.piece.at} of ${part.piece.of}` : '';
+    const twice = (sections.get(headingKey(first))?.size ?? 0) > 1 ? `, begins "${part.begins}"` : '';
+    return `${shownHeading(first)}${piece}${twice}`;
+  });
+  return { document, parts, labels, headed };
+}
+
+/** The list of a text's parts, one to a line, for the chat model to choose from. */
+function partList(text: TextParts, most: number): string {
+  const lines = text.parts.map((part, at) => `${part.number}. ${text.labels[at]} (${part.chars}${part.chars > most ? ', too long to make a presentation of alone' : ''})`);
+  return `The parts of "${text.document.name}" (${documentChars(text.document.text)} characters${text.headed ? '' : ', no headings'}), each with its characters:\n${lines.join('\n')}`;
+}
+
+/** Part numbers in words, runs in a row joined: "part 4", "parts 1-3 and 5". */
+function partNumbers(numbers: readonly number[]): string {
+  const sorted = [...new Set(numbers)].sort((a, b) => a - b);
+  const runs: string[] = [];
+  for (let at = 0; at < sorted.length; ) {
+    let end = at;
+    while (end + 1 < sorted.length && (sorted[end + 1] as number) === (sorted[end] as number) + 1) end++;
+    runs.push(end > at ? `${sorted[at]}-${sorted[end]}` : String(sorted[at]));
+    at = end + 1;
+  }
+  return `${sorted.length === 1 ? 'part' : 'parts'} ${inWords(runs)}`;
+}
+
+/** Parts of the named texts, by the index of the text and the numbers of its parts. */
+type Picks = Array<{ text: number; numbers: number[] }>;
+
+/** What a selector of `document_parts` found: parts, or the sections (or parts) it could mean, one choice each. */
+type Found = { picks: Picks } | { could: Picks };
+
+/**
+ * The parts the selectors of `document_parts` name, in the named texts: by number or range (in a
+ * text named before it, "report.pdf: 2", where more than one text is named), by the label the list
+ * gave a part, by a heading (as it is, then without regard to case, then by its beginning, and at
+ * the first of these that finds any), by a number with its label as the list gave it, or by a
+ * text's name. A heading of two sections or more, in any of the texts, and a number where several
+ * texts are named and none before it, is `ambiguous`, the first such selector; selectors that find
+ * nothing are `unknown`.
+ */
+function pickParts(texts: readonly TextParts[]): (selectors: readonly string[]) => { chosen: Array<Set<number>>; ambiguous?: { selector: string; could?: Picks }; unknown: string[] } {
+  const all = texts.map((_, at) => at);
+  /** The text a name before a colon names: the one of that name, else the one name that differs only in case. */
+  const textNamed = (prefix: string): number => {
+    const key = nameKey(unquoted(prefix));
+    const exact = texts.findIndex((one) => nameKey(one.document.name) === key);
+    if (exact >= 0) return exact;
+    const cased = all.filter((at) => nameKey((texts[at] as TextParts).document.name).toLowerCase() === key.toLowerCase());
+    return cased.length === 1 ? (cased[0] as number) : -1;
+  };
+  /** The texts a selector speaks of, and what it says of them: one text where it begins with that text's name and a colon. */
+  const scopeOf = (selector: string): { scope: number[]; rest: string } => {
+    for (let colon = selector.indexOf(':'); colon > 0; colon = selector.indexOf(':', colon + 1)) {
+      const text = textNamed(selector.slice(0, colon));
+      if (text >= 0) return { scope: [text], rest: unquoted(selector.slice(colon + 1)) };
+    }
+    return { scope: all, rest: selector };
+  };
+  /** Every part of a text that holds a section. */
+  const partsWith = (text: number, section: number): number[] => (texts[text] as TextParts).parts.filter((part) => part.sections.includes(section)).map((part) => part.number);
+  /** Whether a part's label is its heading alone: the heading then decides, as it would in another text. */
+  const bare = (text: number, number: number): boolean => {
+    const one = texts[text] as TextParts;
+    const part = one.parts[number - 1] as DocumentPart;
+    return part.headings.length === 1 && !part.piece && one.labels[number - 1] === shownHeading(part.headings[0] as string);
+  };
+  /** A label, a heading or a text's name, in the texts of the scope. `prefix` lets a heading be found by its beginning. */
+  const find = (selector: string, scope: readonly number[], prefix = true): Found | undefined => {
+    if (selector.trim() === '') return undefined;
+    const label = labelKey(selector);
+    const labelled = scope.flatMap((text) =>
+      (texts[text] as TextParts).parts.filter((_, at) => labelKey((texts[text] as TextParts).labels[at] as string) === label).map((part) => ({ text, numbers: [part.number] })),
+    );
+    if (labelled.length > 1) return { could: labelled };
+    const only = labelled[0];
+    if (only && !bare(only.text, only.numbers[0] as number)) return { picks: [only] };
+    const key = headingKey(selector);
+    const levels: Array<(heading: string) => boolean> = [
+      (heading) => headingKey(heading) === key,
+      (heading) => headingKey(heading).toLowerCase() === key.toLowerCase(),
+      ...(prefix ? [(heading: string) => key !== '' && headingKey(heading).toLowerCase().startsWith(key.toLowerCase())] : []),
+    ];
+    for (const matches of levels) {
+      const hits: Array<{ text: number; section: number; number: number }> = [];
+      for (const text of scope) {
+        for (const part of (texts[text] as TextParts).parts) {
+          part.headings.forEach((heading, at) => {
+            const names = heading.includes(' / ') ? [heading, ...heading.split(' / ')] : [heading];
+            if (names.some(matches)) hits.push({ text, section: part.sections[at] ?? -1, number: part.number });
+          });
+        }
+      }
+      if (hits.length === 0) continue;
+      const first = hits[0] as { text: number; section: number; number: number };
+      const sections = new Map(hits.map((hit) => [`${hit.text}:${hit.section}`, hit]));
+      if (sections.size === 1) return { picks: [{ text: first.text, numbers: partsWith(first.text, first.section) }] };
+      if (new Set(hits.map((hit) => `${hit.text}:${hit.number}`)).size === 1) return { picks: [{ text: first.text, numbers: [first.number] }] };
+      // One choice for each section: a section in pieces is one choice of several parts.
+      return { could: [...sections.values()].map((hit) => ({ text: hit.text, numbers: partsWith(hit.text, hit.section) })) };
+    }
+    if (only) return { picks: [only] };
+    const named = findDocument(
+      scope.map((text) => (texts[text] as TextParts).document),
+      selector,
+    );
+    const text = named ? texts.findIndex((one) => one.document === named) : -1;
+    return text >= 0 ? { picks: [{ text, numbers: (texts[text] as TextParts).parts.map((part) => part.number) }] } : undefined;
+  };
+  /** A list of numbers and ranges in one text: `undefined` where any is not a part of it. */
+  const numbered = (pieces: readonly string[], text: number): number[] | undefined => {
+    const count = (texts[text] as TextParts).parts.length;
+    const numbers: number[] = [];
+    for (const piece of pieces) {
+      const match = PART_NUMBERS.exec(piece) as RegExpExecArray;
+      const a = Number(match[1]);
+      const b = match[2] === undefined ? a : Number(match[2]);
+      const [low, high] = a <= b ? [a, b] : [b, a];
+      if (low < 1 || high > count) return undefined;
+      for (let number = low; number <= high; number++) numbers.push(number);
+    }
+    return numbers;
+  };
+  /**
+   * A number with the label the list gave it ("4. Risks (2170)"). The whole of it is read first, as a
+   * heading may begin with a number; then the label, found as it is or without regard to case, and a
+   * number that disagrees with the label gives way to it.
+   */
+  const withLabel = (rest: string, scope: readonly number[]): Found | undefined => {
+    const match = NUMBERED_LABEL.exec(rest);
+    if (!match) return undefined;
+    const whole = find(rest, scope, false);
+    if (whole) return whole;
+    const number = Number(match[1]);
+    const byLabel = find(match[2] as string, scope, false);
+    if (!byLabel) return undefined;
+    const listed = 'picks' in byLabel ? byLabel.picks : byLabel.could;
+    const agree = listed.filter((pick) => pick.numbers.includes(number));
+    if (agree.length === 1) return { picks: [{ text: (agree[0] as { text: number }).text, numbers: [number] }] };
+    return byLabel;
+  };
+  return (selectors) => {
+    const chosen = texts.map(() => new Set<number>());
+    const unknown: string[] = [];
+    let ambiguous: { selector: string; could?: Picks } | undefined;
+    for (const selector of selectors) {
+      const { scope, rest } = scopeOf(selector);
+      let found: Found | undefined;
+      const pieces = numberList(rest);
+      if (pieces) {
+        if (scope.length > 1) {
+          ambiguous ??= { selector };
+          continue;
+        }
+        const numbers = numbered(pieces, scope[0] as number);
+        if (numbers) found = { picks: [{ text: scope[0] as number, numbers }] };
+      }
+      found ??= withLabel(rest, scope) ?? find(rest, scope);
+      if (!found && /\s*\(\d+\)$/.test(rest)) found = find(rest.replace(/\s*\(\d+\)$/, ''), scope);
+      if (!found) unknown.push(selector);
+      else if ('could' in found) ambiguous ??= { selector, could: found.could };
+      else for (const pick of found.picks) for (const number of pick.numbers) chosen[pick.text]?.add(number);
+    }
+    return { chosen, ...(ambiguous ? { ambiguous } : {}), unknown };
+  };
 }
 
 /** The words of a text as texts are compared (a topic with a listed text, two named texts): runs of letters and digits, in lower case. */
@@ -704,34 +961,36 @@ function retells(said: string, text: string): boolean {
  * The line for a chat model's system prompt that lists the texts a person gave in a conversation,
  * each with its words and first words, and says how to make a presentation of one. '' when there
  * are none. Give it the list the tools are given with each call: it lists the last ten of them
- * that have a name and a text.
+ * that have a name and a text. `options` are the options the tools were built with, or any object
+ * with their `maxDocumentChars`: a text longer than that is marked too long. Left out, 12000.
  */
-export function describeDocuments(documents: readonly ChatDocument[]): string {
+export function describeDocuments(documents: readonly ChatDocument[], options?: { maxDocumentChars?: number } | null): string;
+/** As a callback of `map`: the index it is given is passed over. */
+export function describeDocuments(documents: readonly ChatDocument[], index: number, ...rest: unknown[]): string;
+export function describeDocuments(documents: readonly ChatDocument[], options?: { maxDocumentChars?: number } | number | null): string {
+  // A second argument that is no object (an index, as from `map`) is left out.
+  const most = documentLimit(typeof options === 'object' && options !== null ? options.maxDocumentChars : undefined);
   const listed = readableDocuments(documents)
     .filter((document) => document.name.trim() && document.text.trim())
     .slice(-MOST_DOCUMENTS);
   if (listed.length === 0) return '';
-  // The first words, up to 40 characters, so that the chat model can tell which text is which.
-  const begins = (text: string): string => {
-    let start = '';
-    for (const word of text.replace(/\s+/g, ' ').trim().split(' ')) {
-      if (start && start.length + 1 + word.length > 40) break;
-      start = start ? `${start} ${word}` : word.slice(0, 40);
-    }
-    return `${start.replace(/"/g, "'")}…`;
-  };
+  const long = listed.filter((document) => documentChars(document.text) > most);
   const lines = listed.map((document) => {
     const words = document.text.split(/\s+/).filter(Boolean).length;
-    // A text the planner cannot take whole is listed all the same, so that the chat model can ask for the part it is about.
-    const whole = documentChars(document.text) > MOST_DOCUMENT_CHARS ? ', too long to make a presentation of whole' : '';
-    return `"${document.name}" (${words} words${whole}, begins "${begins(document.text)}")`;
+    // A text the planner cannot take whole is listed all the same: the chat model names it, and the plan tool lists its parts to choose from.
+    const whole = long.includes(document) ? ', too long to make a presentation of whole' : '';
+    // The first words, so that the chat model can tell which text is which.
+    return `"${document.name}" (${words} words${whole}, begins "${firstWords(document.text)}")`;
   });
   return (
     `Texts the user gave in this conversation, which the presentation tools can read by name: ${lines.join(', ')}. ` +
     `When the user wants a presentation of one of them, name it in "documents" of ${TOOL_NAMES.plan} and say in "topic" in a sentence or two what the presentation is for: ` +
     'the planner reads the text itself and puts all of it on the slides, word for word. Do not copy or retell a listed text in "topic". ' +
     'Name it also when the user wants a summary of it or some parts of it, and say which in "instructions". ' +
-    'A message that only asks for a presentation is not such a text: pass what it asks in "topic" and "instructions".'
+    'A message that only asks for a presentation is not such a text: pass what it asks in "topic" and "instructions".' +
+    (long.length > 0
+      ? ` A text marked too long is named all the same: put the part the user wants in "document_parts", by its heading as the user said it, or leave that out and ${TOOL_NAMES.plan} answers with the parts to choose from. Never ask the user to paste a part of a text they gave.`
+      : '')
   );
 }
 
@@ -742,6 +1001,8 @@ export function describeDocuments(documents: readonly ChatDocument[]): string {
  */
 export function presentationTools(options: PresentationToolsOptions): PresentationTools {
   const { template } = options;
+  // The most characters of named texts, read once: a wrong value is the app's, said when the tools are built (in a call it would be PLAN_FAILED).
+  const most = documentLimit(options.maxDocumentChars);
   // What the app's own parts throw is theirs to word, whatever kind of error it is: a network that
   // fails is a TypeError too ("fetch failed"). Their errors are remembered, so that `call` can tell
   // them from the software tripping over something it read.
@@ -843,6 +1104,7 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
     if (review) plan.review = review;
     if (options.composeLayouts && tool === TOOL_NAMES.plan) plan.composeLayouts = options.composeLayouts;
     if (options.free !== undefined) plan.free = options.free;
+    if (options.maxDocumentChars != null) plan.maxDocumentChars = most;
     if (options.onProgress) plan.onProgress = (event) => options.onProgress?.(event, tool);
     if (signal) plan.signal = signal;
     return plan;
@@ -1061,17 +1323,22 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
   /**
    * The texts a plan is made from, joined, for the names the chat model passed in `documents`;
    * no `text` when it named none. A name the conversation does not have, an empty text and too much
-   * text are errors the chat model can act on. With no text named, the topic and the instructions
-   * are checked against each long listed text: a copy of one is an error that names the argument
-   * that copies, and the names of those they retell come back in `retold`, for the output to speak of.
+   * text are errors the chat model can act on: texts longer than the most a presentation is made
+   * from are answered with a list of their parts, and the parts named in `document_parts` are what
+   * the plan is made from, with `parts` saying which and `partOf` the texts of which only some are
+   * used. With no text named, the topic and the instructions are checked against each long listed
+   * text: a copy of one is an error that names the argument that copies, and the names of those they
+   * retell come back in `retold`, for the output to speak of.
    */
-  const documentsOf = (args: Record<string, unknown>, list: unknown, topic: string, instructions: string): { text?: string; names: string[]; retold: string[] } => {
-    // Where the tools take no documents the argument is not declared; one that comes all the same is passed over.
+  const documentsOf = (args: Record<string, unknown>, list: unknown, topic: string, instructions: string): { text?: string; names: string[]; retold: string[]; parts?: string[]; partOf?: string[] } => {
+    // Where the tools take no documents the arguments are not declared; those that come all the same are passed over.
     if (options.documents !== true) return { names: [], retold: [] };
     const listed = readableDocuments(list);
     const names = documentNames(args.documents);
+    const asked = partNames(args.document_parts);
     const quoted = (items: readonly string[]): string => inWords(items.map((name) => `"${name}"`));
     if (names.length === 0) {
+      if (asked.length > 0) throw new ToolInputError('"document_parts" needs "documents"');
       // A shorter listed message is most often the request itself, which a topic may well retell.
       const checked = listed.filter((document) => documentChars(document.text) >= CHECKED_CHARS);
       // Each argument on its own, so that the error names the one that copies.
@@ -1090,9 +1357,29 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
     if (unknown.length > 0) {
       // A short paste is not listed, and has a way of its own; a file that is not listed is one the app could not read.
       const there = listed.length > 0 ? `The texts the app lists for this conversation are ${quoted(listed.map((document) => document.name))}: use those names.` : 'The app lists no text for this conversation.';
+      // A name with a part after it ("report.pdf, Risks"): the part has an argument of its own. Names
+      // of several listed texts in one ("report.pdf, notes.docx") are each named on their own.
+      const keyOf = (name: string): string => nameKey(name).toLowerCase();
+      const after = unknown
+        .map((name) => {
+          const matches = listed.filter((document) => keyOf(name).length > keyOf(document.name).length && keyOf(name).startsWith(keyOf(document.name)) && ' ,:;(-–#'.includes(keyOf(name)[keyOf(document.name).length] as string));
+          if (matches.length !== 1) return undefined;
+          const text = matches[0] as ChatDocument;
+          const rest = nameKey(name).slice(nameKey(text.name).length).replace(/^[\s,:;(\-–#]+/, '');
+          const others = rest.split(',').map(unquoted).filter(Boolean);
+          const names = others.length > 0 && others.every((other) => findDocument(listed, other)) ? [text.name, ...others.map((other) => (findDocument(listed, other) as ChatDocument).name)] : undefined;
+          return { text, names };
+        })
+        .find((found) => found !== undefined);
+      const hint = !after
+        ? ''
+        : after.names
+          ? ` Name each text on its own in documents: ${quoted(after.names)}.`
+          : ` To make it from a part of "${after.text.name}", name "${after.text.name}" in documents and the part in document_parts.`;
       throw new ToolInputError(
         `"documents" names ${unknown.length === 1 ? 'a text' : 'texts'} the app does not have: ${quoted(unknown)}. ${there} ` +
-          'A text the user pasted in a short message is not listed: pass it in instructions, whole and word for word, in quotation marks. A file that is not listed could not be read: tell the user.',
+          'A text the user pasted in a short message is not listed: pass it in instructions, whole and word for word, in quotation marks. A file that is not listed could not be read: tell the user.' +
+          hint,
       );
     }
     // Two names may find the same text: it is carried once.
@@ -1107,16 +1394,89 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
       const mine = flat[at] as string;
       return !flat.some((other, by) => by !== at && other.includes(mine) && (other.length > mine.length || by < at));
     });
-    const joined = texts.map((document) => document.text.replace(/^\s+|\s+$/g, '')).join('\n\n');
-    // Counted as the planner counts it, so that a text the tool takes is never one the planner refuses.
-    const chars = documentChars(joined);
-    if (chars > MOST_DOCUMENT_CHARS) {
+    // Said with a list of parts, so that the chat model knows why a text it named is not listed.
+    const dropped = found
+      .map((document, at) => ({ document, keeper: texts.includes(document) ? undefined : texts.find((text) => flat[found.indexOf(text)]?.includes(flat[at] as string)) }))
+      .filter((pair): pair is { document: ChatDocument; keeper: ChatDocument } => pair.keeper !== undefined)
+      .map(({ document, keeper }) => ` "${document.name}" is in "${keeper.name}" word for word, so only "${keeper.name}" is used.`)
+      .join('');
+    const it = texts.length === 1 ? 'it' : 'them';
+    const words = aboutWords(most);
+    if (asked.length === 0) {
+      const joined = texts.map((document) => document.text.replace(/^\s+|\s+$/g, '')).join('\n\n');
+      // Counted as the planner counts it, so that a text the tool takes is never one the planner refuses.
+      const chars = documentChars(joined);
+      if (chars <= most) return { text: joined, names: texts.map((document) => document.name), retold: [] };
+      const lists = texts.map((document) => partList(textParts(document, most), most)).join('\n');
       throw new ToolInputError(
-        `${texts.length === 1 ? 'The text is' : 'The texts are'} ${chars} characters, and a presentation is made from at most ${MOST_DOCUMENT_CHARS} (about 1,800 words). ` +
-          'Ask the user to paste the part the presentation is about, and name that.',
+        `${texts.length === 1 ? `The text "${(texts[0] as ChatDocument).name}" is ${chars} characters` : `The texts ${quoted(texts.map((document) => document.name))} are ${chars} characters together`}, ` +
+          `and a presentation is made from at most ${most} (about ${words} words). ` +
+          `Do not ask the user to paste a part of ${it}: call ${TOOL_NAMES.plan} again with the same documents, and name in document_parts the parts the presentation is about, by number or heading, up to ${most} characters in all.` +
+          (texts.length > 1 ? ` With several texts, put the text's name before a number ("${(texts[0] as ChatDocument).name}: 2"). A named text none of whose parts is named is taken whole.` : '') +
+          ' If the user did not say which parts they want, ask them first, and say what the parts are about. The slides carry only the parts named.' +
+          `${dropped}\n${lists}`,
       );
     }
-    return { text: joined, names: texts.map((document) => document.name), retold: [] };
+    const each = texts.map((document) => textParts(document, most));
+    const lists = each.map((text) => partList(text, most)).join('\n');
+    const picked = pickParts(each)(asked);
+    if (picked.ambiguous) {
+      const { selector, could } = picked.ambiguous;
+      if (!could) {
+        throw new ToolInputError(
+          `"document_parts" names "${selector}", and more than one text is named: put the text's name before the number, as "${(texts[0] as ChatDocument).name}: ${selector}".${dropped}\n${lists}`,
+        );
+      }
+      // One choice for each section it could mean, so that a section in pieces does not read as a range of two.
+      const choices = could.map((pick) => `${partNumbers(pick.numbers)}${texts.length > 1 ? ` of "${(texts[pick.text] as ChatDocument).name}"` : ''}`);
+      const which = `${choices.slice(0, -1).join(', ')}${choices.length > 1 ? ' or ' : ''}${choices.at(-1)}`;
+      throw new ToolInputError(
+        `"document_parts" names "${selector}", which could be ${which}: name the parts meant by their numbers${texts.length > 1 ? `, with the text's name before each ("${(texts[0] as ChatDocument).name}: 2")` : ''}.${dropped}\n${lists}`,
+      );
+    }
+    if (picked.unknown.length > 0) {
+      throw new ToolInputError(
+        `"document_parts" names ${picked.unknown.length === 1 ? 'a part' : 'parts'} the ${texts.length === 1 ? 'text does' : 'texts do'} not have: ${quoted(picked.unknown)}. ` +
+          `Name parts by the numbers or headings below, with the same documents.${dropped}\n${lists}`,
+      );
+    }
+    const joined = each
+      .map((text, at) => {
+        const chosen = picked.chosen[at] as Set<number>;
+        return chosen.size > 0 ? partsText(text.document.text, text.parts.filter((part) => chosen.has(part.number))) : text.document.text.replace(/^\s+|\s+$/g, '');
+      })
+      .join('\n\n');
+    const size = documentChars(joined);
+    if (size > most) {
+      // What was used, text by text: some parts, all of them, or the whole text where no part of it was named.
+      const used = each.map((text, at) => {
+        const chosen = picked.chosen[at] as Set<number>;
+        const name = `"${text.document.name}"`;
+        if (chosen.size === 0) return { said: `all of ${name}, since no part of it is named`, one: true };
+        if (chosen.size === text.parts.length) return { said: `all of ${name}`, one: true };
+        return { said: `${partNumbers([...chosen])} of ${name}`, one: chosen.size === 1 };
+      });
+      const said = inWords(used.map((use) => use.said));
+      const comes = used.length === 1 && (used[0] as { one: boolean }).one ? 'comes' : 'come';
+      // A part that is longer than the limit alone could not be cut: a table, or a line with no sentence end.
+      const uncut = each.flatMap((text, at) => text.parts.filter((part) => picked.chosen[at]?.has(part.number) && part.chars > most).map((part) => `part ${part.number} of "${text.document.name}"`));
+      const one = uncut.length === 1;
+      throw new ToolInputError(
+        `${said.charAt(0).toUpperCase()}${said.slice(1)} ${comes} to ${size} characters, and a presentation is made from at most ${most} (about ${words} words). ` +
+          `Name fewer parts, up to ${most} characters in all, and call ${TOOL_NAMES.plan} again with the same documents. ` +
+          `If the user wants all of ${it}, tell them it is too much for one presentation and ask which parts to leave out.` +
+          (uncut.length > 0
+            ? ` ${inWords(uncut).charAt(0).toUpperCase()}${inWords(uncut).slice(1)} cannot be cut and ${one ? 'is' : 'are'} more than a presentation is made from: leave ${one ? 'it' : 'them'} out, or ask the user which rows or lines of ${one ? 'it' : 'them'} they want.`
+            : '') +
+          `${dropped}\n${lists}`,
+      );
+    }
+    const parts = each.flatMap((text, at) =>
+      text.parts.filter((part) => picked.chosen[at]?.has(part.number)).map((part) => `${text.document.name}: ${part.number}. ${text.labels[part.number - 1]}`),
+    );
+    // The texts of which only some parts are used: the person is told which.
+    const partOf = each.filter((text, at) => (picked.chosen[at]?.size ?? 0) > 0 && (picked.chosen[at]?.size ?? 0) < text.parts.length).map((text) => text.document.name);
+    return { text: joined, names: texts.map((document) => document.name), retold: [], parts, partOf };
   };
 
   const handlers: Record<string, (args: Record<string, unknown>, signal: AbortSignal | undefined, context: ToolCallContext) => Promise<ToolResult>> = {
@@ -1148,8 +1508,11 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
       // A named text of which no part goes on a slide only asked for the presentation (the planner
       // left it all out): it is no text to carry. The plan is made again with it as instructions,
       // where the request belongs. Sending the chat model to put it there itself would send a long
-      // request back to the copy check, which sends it here.
-      const request = given.text !== undefined && !plan.slides.some((slide) => Array.isArray(slide.passages) && slide.passages.length > 0);
+      // request back to the copy check, which sends it here. Parts chosen of a text are what the
+      // presentation is about, not a request; and a text longer than a request ever is stays out of
+      // the instructions, where a larger limit would let it go whole.
+      const placedNone = given.text !== undefined && !plan.slides.some((slide) => Array.isArray(slide.passages) && slide.passages.length > 0);
+      const request = placedNone && given.parts === undefined && documentChars(given.text as string) <= MOST_DOCUMENT_CHARS;
       if (request) {
         const { document: _request, ...asked } = brief;
         plan = await planOutline(template, { ...asked, instructions: [brief.instructions, given.text].filter(Boolean).join('\n\n') }, planOptions(TOOL_NAMES.plan, signal));
@@ -1162,6 +1525,14 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
         output.next =
           `${inWords(given.names.map((name) => `"${name}"`))} only ${one ? 'asks' : 'ask'} for a presentation, so the planner took ${one ? 'it' : 'them'} as instructions, ` +
           `and no slide carries ${one ? 'it' : 'them'} word for word. ${String(output.next)}`;
+      } else if (placedNone) {
+        output.next = `The planner put none of ${given.parts ? 'the parts named' : inWords(given.names.map((name) => `"${name}"`))} on a slide. Ask the user what the presentation should carry, and plan again. ${String(output.next)}`;
+      }
+      if (given.parts) {
+        if (output.document) output.document = { ...(output.document as Record<string, unknown>), parts_used: given.parts };
+        if (!placedNone && given.partOf && given.partOf.length > 0) {
+          output.next = `Only some parts of ${inWords(given.partOf.map((name) => `"${name}"`))} are in this plan, as document.parts_used lists: tell the user which. ${String(output.next)}`;
+        }
       }
       if (given.retold.length > 0) {
         // Whether the person wanted that text on the slides the chat model knows, and the tools do not.

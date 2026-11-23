@@ -28,12 +28,15 @@ import {
   DOCUMENT_CHANGE_RULES,
   DOCUMENT_OPENING,
   DOCUMENT_VARY,
+  LARGEST_DOCUMENT_CHARS,
   MOST_DOCUMENT_CHARS,
   MOST_DOCUMENT_SLIDES,
+  aboutWords,
   askedSlidesProperty,
   atomsOf,
   documentBlock,
   documentChars,
+  documentLimit,
   documentLanguageProperty,
   documentRules,
   documentWriteRule,
@@ -152,7 +155,8 @@ export interface Brief {
    * `prompt` then says what the deck is for, and `instructions` any wish ("only the risks", "a
    * short summary"). A line ends a paragraph; a line that starts with "-", "•" or a number is a
    * list item; a short line on its own, or one that starts with "#", is a heading. At most
-   * `MOST_DOCUMENT_CHARS` characters. Left out or blank, the deck is planned as before.
+   * `maxDocumentChars` of the options (12000, `MOST_DOCUMENT_CHARS`, unless set) when the plan is
+   * made. Left out or blank, the deck is planned as before.
    */
   document?: string;
 }
@@ -197,6 +201,18 @@ export interface PlanOptions {
   numberPatterns?: 'from-brief' | 'always' | 'never';
   /** How many times the model may be asked to fix a draft that breaks the template's limits. Defaults to 2. */
   maxRepairs?: number;
+  /**
+   * The most characters of a new brief's `document`, as `documentChars` counts them: a whole number
+   * from 1000 to 30000, and 12000 (`MOST_DOCUMENT_CHARS`, about 1,800 words) unless set. A longer
+   * document is a `PlanError` from `planOutline`, and so from `planDeck` and `generateDeck`. The
+   * later stages (`editPlan`, `writeDeck`, `composeLayouts`, `planTextFit`, `freeSlidesOff`) take
+   * the document of the plan they are given up to 30000 characters, whatever this says, so that a
+   * plan made under a larger limit is still written; `planEdit` reads a deck's document as it is.
+   * More text makes a longer planning call and one longer writing call, and a deck made from a
+   * document has at most 30 slides, so more of it is set small or cut. Any other value is a
+   * `RangeError`, from every stage. From 0.7.1.
+   */
+  maxDocumentChars?: number;
   /**
    * A second look at every draft: `designReview` for the code-only design checks, `visionReview`
    * for a model that looks at pictures of the slides, or a function of your own. What it finds is
@@ -616,16 +632,16 @@ interface Planning {
 
 /**
  * The document a brief gives, read into passages: `undefined` for none, or a blank one. One that
- * is no text, or longer than a deck is made from, is a {@link PlanError} that says so. `written` is
+ * is no text, or longer than `most` characters, is a {@link PlanError} that says so. `written` is
  * the language it is written in, where the planner said.
  */
-export function documentOf(brief: Pick<Brief, 'document'>, language: string, written?: string): DocumentPlan | undefined {
+export function documentOf(brief: Pick<Brief, 'document'>, language: string, written?: string, most = MOST_DOCUMENT_CHARS): DocumentPlan | undefined {
   const value: unknown = brief.document;
   if (value === undefined || value === null) return undefined;
   if (typeof value !== 'string') throw new PlanError('"document" must be text');
   if (value.trim() === '') return undefined;
   const chars = documentChars(value);
-  if (chars > MOST_DOCUMENT_CHARS) throw new PlanError(`The document is ${chars} characters, and a deck is made from at most ${MOST_DOCUMENT_CHARS} (about 1,800 words): pass the part the deck is about`);
+  if (chars > most) throw new PlanError(`The document is ${chars} characters, and a deck is made from at most ${most} (about ${aboutWords(most)} words): pass the part the deck is about`);
   const document = readDocument(value, language, written);
   return document.passages.length > 0 ? document : undefined;
 }
@@ -661,7 +677,11 @@ function planning(loaded: Template, brief: Brief, options: PlanOptions, stage: P
   const layout = options.layout ?? 'strict';
   const language = brief.language ?? manifest.language ?? 'en';
   const direction = brief.direction ?? directionOf(language);
-  const document = documentOf(brief, language, stage.documentLanguage);
+  // A new brief's document is held to the option. A stored plan's was let in when it was made: it
+  // is read up to the most the option can be, whatever this call's options say. A wrong option is
+  // an error in every stage.
+  const most = documentLimit(options.maxDocumentChars);
+  const document = documentOf(brief, language, stage.documentLanguage, stage.fresh ? most : LARGEST_DOCUMENT_CHARS);
   // A share of pictures that is not one of the list ("many", or "toString", which every object has)
   // is the usual one. A deck made from a document is about its text, and has few.
   const density: ImageDensity = typeof brief.imageDensity === 'string' && Object.hasOwn(DENSITY_GUIDANCE, brief.imageDensity) ? brief.imageDensity : document ? 'low' : 'medium';

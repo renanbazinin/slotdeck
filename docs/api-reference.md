@@ -54,7 +54,7 @@ file that keeps none; PowerPoint keeps it when the file is saved again. Throws f
 ### `SLOTDECK_VERSION`
 
 ```ts
-const SLOTDECK_VERSION: string; // '0.7.0'
+const SLOTDECK_VERSION: string; // '0.7.1'
 ```
 
 The version of the package, as a file rendered with `properties` states it.
@@ -425,15 +425,17 @@ written. `[]` for a plan with neither.
 
 ```ts
 function documentPassages(document: string): DocumentPassage[];
-const MOST_DOCUMENT_CHARS = 12000;
+const MOST_DOCUMENT_CHARS = 12000; // the default of maxDocumentChars
 ```
 
 The passages of a document (`Brief.document`), numbered as the planner numbers them: each paragraph, a long one
 cut at the ends of its sentences, short lines of one section together, a list, a table. A short line on its own,
 or one that starts with `#`, is a heading over the passages after it; a run of three short lines or more with no
 stops, one under another, is text, all of it. A tab at the start of a line, as text pasted from a word processor
-has it, sets the line in and makes no table. Pure: the same text always gives the same passages. A brief's
-document is at most `MOST_DOCUMENT_CHARS` characters; a longer one is a `PlanError`.
+has it, sets the line in and makes no table. Pure: the same text always gives the same passages. A new brief's
+document is at most `maxDocumentChars` characters of `PlanOptions`; a longer one is a `PlanError` from
+`planOutline`. `MOST_DOCUMENT_CHARS` is the default of that option: 12000 characters, about 1,800 words. From
+0.7.1 the option may be set from 1000 to 30000, and the later stages read a stored plan's document up to 30000.
 
 ### `planEdit`
 
@@ -564,7 +566,7 @@ interface Brief {
   textOnly?: boolean; // every slide plain text: only the template's plain text patterns are offered
   patterns?: string[]; // the only patterns the person asked for, `free` among them for free slides; kept with the plan and the deck
   colors?: DeckColors; // colours in place of the template's; copied to the deck
-  document?: string; // a document to make the deck from, word for word; at most MOST_DOCUMENT_CHARS characters
+  document?: string; // a document to make the deck from, word for word; at most maxDocumentChars characters (12000, MOST_DOCUMENT_CHARS, unless set) when the plan is made
 }
 type ImageDensity = 'none' | 'low' | 'medium' | 'high';
 
@@ -577,6 +579,7 @@ interface PlanOptions {
   patterns?: string[];
   numberPatterns?: 'from-brief' | 'always' | 'never';
   maxRepairs?: number;
+  maxDocumentChars?: number; // from 0.7.1: the most characters of a new brief's document; 12000 unless set, a whole number from 1000 to 30000, else a RangeError
   review?: DeckReview; // a second look at every draft; see "Design checks and reviews"
   composeLayouts?: number; // up to this many new layouts for the deck, in the template's own look; off (0) by default
   free?: boolean; // whether a slide may be a free slide, laid out by the software from the parts the plan names; on unless false
@@ -800,8 +803,10 @@ the `llm`, the `images` provider, the `store` or the `review` throws is always p
 
 With `documents: true` the plan tool takes `documents`, the names of texts the person gave in the
 conversation. The app passes those texts with every call, as `call(name, args, { signal, documents })`, and
-the slides carry the texts the chat model names word for word. See "Texts the person gave" in
-[chat-tools.md](chat-tools.md).
+the slides carry the texts the chat model names word for word. From 0.7.1 named texts longer than
+`maxDocumentChars` (12000 unless set) are answered with a list of their parts, and the chat model names the
+parts the presentation is made from in `document_parts`. A wrong `maxDocumentChars` is a `RangeError` from
+`presentationTools` itself. See "Texts the person gave" in [chat-tools.md](chat-tools.md).
 
 From 0.6.4 a result that tells a person something has `issues`: every line of `output.warnings`, in its
 order, and a note for each slide the `note` of a plan, or of a change that stops before a cut, speaks of, and
@@ -813,12 +818,20 @@ language" in [chat-tools.md](chat-tools.md).
 ### `describeDocuments`
 
 ```ts
-function describeDocuments(documents: readonly ChatDocument[]): string;
+function describeDocuments(documents: readonly ChatDocument[], options?: { maxDocumentChars?: number } | null): string;
+function describeDocuments(documents: readonly ChatDocument[], index: number, ...rest: unknown[]): string; // as a callback of map: the index is passed over
 ```
 
 The line for the chat model's system prompt that lists the texts a person gave in the conversation, each with
 its words and first words, and says how to pass one to the plan tool. It lists the last ten that have a name
 and a text, and returns `''` for none. Give it the list the tools are given with each call.
+
+From 0.7.1 give it the options the tools were built with too, or any object with their `maxDocumentChars`. A
+text longer than that (12000 when it is left out) is marked too long to make a presentation of whole. Where any
+is, the line ends with two more sentences: they tell the chat model to name such a text all the same, with the
+part the person wants in `document_parts` or with none, so that the plan tool answers with the parts to choose
+from, and never to ask the person to paste a part of a text they gave. A second argument that is no object,
+such as an index from `map`, is left out. A wrong `maxDocumentChars` is a `RangeError`.
 
 ### `TOOL_NAMES`
 
@@ -887,6 +900,7 @@ interface PresentationToolsOptions {
   newId?: (kind: 'plan' | 'deck') => string;
   onProgress?: (event: GenerateProgress, tool: string) => void;
   documents?: boolean; // the plan tool takes the names of texts the person gave; off unless true
+  maxDocumentChars?: number; // from 0.7.1: the most characters of the person's texts a presentation is made from, as for planOutline; 12000 unless set, 1000 to 30000; checked when the tools are built
 }
 interface PresentationTools {
   definitions: ToolDefinition[];
