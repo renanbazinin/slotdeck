@@ -1,0 +1,27 @@
+name: Stage npm release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  stage:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Install npm with staged publishing support
+        run: npm install --global npm@11.21.3
+      - run: npm ci
+      # prepublishOnly runs typecheck and tests, and prepack builds dist.
+      - name: Submit package for npm approval
+        run: npm stage publish
