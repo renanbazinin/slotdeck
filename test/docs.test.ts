@@ -134,6 +134,8 @@ test('operations, roles and tools are documented under their real names', () => 
     template: loadTemplate(readFileSync(join(root, 'templates', 'demo.pptx')), manifest),
     llm: { generateJson: async () => ({}) },
     store: memoryStore(),
+    // With the texts of the conversation, so that the arguments for them must be in the page too.
+    documents: true,
   });
   assert.deepEqual(tools.definitions.map((tool) => tool.name), Object.values(TOOL_NAMES));
   for (const tool of tools.definitions) {

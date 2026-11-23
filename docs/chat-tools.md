@@ -51,6 +51,7 @@ const tools = presentationTools({
   newId: (kind) => `${kind}_${crypto.randomUUID()}`, // optional; default is a short random id
   onProgress: (event, tool) => console.log(tool, event.stage), // optional
   documents: true,                              // optional: the plan tool takes the names of texts the person gave (see below); off unless true
+  maxDocumentChars: 20000,                      // optional, 0.7.1: the most characters of the person's texts a presentation is made from; 12000 unless set, 1000 to 30000
 });
 ```
 
@@ -103,7 +104,8 @@ const list: ChatDocument[] = [
   { name: 'risk-review.docx', text: textOfTheFile },   // an attached file whose text the app has, under its name
   { name: 'pasted text 1', text: longMessage },         // a message of 1,000 characters or more, whole
 ];
-const system = [appPrompt, describeDocuments(list)].filter(Boolean).join('\n\n');
+// toolOptions: what presentationTools was given, so that a text is marked too long by the same limit (0.7.1).
+const system = [appPrompt, describeDocuments(list, toolOptions)].filter(Boolean).join('\n\n');
 const result = await tools.call(call.name, call.arguments, { signal, documents: list });
 ```
 
@@ -114,6 +116,18 @@ came with it, which is listed under the file's name. Take a text as the person g
 which mark its paragraphs, lists and headings. No two texts have the same name. `describeDocuments` lists the
 last ten, each with its words and first words, and returns `''` for an empty list.
 
+`describeDocuments` takes the tools' options as its second argument, or any object with their
+`maxDocumentChars` (from 0.7.1). Left out, it judges by 12,000 characters. A listed text longer than that is
+marked `too long to make a presentation of whole`, and where one is, the line ends with one more sentence:
+
+```text
+A text marked too long is named all the same: put the part the user wants in "document_parts", by its heading as the user said it, or leave that out and plan_presentation answers with the parts to choose from. Never ask the user to paste a part of a text they gave.
+```
+
+The line lists no headings, so that it stays short on every turn. A second argument that is no object, such as
+the index `map` passes, is left out. A `maxDocumentChars` that the tools would not take is a `RangeError` here
+too.
+
 A shorter paste is not listed. With the option, the `instructions` argument says that a text of the person's
 that the app does not list goes there whole and word for word, in quotation marks, and the error for a name
 the list does not have says so too.
@@ -123,9 +137,19 @@ The plan tool reads a name exactly, then without regard to case, then as the beg
 in decomposed letters is found by the same name composed. It reads only the list on the call: the tools are
 built once, and the list belongs to the conversation. Any number of texts may be named. A text named twice, or
 under two names (a file and the message it came in), is carried once: a named text whose words all come in a
-row in another named text is left out. A name it cannot find, an empty text and more than 12,000
-characters in all are errors the chat model can act on (see "Errors"). A new text for an existing plan or
+row in another named text is left out. A name it cannot find, an empty text and more than
+`maxDocumentChars` (12,000 unless set) in all, which are answered with their parts, are errors the chat model
+can act on (see "Errors" and "A text too long to take whole"). A new text for an existing plan or
 presentation needs a new plan: the tools that change one take no `documents`.
+
+The `maxDocumentChars` option sets how many characters of the named texts a presentation is made from, from
+0.7.1: a whole number from 1,000 to 30,000, and 12,000 (about 1,800 words) unless set. `undefined` and `null`
+leave it out. Any other value is a `RangeError` when `presentationTools` is called. The tools pass it to the
+planner, and the messages say the words it holds ("about 3,000 words" for 20,000). More text makes a longer
+planning call and a longer writing call, and a presentation made from a text has at most 30 slides, so more of
+it is set small or cut. The limit holds only when a plan is made: the tools that write or change a stored plan
+read its text up to 30,000 characters, whatever their own limit, so a plan made under a larger limit is still
+written.
 
 When no text is named, the plan tool checks `topic` and `instructions`, each on its own, against each listed
 text of 1,500 characters or more. A shorter message is most often the request itself. An argument that copies
@@ -138,6 +162,113 @@ A named text of which the planner puts no part on a slide only asks for the pres
 listed and named. The plan is then made again with that text as `instructions` and no document, which is a
 second planning call, and `next` begins `"pasted text 1" only asks for a presentation, so the planner took it
 as instructions, and no slide carries it word for word.`
+
+From 0.7.1 the plan is not made again where parts were chosen in `document_parts`, which are what the
+presentation is about, nor for a text of more than 12,000 characters, which a larger `maxDocumentChars` lets in:
+no request is that long. `next` then begins `The planner put none of the parts named on a slide. Ask the user
+what the presentation should carry, and plan again.`, or names the text in place of `the parts named`.
+
+#### A text too long to take whole
+
+From 0.7.1, named texts longer than `maxDocumentChars` together are answered with a list of their parts. The
+person is never sent to paste a part of a text they gave. The answer is an `error`, made before any model is
+asked, that ends with every part of every named text, one to a line. For a file of six sections under
+headings:
+
+```text
+The text "bike-share.md" is 13032 characters, and a presentation is made from at most 12000 (about 1,800 words). Do not ask the user to paste a part of it: call plan_presentation again with the same documents, and name in document_parts the parts the presentation is about, by number or heading, up to 12000 characters in all. If the user did not say which parts they want, ask them first, and say what the parts are about. The slides carry only the parts named.
+The parts of "bike-share.md" (13032 characters), each with its characters:
+1. Background (2175)
+2. Riders (2171)
+3. Costs (2170)
+4. Stations (2173)
+5. Risks (2170)
+6. Next steps (2175)
+```
+
+The chat model asks the person which parts they want, where they did not say, and calls `plan_presentation`
+again with the same `documents` and the parts in `document_parts`: `["Riders", "3-4", "risks"]`.
+
+How a text is cut into parts:
+
+- Each section under a heading is a part, with the heading as its label. Sections are found as the planner finds
+  them: a short line on its own, or one that starts with `#`, is a heading, and a run of headings names one
+  section (`Plans / Costs`). Text before the first heading is a part of its own, shown as
+  `before the first heading, begins "..."`.
+- A section longer than about a quarter of the limit (3,000 characters by default) is cut into pieces of about
+  even length, shown as `Costs, 2 of 3`. A piece starts at the start of a line where it can: a paragraph or an
+  item of a list, never inside a table, and never under a line that ends in a colon, so that a lead-in keeps
+  its list. Where no line starts near enough, a piece starts at a sentence inside a long line, and else at a
+  space. No word is split, and no line is changed.
+- A text with no headings is cut the same way, and each part is shown by its first words:
+  `begins "Part 09. Seeds are shared. Seeds are…"`. The list then says `no headings`.
+- Two sections of one heading are told apart by their first words: `Summary, begins "We hire.…"`.
+- A text has at most about 40 parts. Where it would have more, short sections side by side are put together
+  (`Section 1 … Section 2, 2 headings`), and the pieces grow. Every part is listed, however many.
+- A part that is longer than the limit alone, and has no place to cut (a table, or a long line with no sentence
+  end and no space), stays whole and is marked `too long to make a presentation of alone`.
+
+The parts of a text depend only on that text and the limit. Each text numbers its own parts from 1, so naming the
+texts in another order, or with another text beside them, never changes what a number means. Where several
+texts are named, a number goes after the text's name and a colon: `"report.pdf: 2"`, `"report.pdf: 4-6"`. The
+name is found as it is, or in another case where only one named text has it.
+
+Pieces are of about even length, and none is less than half of that where a cut is near: what comes after a
+table that cannot be cut is cut in pieces, never in slivers of a word or two. A piece is never longer than the
+limit where it can be cut, with the heading lines it gets back counted.
+
+Each entry of `document_parts` is read in these steps, and the first that finds anything decides:
+
+1. **A number or a range**: `"2"`, `"part 2"`, `"4-6"`, `"4 to 6"`, or a list of them, `"2, 4-6"`. A whole number
+   instead of a string is taken too. Where several texts are named and no name stands before it, it is an
+   error. A number the text has no part of is read on as a heading, so a heading such as `2024-2025` is found.
+2. **A number with its label**, as the list gave it: `"4. Stations"`, `"5. Risks (2170)"`. The whole entry is read
+   first, exactly or without regard to case, as a heading may begin with a number (`## 2. Risks`). Then the label
+   alone: where the number and the label do not agree, the label decides. With several texts the label finds the
+   text, and the name may stand before it.
+3. **A label**, as the list shows it: `"Costs, 2 of 3"`. A label two parts have is an error. A label that is a
+   heading alone is read as a heading, so that the same heading in two texts is an error and not a guess.
+4. **A heading**: exactly, then without regard to case, then by its beginning (`"Next"` finds `Next steps`),
+   and each name of a run of headings too. A heading takes every piece of its section. A heading found in two
+   sections or more is an error, also across texts.
+5. **A text's name**, found as `documents` finds it: all its parts.
+
+What none of these finds is an error that names all such entries. Labels and headings are compared in one
+Unicode form, without direction marks, with one kind of quotation mark (a Hebrew gershayim reads as `"`) and of
+space, without `#` marks, and without a `…` at the end. Quotation marks around an entry, and around the name and
+the part of `"name: part"`, are left off.
+
+Each count in the list is a part's characters standing alone, with the heading lines a later piece gets back,
+and 2 for the blank line that joins it to another part. Parts whose listed counts add up to the limit always fit:
+with a limit of 10,859, parts 1-5 above (2,175 + 2,171 + 2,170 + 2,173 + 2,170) fit, since joined they come to
+10,857. The counts of all the parts of a text therefore add up to a little more than the text.
+
+A named text none of whose parts is named is taken whole: with several texts named, parts of one and the whole
+of another make one presentation so. Parts that are still too long are an error that says what was used: `All of
+"bike-share.md"`, `Parts 1-5 of "bike-share.md"`, or `all of "two", since no part of it is named`. A
+selection is made also when the texts would fit whole.
+
+The text the plan is made from is the parts chosen, in the text's order and its own words. A piece chosen
+without the piece before it gets its section's heading lines back, with a blank line under them. That text is
+what the plan and the presentation keep: the planner, `document.words`, `kept_words` and `left_out` speak of it
+alone. Another part of the same text needs a new plan, as a new text does: the tools that change a plan or a
+presentation take no `documents` or `document_parts`.
+
+The plan tool's output says which parts were used, in `document.parts_used`:
+
+```json
+{
+  "document": {
+    "passages": 20,
+    "words": 1440,
+    "parts_used": ["bike-share.md: 2. Riders", "bike-share.md: 3. Costs", "bike-share.md: 4. Stations", "bike-share.md: 5. Risks"]
+  },
+  "next": "Only some parts of \"bike-share.md\" are in this plan, as document.parts_used lists: tell the user which. Show this plan to the user. Use edit_presentation_plan for changes and create_presentation once they approve."
+}
+```
+
+`next` begins so where some, but not all, parts of a text were chosen, and names only those texts. A plan of
+chosen parts that the planner put on no slide is not made again, and its `next` begins as said above.
 
 ## Giving the tools to the chat model
 
@@ -182,6 +313,7 @@ Arguments:
 | `text_only` | boolean | no | `true` when the person asks for a presentation of text only. Every slide is then plain text: a title with paragraphs or a list, with no pictures, icons, cards, figures, tables or charts. Only the template's plain text layouts are used, and free slides of text, lists, quotations and notes where free slides are on offer. Not together with `layouts`: the layouts named then decide, and the plan is not marked text only. |
 | `instructions` | string | no | Everything else the person asked for, in their own words: audience, tone, every amount of text they ask for ("500 words on each slide"), and every wish about how slides look or are arranged that has no argument of its own ("three columns", "no cover slide"). With the `documents` option, also a text of the person's for the slides that the app does not list (a short paste), whole and word for word, in quotation marks. |
 | `documents` | array of strings | no | Only with the `documents` option: the names of the texts of the conversation the presentation is made from, as the app lists them. The slides carry every part of them in their own words. Named also for a summary or some parts of a text, which `instructions` then says. `topic` is then a sentence or two on what the presentation is for, and `language` the language of the text unless the person asks for another. |
+| `document_parts` | array of strings | no | Only with the `documents` option, for a text too long to make a presentation of whole: the parts of it the presentation is made from, each by the number or heading the tool listed for it (`"2"`, `"4-6"`, `"Risks"`), or by a heading the person named. With several texts, the text's name goes before a number (`"report.pdf: 2"`). A named text none of whose parts is named here is taken whole. Left out, the named texts are taken whole; some parts of a text that is not too long are asked for in `instructions`. From 0.7.1: see "A text too long to take whole". |
 | `accent_color` | string | no | Only when the person asks for a colour: the main colour as six hex digits, such as `1E6B3A`, in place of the template's. |
 | `layouts` | array of layout ids | no | Only when the person limits the layouts: the only layouts the presentation may use, the first and last slides too. The ids on offer are the layouts these tools can plan with, and `free` where free slides are on offer: a layout the `patterns` option leaves out, or one that needs icons, photos, a graphic or a deck field the app did not supply, is not among them. Naming one all the same is an error that says which and why. A number layout named for a topic without a figure is an error too. |
 
@@ -239,6 +371,7 @@ Each of these is present only when it applies:
 | `text_pt` | slide | The size its running text is set at, in points, where that is under four fifths of the template's size. |
 | `holds_words` | slide | The words it keeps, where even the least size that reads cannot hold its text: the rest is cut. |
 | `document` | plan | `{ "passages": 9, "words": 491, "left_out": "p1" }`: the person's text, and the parts no slide carries. |
+| `document.parts_used` | plan | From 0.7.1, where parts were chosen in `document_parts`: each part the plan is made from, as `"bike-share.md: 2. Riders"`. `document` then speaks of those parts alone. |
 | `note` | plan | What the chat model is to tell the person before the presentation is made: the slides that are cut, then those set in much smaller type. |
 | `not_on_slides` | plan | The listed texts the topic retells, which no slide will carry word for word. `next` then says so first. |
 
@@ -402,9 +535,20 @@ With the `documents` option, `plan_presentation` answers these before any model 
 | Case | Message |
 | --- | --- |
 | A name the list does not have | `"documents" names a text the app does not have: "budget.xlsx". The texts the app lists for this conversation are "pasted text 1" and "Garden notes.docx": use those names. A text the user pasted in a short message is not listed: pass it in instructions, whole and word for word, in quotation marks. A file that is not listed could not be read: tell the user.` With an empty list the second sentence is `The app lists no text for this conversation.` |
+| A name with a part after it (from 0.7.1) | The message above, for `"bike-share.md, Risks"`, ends: ` To make it from a part of "bike-share.md", name "bike-share.md" in documents and the part in document_parts.` It does so where the name begins with exactly one listed name, followed by a space or one of `, : ; ( - – #`. Where what follows is itself listed names (`"report.pdf, notes.docx"`), it ends instead: ` Name each text on its own in documents: "report.pdf" and "notes.docx".` |
 | An empty text | `The text "notes.txt" is empty: tell the user it could not be read.` |
-| Too much text | `The text is 15230 characters, and a presentation is made from at most 12000 (about 1,800 words). Ask the user to paste the part the presentation is about, and name that.` |
+| Texts too long to take whole (from 0.7.1) | `The text "bike-share.md" is 13032 characters, and a presentation is made from at most 12000 (about 1,800 words). Do not ask the user to paste a part of it: call plan_presentation again with the same documents, and name in document_parts the parts the presentation is about, by number or heading, up to 12000 characters in all. If the user did not say which parts they want, ask them first, and say what the parts are about. The slides carry only the parts named.` With several texts it begins `The texts "one" and "two" are 12240 characters together`, says `them` for `it`, and has before `If the user`: `With several texts, put the text's name before a number ("one: 2"). A named text none of whose parts is named is taken whole.` Before 0.7.1 it was `The text is 15230 characters, and a presentation is made from at most 12000 (about 1,800 words). Ask the user to paste the part the presentation is about, and name that.` |
+| Parts still too long (from 0.7.1) | `All of "bike-share.md" comes to 13032 characters, and a presentation is made from at most 12000 (about 1,800 words). Name fewer parts, up to 12000 characters in all, and call plan_presentation again with the same documents. If the user wants all of it, tell them it is too much for one presentation and ask which parts to leave out.` It begins with what was used: `Parts 1-5 of "bike-share.md" come to`, `Part 2 of "table.txt" comes to`, `all of "two", since no part of it is named`. A chosen part longer than the limit alone adds: ` Part 2 of "table.txt" cannot be cut and is more than a presentation is made from: leave it out, or ask the user which rows or lines of it they want.` |
+| A part the texts do not have (from 0.7.1) | `"document_parts" names a part the text does not have: "Pricing". Name parts by the numbers or headings below, with the same documents.` With more: `names parts the text does not have: "Pricing" and "9".`, and with several texts `the texts do not have`. |
+| A heading or label of more than one part (from 0.7.1) | `"document_parts" names "Summary", which could be part 1 or part 3: name the parts meant by their numbers.` Each choice is one section, so a section in pieces is one choice: `which could be parts 1-3 or part 7`. With several texts: `"document_parts" names "Risks", which could be part 2 of "report v1.md" or part 2 of "report v2.md": name the parts meant by their numbers, with the text's name before each ("report v1.md: 2").` |
+| A number where several texts are named (from 0.7.1) | `"document_parts" names "2", and more than one text is named: put the text's name before the number, as "a.txt: 2".` |
+| Parts with no text named (from 0.7.1) | `"document_parts" needs "documents"` |
 | A topic or instructions that copies a listed text | `"topic" copies the text "pasted text 1". Name it in documents instead and keep topic to what the presentation is for: the planner reads the text word for word. If the user wants a presentation about it or a summary of it, name it all the same and say so in instructions.` It begins `"instructions" copies` where that argument is the copy. |
+
+The message for texts too long, and every message of `document_parts` but the last, ends with the list of the
+parts of every named text, on the lines after it (see "A text too long to take whole"). A named text that is
+left out because another named text has it word for word is said before the list:
+` "a.txt" is in "b.txt" word for word, so only "b.txt" is used.`
 
 A named text that only asks for a presentation is no error: the plan is made again with it as instructions
 (see "Texts the person gave").
@@ -482,7 +626,7 @@ interface BlobStore {
 
 | Key | Content | Typical size |
 | --- | --- | --- |
-| `plan/<id>.json` | A plan: the brief and the slide list, and the person's text when one was named | 1 KB, plus the text |
+| `plan/<id>.json` | A plan: the brief and the slide list, and the person's text when one was named (the parts chosen, where some were) | 1 KB, plus the text |
 | `deck/<id>.json` | A deck: all text, and for each picture its id and description, and the person's text when one was named | 4 KB, plus the text |
 | `asset/<id>` | One generated picture | tens of KB to 1 MB |
 | `pptx/<id>.pptx` | The rendered file | hundreds of KB and up |

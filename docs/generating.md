@@ -39,7 +39,7 @@ It runs `planDeck`, then `resolveAssets`, then `renderDeck`.
 | `textOnly` | boolean | `false` | Plan every slide as plain text. Only the template's plain text patterns are offered, and free slides of text. See "Asking for a kind of slide" below. |
 | `patterns` | string[] | none | The only patterns the person asked for, by id, `free` among them for free slides. Every slide then uses one of them. Kept with the plan and the deck; a later change keeps to it unless it asks for another pattern. |
 | `colors` | `DeckColors` | none | Colours in place of the template's; copied to the deck. See [colors.md](colors.md). |
-| `document` | string | none | A document to make the deck from, word for word: a report, minutes, an article. The slides carry its own text, every part of it, in its order. `prompt` then says what the deck is for, and `instructions` any wish ("only the risks", "a short summary"). At most 12,000 characters (`MOST_DOCUMENT_CHARS`). Copied to the deck. See "Making a deck from a document" below. |
+| `document` | string | none | A document to make the deck from, word for word: a report, minutes, an article. The slides carry its own text, every part of it, in its order. `prompt` then says what the deck is for, and `instructions` any wish ("only the risks", "a short summary"). At most `maxDocumentChars` characters: 12,000 (`MOST_DOCUMENT_CHARS`) unless set. Copied to the deck. See "Making a deck from a document" below. |
 
 ### Options (`GenerateOptions`)
 
@@ -53,6 +53,7 @@ It runs `planDeck`, then `resolveAssets`, then `renderDeck`.
 | `patterns` | string[] | all | Restrict the deck to these pattern ids. A list that does not name `free` gets no free slides. |
 | `numberPatterns` | `"from-brief"`, `"always"`, `"never"` | `from-brief` | When patterns marked `figures` may be used. `from-brief` offers them only if the brief contains digits. |
 | `maxRepairs` | number | 2 | How many times a draft that breaks the template's limits is sent back to the model. |
+| `maxDocumentChars` | number | 12000 | The most characters of a new brief's `document`: a whole number from 1000 to 30000. Any other value is a `RangeError`. More text makes longer model calls, and more of it is set small or cut. See "Limits." under "Making a deck from a document" below. From 0.7.1. |
 | `review` | `DeckReview` | none | A second look at every draft: design checks, a model that looks at pictures of the slides, or a function of your own. What it finds goes back to the model in the repair rounds. See [design-checks.md](design-checks.md). |
 | `composeLayouts` | number | 0 (off) | Up to this many new layouts may be made for the deck, in the template's own look, for slides that none of its layouts shows well. About 10 to 25 seconds more. None is made while free slides are on offer. See "New layouts for a deck" below. |
 | `free` | boolean | `true` | Whether a slide may be a free slide: one the software lays out itself from the parts the plan names, for content that no pattern shows. `false` turns them off. See "Free slides" below. |
@@ -398,8 +399,15 @@ the slides that carry passages: the slide is then written shorter, from its own 
 fifths or more of the words of a slide's passages asks for no shorter text, and is dropped. "Only the part on
 risks" puts the other passages in `left_out`.
 
-**Limits.** At most 12,000 characters, about 1,800 Hebrew or 2,000 English words: a longer document is a
-`PlanError` that asks for the part the deck is about. One document for a deck. A deck that is changed later
+**Limits.** At most `maxDocumentChars` characters: 12,000 unless set, about 1,800 Hebrew or 2,000 English
+words. A longer document is a `PlanError` from `planOutline` (and so from `planDeck` and `generateDeck`) that
+asks for the part the deck is about. From 0.7.1 an app may set `maxDocumentChars` to a whole number from 1,000
+to 30,000 (about 4,600 Hebrew or 5,000 English words); any other value is a `RangeError`, from every stage that
+plans and from `planEdit` and `editDeck`. More text makes a longer planning call and a longer writing call, and with no number of slides asked a
+deck of a document has at most 30, so more of the text is set small or cut. Only `planOutline` holds a new brief's document to the option.
+The later stages (`editPlan`, `writeDeck`, `composeLayouts`, `planTextFit`, `freeSlidesOff`) read a stored plan's
+document up to 30,000 characters, whatever their own options say, so a plan made under a larger limit is still
+written. `planEdit` reads a deck's document as it is, whatever the option says. One document for a deck. A deck that is changed later
 keeps its document and draws on it, but a new document needs a new plan. Without a `slideCount`, a deck of a
 document has as few slides as its text takes, down to one. `imageDensity` defaults to `low`. Titles, headings
 and table cells are cut to their limits. A heading of 60 characters or more with no `#` and no blank line under
@@ -837,8 +845,9 @@ Changes made by hand in PowerPoint are not read back. The deck JSON is the sourc
 
 | Error | When | What to do |
 | --- | --- | --- |
-| `PlanError` | No pattern can be used with what was supplied; or the model's outline or edit plan is unusable; or the plan or the edit uses patterns that cannot be filled, or has a free slide the template cannot carry; or a plan given to `writeDeck` has a number of items its pattern does not take, or a free slide of more than 400 parts; or the brief's `document` is no text, or longer than 12,000 characters | Read the message: it names the patterns and reasons, or the slide and its number. Supply the missing icons, fields or images, correct the plan, or retry. |
+| `PlanError` | No pattern can be used with what was supplied; or the model's outline or edit plan is unusable; or the plan or the edit uses patterns that cannot be filled, or has a free slide the template cannot carry; or a plan given to `writeDeck` has a number of items its pattern does not take, or a free slide of more than 400 parts; or the brief's `document` is no text, or longer than `maxDocumentChars` (12,000 unless set) | Read the message: it names the patterns and reasons, or the slide and its number. Supply the missing icons, fields or images, correct the plan, or retry. For a document, pass the part the deck is about, or raise `maxDocumentChars`, up to 30000. |
 | `TextCutError` (a `PlanError`) | `planEdit` with `stopBeforeCut`: a slide the change writes would hold less text than it carries. Nothing was written. | Tell the person what `error.message` says. Ask for more slides or a shorter text, or call again without `stopBeforeCut` to accept the cut. |
+| `RangeError` | From 0.7.1: `maxDocumentChars` is not a whole number from 1000 to 30000 (`maxDocumentChars must be a whole number from 1000 to 30000, not 40000`). Every stage that plans, and `planEdit` and `editDeck`, throws it before any model is asked, whether the brief has a document or not. | Pass a whole number from 1000 to 30000, or leave it out for 12000. Nothing is rounded into the range. |
 | `DeckValidationError` | After all repairs the draft still has error-level issues | `error.issues` lists them. Retry, raise `maxRepairs`, or simplify the brief. |
 | Anything your provider throws | The model call failed | Handled by you: slotdeck does not retry model calls. |
 

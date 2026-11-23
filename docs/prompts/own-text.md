@@ -29,7 +29,8 @@ code of your own, and change nothing else in how the chat plans or edits.
 1. Upgrade to slotdeck 0.6.3 or later, and keep free slides on.
 2. Build the tools with `documents: true`.
 3. On every turn, build the list of the conversation's texts, pass it with every tool call, and add what
-   `describeDocuments(list)` returns to the chat's system prompt.
+   `describeDocuments(list, toolOptions)` returns to the chat's system prompt, where `toolOptions` are the
+   options the tools were built with (on 0.7.1 or later; before it, `describeDocuments(list)`).
 4. Put the system prompt lines below in place of the app's lines that send attached files into `topic` or keep
    slides short.
 5. Let the new fields of the tools' outputs through.
@@ -76,7 +77,8 @@ in `node_modules/slotdeck/docs/providers.md`.
 import { describeDocuments, presentationTools } from 'slotdeck';
 import type { ChatDocument } from 'slotdeck';
 
-const tools = presentationTools({ template, llm, store, /* as before */ documents: true });
+const toolOptions = { template, llm, store, /* as before */ documents: true };
+const tools = presentationTools(toolOptions);
 
 // On every turn, from the whole conversation, oldest first:
 const list: ChatDocument[] = [
@@ -84,7 +86,9 @@ const list: ChatDocument[] = [
   { name: 'pasted text 1', text: longMessage },
 ];
 // describeDocuments returns '' for an empty list. The lines of step 4 are part of the app's prompt.
-const system = [appPrompt, describeDocuments(list)].filter(Boolean).join('\n\n');
+// From 0.7.1 it takes the tools' options, so that it marks a text too long by the tools' own limit
+// (maxDocumentChars, 12000 unless set). Before 0.7.1, call it with the list alone.
+const system = [appPrompt, describeDocuments(list, toolOptions)].filter(Boolean).join('\n\n');
 // On every tool call the chat model makes:
 const result = await tools.call(call.name, call.arguments, { signal, documents: list });
 ```
@@ -100,7 +104,9 @@ What goes in the list:
 
 A text goes in as the person gave it, with its line breaks, which mark its paragraphs, lists and headings. No
 two texts have the same name: number the second file of a name. Do not shorten, clean or convert a text, and
-do not leave a long one out: the tools say when one is too long.
+do not leave a long one out: from 0.7.1 the tools list the parts of one too long to take whole, and the chat
+model chooses from them in `document_parts` (before 0.7.1 the tools only say that it is too long). Do not cut a
+text into parts in code of your own.
 
 **4. The system prompt.** Take out every line that tells the chat model to put attached files, or every fact
 the user gave, into `topic`, to keep slides short, or to keep presentations to a number of slides of its own.
@@ -120,9 +126,11 @@ Put these lines in their place, as they are:
 **5. The outputs.** If the app filters the tools' outputs, or shows plans itself, keep these: on a slide of a
 plan `words`, `passages`, `text_words`, `text_pt` (its text is set well below the template's size, at that
 size) and `holds_words` (the words it keeps where its text is cut); on the plan `note`, `not_on_slides` and
-`document`; on a presentation `document.kept_words`, or `document.translated` for one in another language than
-the text; the `note` and `next` that `edit_presentation` answers with in place of a presentation; and the
-warnings. Where the app shows a plan, show "500 words, 7 pt" beside a slide and the note above the plan.
+`document`, with `document.parts_used` from 0.7.1 (the parts of a long text the plan is made from); on a
+presentation `document.kept_words`, or `document.translated` for one in another language than the text; the
+`note` and `next` that `edit_presentation` answers with in place of a presentation; and the warnings. If the
+app filters the arguments of tool calls, let `document_parts` through (0.7.1). Where the app shows a plan, show
+"500 words, 7 pt" beside a slide and the note above the plan.
 
 ## How to prove it
 
