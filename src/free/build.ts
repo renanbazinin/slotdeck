@@ -49,6 +49,8 @@ export function buildFreeSlide(doc: Document, root: Element, kit: FreeKit, plan:
       made = doc.importNode(rootElement(parseXml(anchorXml(shape, at))), true) as Element;
     } else if (shape.kind === 'key') {
       made = doc.importNode(rootElement(parseXml(keyXml(shape, at))), true) as Element;
+    } else if (shape.kind === 'drawn') {
+      made = doc.importNode(rootElement(parseXml(drawnXml(shape, at))), true) as Element;
     } else if (shape.kind === 'table') {
       const sample = shape.from && source(shape.from.slide, shape.from.shapeId);
       if (sample && sample.localName === 'graphicFrame') {
@@ -74,12 +76,13 @@ export function buildFreeSlide(doc: Document, root: Element, kit: FreeKit, plan:
         place(made, { x: at.x, y: at.y - thick / 2, cx: at.cx, cy: thick });
       } else {
         // A panel keeps the corners it was drawn with, whatever its new size, up to an eighth of its shorter side.
-        const drawn = kit.panel && shape.from?.shapeId === kit.panel.shapeId ? kit.panel.drawn : kit.notePanel?.drawn;
+        const drawn = kit.panel && shape.from?.shapeId === kit.panel.shapeId && shape.from.slide === kit.panel.slide ? kit.panel.drawn : kit.notePanel?.drawn;
         const was = drawn ? Math.min(drawn.w * kit.slideWidth, drawn.h * kit.slideHeight) : 0;
         place(made, at);
         const now = Math.min(at.cx, at.cy);
         if (was > 0 && now > 0) keepCorners(made, was, now, Number.POSITIVE_INFINITY);
         capCorners(made);
+        if (shape.color) fillWith(made, shape.color);
         const body = childElement(made, NS.p, 'txBody');
         // A panel that carried a sample text of its own is drawn empty.
         if (body && descendants(body, NS.a, 't').some((node) => (node.textContent ?? '').trim() !== '')) setShapeText(made, [''], { flipAlign: false });
@@ -99,12 +102,59 @@ function anchorXml(shape: MadeShape, at: { x: number; y: number; cx: number; cy:
 
 /** The key of a legend: a small square filled in the colour of its series, with no outline. */
 function keyXml(shape: MadeShape, at: { x: number; y: number; cx: number; cy: number }): string {
-  const color = (shape.color ?? '808080').replace(/[^0-9A-Fa-f]/g, '').toUpperCase().padStart(6, '0').slice(0, 6);
+  const color = hexOf(shape.color);
   return (
     `<p:sp xmlns:p="${P}" xmlns:a="${A}"><p:nvSpPr><p:cNvPr id="${shape.id}" name="${shape.name}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
     `<p:spPr><a:xfrm><a:off x="${Math.round(at.x)}" y="${Math.round(at.y)}"/><a:ext cx="${Math.round(at.cx)}" cy="${Math.round(at.cy)}"/></a:xfrm>` +
     `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="${color}"/></a:solidFill><a:ln><a:noFill/></a:ln></p:spPr></p:sp>`
   );
+}
+
+const hexOf = (color: string | undefined): string => (color ?? '808080').replace(/[^0-9A-Fa-f]/g, '').toUpperCase().padStart(6, '0').slice(0, 6);
+
+/**
+ * A shape the code draws itself, filled in one colour, with no outline: the arrow of a phase (a
+ * chevron, or a pentagon where a line of them starts), the dot of a milestone, the line its dots
+ * stand on, the bar under an option's name. Nobody reads it out: its text stands in shapes of its own.
+ */
+function drawnXml(shape: MadeShape, at: { x: number; y: number; cx: number; cy: number }): string {
+  const geometry = shape.geometry ?? 'rect';
+  const least = Math.min(at.cx, at.cy);
+  let guides = '';
+  // The point of an arrow is as deep as the plan made it, whatever the arrow's height: PowerPoint states it as a share of the shorter side.
+  if ((geometry === 'chevron' || geometry === 'homePlate') && shape.point !== undefined && least > 0) guides = `<a:gd name="adj" fmla="val ${Math.round(Math.min(1, Math.max(0, (shape.point * 12700) / least)) * 100000)}"/>`;
+  else if (geometry === 'roundRect') guides = '<a:gd name="adj" fmla="val 6000"/>';
+  return (
+    `<p:sp xmlns:p="${P}" xmlns:a="${A}"><p:nvSpPr><p:cNvPr id="${shape.id}" name="${shape.name}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+    `<p:spPr><a:xfrm${shape.flip ? ' flipH="1"' : ''}><a:off x="${Math.round(at.x)}" y="${Math.round(at.y)}"/><a:ext cx="${Math.max(0, Math.round(at.cx))}" cy="${Math.max(0, Math.round(at.cy))}"/></a:xfrm>` +
+    `<a:prstGeom prst="${geometry}"><a:avLst>${guides}</a:avLst></a:prstGeom><a:solidFill><a:srgbClr val="${hexOf(shape.color)}"/></a:solidFill><a:ln><a:noFill/></a:ln></p:spPr></p:sp>`
+  );
+}
+
+/**
+ * Gives a copied panel a fill of its own in place of the template's, and takes its outline off,
+ * which was drawn for the fill it had: the ground of the option a comparison picks out. Its
+ * corners and its shadow stay the panel's.
+ */
+function fillWith(copy: Element, color: string): void {
+  const doc = copy.ownerDocument;
+  const props = childElement(copy, NS.p, 'spPr');
+  if (!doc || !props) return;
+  for (const name of ['noFill', 'solidFill', 'gradFill', 'blipFill', 'pattFill', 'grpFill', 'ln']) {
+    const old = childElement(props, NS.a, name);
+    if (old) removeNode(old);
+  }
+  const fill = doc.createElementNS(NS.a, 'a:solidFill');
+  const hex = doc.createElementNS(NS.a, 'a:srgbClr');
+  hex.setAttribute('val', hexOf(color));
+  fill.appendChild(hex);
+  const line = doc.createElementNS(NS.a, 'a:ln');
+  line.appendChild(doc.createElementNS(NS.a, 'a:noFill'));
+  // Shape properties keep an order: where it is, its outline's form, its fill, its line, then its effects.
+  const before = ['xfrm', 'custGeom', 'prstGeom'].map((name) => childElement(props, NS.a, name)).filter(Boolean).pop();
+  const after = before ? before.nextSibling : props.firstChild;
+  props.insertBefore(fill, after);
+  props.insertBefore(line, after);
 }
 
 /** A copy is a shape of its own: a new id and name, and nothing that named the shape it was copied from. */
@@ -306,6 +356,15 @@ function prepareText(copy: Element, shape: MadeShape, kit: FreeKit, writing: Wri
     // The source's bullet hung as far as its own size asked; at the new size it hangs to match.
     para.setAttribute('marL', String(hang));
     para.setAttribute('indent', String(-hang));
+  }
+  if (shape.bulletsFollow) {
+    // Text in a colour of the slide's own making has its bullets in that colour, whatever colour its source gives them.
+    for (const name of ['buClrTx', 'buClr']) {
+      const old = childElement(para, NS.a, name);
+      if (old) removeNode(old);
+    }
+    const after = ['buSzTx', 'buSzPct', 'buSzPts', 'buFontTx', 'buFont', 'buNone', 'buAutoNum', 'buChar', 'buBlip', 'tabLst', 'defRPr', 'extLst'].map((name) => childElement(para as Element, NS.a, name)).find(Boolean) ?? null;
+    para.insertBefore(create('buClrTx'), after);
   }
 
   // The box: it wraps or it does not, keeps its size, and has the insets the plan counted with.

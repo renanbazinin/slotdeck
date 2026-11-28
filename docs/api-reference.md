@@ -5,7 +5,7 @@ from `slotdeck` unless noted.
 
 ```ts
 import { renderDeck /* ... */ } from 'slotdeck';
-import { directoryStore } from 'slotdeck/node';
+import { directoryStore, iconFiles, assetFiles } from 'slotdeck/node';
 ```
 
 The package ships its own type declarations (`dist/*.d.ts`), which carry the same information with comments on
@@ -503,6 +503,29 @@ function resolveAssets(template: Template, deck: DeckSpec, options?: ResolveOpti
 
 Collects the bytes of every picture a deck refers to.
 
+### `iconFiles`, `assetFiles` (from `slotdeck/node`)
+
+```ts
+function iconFiles(directory: string, options?: PictureFolderOptions): IconDef[];
+function assetFiles(directory: string, kind: 'photo' | 'graphic', options?: PictureFolderOptions): AssetDef[];
+
+interface PictureFolderOptions {
+  descriptions?: Record<string, string> | string; // what each picture shows, by id; or the name of a JSON file in the folder
+  recursive?: boolean;                             // also read the folders inside the folder
+  onSkipped?: (file: string, reason: string) => void; // told of every file that is passed over
+}
+```
+
+From 0.8.0. An app's own icons, or its own pictures of one kind, read from a folder: every PNG, JPEG and GIF
+in it, known by its file name without the ending, in the order of the ids. The results go to `icons` and
+`assets`. Descriptions are read from the folder's `icons.json` (`iconFiles`) or `assets.json` (`assetFiles`)
+where `descriptions` names nothing else: an object of id and description, or a list of `{ id, description }`
+whose lines may name a `file`. A picture without a line is described by the words of its file name. A file in
+another format (SVG, WebP), one named as a picture that is none, and a line that describes no picture are
+passed over and told to `onSkipped`. It throws an `Error` for two pictures of one id, for a named file of
+descriptions that is missing, and for one that is no JSON. See "Your own icons and pictures" in
+[generating.md](generating.md).
+
 ### `directionOf`
 
 ```ts
@@ -573,6 +596,7 @@ type ImageDensity = 'none' | 'low' | 'medium' | 'high';
 interface PlanOptions {
   llm: LlmProvider;
   delivery?: 'present' | 'read'; // from 0.7.0: 'read' for decks read on their own: full sentences, no thank-you slide
+  emphasis?: boolean; // from 0.8.0: false tells the writer plain text only; otherwise it may set a phrase in bold (**like this**)
   layout?: LayoutMode;
   icons?: IconDef[];
   assets?: AssetDef[];
@@ -710,6 +734,7 @@ interface FreeSlideContent {
   columns?: number;                           // how many blocks stand side by side on one line
   lead?: 'left' | 'right' | 'top' | 'none';   // where the first block stands when it is the main one
   dense?: boolean;                            // a long text a person asked to have whole (FreeArrange.dense); kept both ways
+  tone?: 'accent' | 'tint';                   // from 0.8.0: the band of colour the blocks stand on (FreeArrange.tone)
   base?: string;                              // the pattern whose frame the slide stands on
   colors?: DeckColors;                        // colours for this slide alone
 }
@@ -719,6 +744,9 @@ type FreeBlockContent =
   | { card: { heading: string; text: string; icon?: ImageRef | string } }
   | { figure: { value: string; label: string } }
   | { step: { heading: string; text: string } }
+  | { phase: { heading: string; text?: string } }                        // from 0.8.0: a link of a process
+  | { milestone: { when: string; heading: string; text?: string } }      // from 0.8.0: a point on a timeline
+  | { option: { heading: string; points: string[]; badge?: string } }    // from 0.8.0: one side of a comparison
   | { quote: string; source?: string }
   | { note: string }
   | { chart: ChartValue; caption?: string }
@@ -738,10 +766,13 @@ removes or reorders blocks. `freeSlide` throws an `Error` for a block that is no
 ```ts
 function isFreeSlide(slide: Pick<SlideSpec, 'blocks'>): boolean;
 const FREE_PATTERN: 'free';
-const FREE_BLOCK_KINDS: readonly ['text', 'list', 'card', 'figure', 'step', 'quote', 'note', 'chart', 'table', 'photo', 'graphic'];
+const FREE_BLOCK_KINDS: readonly ['text', 'list', 'card', 'figure', 'step', 'phase', 'milestone', 'option', 'quote', 'note', 'chart', 'table', 'photo', 'graphic'];
 type FreeBlockKind = (typeof FREE_BLOCK_KINDS)[number];
-interface FreeArrange { columns?: number; lead?: 'left' | 'right' | 'top' | 'none'; dense?: boolean }
+interface FreeArrange { columns?: number; lead?: 'left' | 'right' | 'top' | 'none'; dense?: boolean; tone?: 'accent' | 'tint' }
 ```
+
+`phase`, `milestone` and `option` are from 0.8.0, and so is `tone`: the band of colour a slide's blocks stand on
+(see "A band of colour" in [free-slides.md](free-slides.md)).
 
 A slide is a free slide when it lists `blocks`; its `pattern` is then `FREE_PATTERN`. `FreeArrange` is the type
 of `SlideSpec.arrange`. `dense` is set by the planner on a free slide of one text that carries an amount of text

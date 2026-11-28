@@ -1,7 +1,7 @@
 // Free slides as a planner meets them: when one may be planned, what the list of patterns says of
 // them, how a plan names their parts, and how a model or a person is told which part something
 // is about. How such a slide is laid out is the work of src/free.
-import { FREE_BLOCK_KINDS, FREE_PATTERN } from '../deck/spec.ts';
+import { FREE_BLOCK_KINDS, FREE_PATTERN, freeTone } from '../deck/spec.ts';
 import type { HeadingOver } from '../deck/headings.ts';
 import type { DeckSpec, FreeArrange, FreeBlockKind } from '../deck/spec.ts';
 import { FREE_PARTS, describeBlocks, isFreeBlockKind } from '../free/blocks.ts';
@@ -185,6 +185,37 @@ export function severalOnOneSlide(kinds: readonly FreeBlockKind[]): string {
 }
 
 /**
+ * Keeps the bands of colour of a plan few (`FreeArrange.tone`): a band is for the slide or two of a
+ * deck that carry its point. Never two such slides in a row, and no more than one slide in four;
+ * a slide beyond that stands on the slide itself. Changes the entries in place.
+ */
+export function calmTones(entries: Array<{ arrange?: FreeArrange }>): void {
+  const most = Math.max(1, Math.ceil(entries.length / 4));
+  let toned = 0;
+  let last = -2;
+  entries.forEach((entry, at) => {
+    if (!entry.arrange?.tone) return;
+    if (toned < most && at !== last + 1) {
+      toned++;
+      last = at;
+      return;
+    }
+    const { tone: _tone, ...rest } = entry.arrange;
+    if (Object.keys(rest).length > 0) entry.arrange = rest;
+    else delete entry.arrange;
+  });
+}
+
+/**
+ * What a slide may show as a drawing of its own, in words: "a process as a chain of arrows, a
+ * timeline or a comparison of options". Of the three it names those among the kinds on offer.
+ */
+export function drawnOnOneSlide(kinds: readonly FreeBlockKind[]): string {
+  const drawn = [kinds.includes('phase') ? 'a process as a chain of arrows' : '', kinds.includes('milestone') ? 'a timeline' : '', kinds.includes('option') ? 'a comparison of options' : ''].filter(Boolean);
+  return drawn.length < 2 ? drawn.join('') : `${drawn.slice(0, -1).join(', ')} or ${drawn.at(-1)}`;
+}
+
+/**
  * The line of the list of patterns that offers free slides. It is written here and not with the
  * template's patterns: a free slide has no slots to list before its parts are chosen, and is no
  * plain text unless the deck is. `changes` says what is being changed, where it is no new plan: a
@@ -203,7 +234,8 @@ export function freeLine(
     if (!options.alone) {
       // Of charts, tables and pictures the sentence names those that are on offer.
       const several = severalOnOneSlide(kinds);
-      sentences.push(`Only for content that no layout above shows: ${several ? `${several}, ` : ''}more items than a layout takes, or parts that no layout combines.`, 'A slide that a layout above shows well uses that layout.');
+      const drawn = drawnOnOneSlide(kinds);
+      sentences.push(`Only for content that no layout above shows: ${several ? `${several}, ` : ''}${drawn ? `${drawn}, ` : ''}more items than a layout takes, or parts that no layout combines.`, 'A slide that a layout above shows well uses that layout.');
     }
     const most = options.comfortable ?? 3;
     sentences.push(`About ${most} ${most === 1 ? 'part reads' : 'parts read'} well at the template's text size; more are set smaller, so plan more only when the ${options.asked ?? 'brief'} asks for them.`);
@@ -230,6 +262,8 @@ function describeArrange(arrange: FreeArrange | undefined): string[] {
   if (arrange?.lead === 'none') words.push('all parts alike');
   else if (arrange?.lead === 'top') words.push('main part on top');
   else if (arrange?.lead) words.push(`main part at the ${arrange.lead}`);
+  if (arrange?.tone === 'accent') words.push("on a band in the template's colour");
+  else if (arrange?.tone === 'tint') words.push('on a tinted band');
   return words;
 }
 
@@ -284,7 +318,7 @@ export function freeReading(kinds: readonly FreeBlockKind[], context: CatalogCon
  * with too many is cut. No answer makes planning fail over the parts of a free slide.
  */
 export function readShows(raw: unknown, number: number, purpose: string, reading: FreeReading, final: boolean): FreeEntry & { problem?: string } {
-  const given = (typeof raw === 'object' && raw !== null ? raw : {}) as { shows?: unknown; shows_main?: unknown; side_by_side?: unknown };
+  const given = (typeof raw === 'object' && raw !== null ? raw : {}) as { shows?: unknown; shows_main?: unknown; side_by_side?: unknown; shows_on?: unknown };
   // The runs that name a kind on offer and a number of them. A number is not taken at its word
   // beyond what makes a slide too full to plan: an answer may say a thousand million.
   let room = MOST_PARTS + 1;
@@ -307,6 +341,9 @@ export function readShows(raw: unknown, number: number, purpose: string, reading
   if (lead === 'left' || lead === 'right' || lead === 'top' || lead === 'none') arrange.lead = lead;
   const columns = Math.floor(Number(given.side_by_side));
   if (columns >= 1) arrange.columns = columns;
+  // The band of colour a slide's parts stand on: only where every part can stand on one (`freeTone`).
+  const on = given.shows_on === 'accent' || given.shows_on === 'tint' ? given.shows_on : undefined;
+  if (on && freeTone({ blocks, arrange: { tone: on } })) arrange.tone = on;
   let problem: string | undefined;
 
   // The free slide of the plan that is being changed which this one is: the one with its purpose, or else the one in its place.
@@ -326,6 +363,7 @@ export function readShows(raw: unknown, number: number, purpose: string, reading
     // say otherwise: "auto" and 0 are what an answer gives for a slide whose arrangement the
     // request does not speak of, and a wish a person made is not undone by them.
     if (arrange.lead === undefined && before.arrange.lead !== undefined) arrange.lead = before.arrange.lead;
+    if (given.shows_on === undefined && before.arrange.tone !== undefined && freeTone({ blocks, arrange: before.arrange })) arrange.tone = before.arrange.tone;
     const planned = before.arrange.columns;
     if (arrange.columns === undefined && typeof planned === 'number' && Number.isInteger(planned) && planned >= 1) arrange.columns = planned;
   }

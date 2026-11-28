@@ -83,6 +83,11 @@ const KINDS: Record<FreeBlockKind, Shape> = {
   card: { lo: 0.6, hi: 4.5, minW: 0.15, minH: 0.09, maxH: 1.6, share: 0.8 },
   step: { lo: 0.6, hi: 4.5, minW: 0.15, minH: 0.09, maxH: 1.6, share: 0.8 },
   figure: { lo: 0.9, hi: 4, minW: 0.11, minH: 0.06, maxH: 0.55, share: 0.45 },
+  // A phase is an arrow with a few lines under it, a milestone a date over a few lines: both are read along their line, so they are low and may be narrow.
+  phase: { lo: 0.9, hi: 5, minW: 0.12, minH: 0.07, maxH: 1.2, share: 0.7 },
+  milestone: { lo: 0.6, hi: 4, minW: 0.12, minH: 0.1, maxH: 1.4, share: 0.8 },
+  // An option is a column of points: higher than wide where it has several.
+  option: { lo: 0.4, hi: 2.4, minW: 0.17, minH: 0.14, maxH: 2.4, share: 1 },
   // A chart sits best in a cell wider than high (`lo`), and may be a little higher than wide where a line of charts has the room: it then ends where the room ends.
   chart: { lo: 1.1, hi: 2.6, minW: 0.105, minH: 0.105, maxH: 1 / 0.85, share: 1 },
   table: { lo: 1.2, hi: 5, minW: 0.22, minH: 0.09, share: 1 },
@@ -120,7 +125,14 @@ const GROW_LYING = 0.15;
 const FEW = 8;
 const FEW_ON_A_LINE = 4;
 /** Kinds that are drawn in a box of their own. A short last line of them is spread over the width when it holds at least half as many as the lines above, and stands in the middle otherwise. */
-const BOXED = new Set<FreeBlockKind>(['card', 'figure', 'step']);
+const BOXED = new Set<FreeBlockKind>(['card', 'figure', 'step', 'phase', 'option']);
+/**
+ * Phases and milestones are read along one line, and options side by side: up to so many of one
+ * of these kinds stand on one line when nothing was asked for, whatever shape that gives each,
+ * as long as each still has the least width its kind sits well in. More of them, or narrower
+ * ones, are set out in lines as other blocks are.
+ */
+const ONE_LINE: Partial<Record<FreeBlockKind, number>> = { phase: 6, milestone: 6, option: 4 };
 /**
  * A card or a step grows into room that is left over only as far as what is written on it, from
  * the card's top to the foot of its text, still fills this share of it: a card twice as high as
@@ -231,11 +243,14 @@ function choose(kinds: FreeBlockKind[], box: Box, gap: number, beside?: boolean)
   let leastEven = Infinity;
   const few = count <= FEW && kinds.every((kind) => kind === 'card' || kind === 'step');
   const figures = kinds.every((kind) => kind === 'figure');
+  const only = kinds[0] !== undefined && kinds.every((kind) => kind === kinds[0]) ? kinds[0] : undefined;
+  const oneLine = only !== undefined && count <= (ONE_LINE[only] ?? 0) && (box.w - (count - 1) * gapFor(gap, count, 1)) / count >= KINDS[only].minW - 1e-9;
   for (let rows = 1; rows <= count; rows++) {
     const split = spread(count, rows);
     const columns = split[0] as number;
     if (rows > 1 && Math.ceil(count / (rows - 1)) === columns) continue;
     if (few && columns > FEW_ON_A_LINE) continue;
+    if (oneLine && rows > 1) continue;
     const between = gapFor(gap, columns, rows);
     const cw = (box.w - (columns - 1) * between) / columns;
     const ch = (box.h - (rows - 1) * between) / rows;

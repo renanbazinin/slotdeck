@@ -150,6 +150,9 @@ export const HE_KINDS: Record<FreeBlockKind, string> = {
   card: 'כרטיס',
   figure: 'נתון',
   step: 'שלב',
+  phase: 'שלב בתהליך',
+  milestone: 'אבן דרך',
+  option: 'חלופה',
   quote: 'ציטוט',
   note: 'הערה',
   chart: 'תרשים',
@@ -173,6 +176,8 @@ export const HE_PARTS: Record<string, string> = {
   table: 'טבלה',
   photo: 'תמונה',
   graphic: 'איור',
+  when: 'מועד',
+  badge: 'תג',
 };
 
 /** Slots that most templates name alike, and the groups of a row of them ("card2Heading"). */

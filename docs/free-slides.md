@@ -65,7 +65,7 @@ the deck format.
 | `pattern` | `"free"` | Always `free` (`FREE_PATTERN`). |
 | `blocks` | array of kinds | What the slide is made of, in reading order. Any number, at least one. This field is what makes a slide a free slide (`isFreeSlide`). |
 | `slots` | object | The content. The title is `title` and may be left out. The parts of block *n* (from 1) are `b`*n* followed by the part's name: `b1Text`, `b2Chart`, `b12Heading`. |
-| `arrange` | object | Optional wishes about the arrangement: `columns` and `lead` (see "How the blocks are set out"). `dense` marks a long text a person asked to have whole, set by the planner (see "A long text a person asked for"). |
+| `arrange` | object | Optional wishes about the arrangement: `columns` and `lead` (see "How the blocks are set out"). `tone` sets the blocks on a band of colour (see "A band of colour"). `dense` marks a long text a person asked to have whole, set by the planner (see "A long text a person asked for"). |
 | `base` | string | Optional. The id of the pattern whose frame the slide stands on. Left out, the template's usual one. A pattern that cannot be a frame gives way to the usual one, and the deck is told (see "What the checks say"). |
 | `colors` | `DeckColors` | Optional. Colours for this slide alone; see [colors.md](colors.md). |
 
@@ -80,6 +80,9 @@ A part marked `?` is optional: without a value it is simply not drawn, in `stric
 | `card` | `b1Icon`?, `b1Heading`, `b1Text` | A heading and a short text on the template's panel |
 | `figure` | `b1Value`, `b1Label` | A big number with what it counts |
 | `step` | `b1Heading`, `b1Text` | A card with a number the software writes: 1, 2, 3 in the order of the steps |
+| `phase` | `b1Heading`, `b1Text`? | A link of a process: an arrow with its name on it, and a short text under it (from 0.8.0) |
+| `milestone` | `b1When`, `b1Heading`, `b1Text`? | A point on a timeline: a dot on a line, its date over the line, what happened under it (from 0.8.0) |
+| `option` | `b1Badge`?, `b1Heading`, `b1Items` (array of strings) | One of the things a comparison sets side by side: a name and a few points on a panel. The one with a badge is picked out (from 0.8.0) |
 | `quote` | `b1Quote`, `b1Source`? | A quotation in the template's quotation style, and who said it |
 | `note` | `b1Text` | One highlighted line across the slide: the bottom line |
 | `chart` | `b1Caption`?, `b1Chart` (a `ChartValue`) | A native, editable chart |
@@ -101,7 +104,7 @@ reported as `expected text`.
 its reverse, so that code adds, removes or reorders blocks without renumbering slot names by hand:
 
 ```ts
-const content = freeContent(slide);                 // { title, blocks: [{ chart, caption }, ...], columns?, lead?, dense?, base?, colors? }
+const content = freeContent(slide);                 // { title, blocks: [{ chart, caption }, ...], columns?, lead?, dense?, tone?, base?, colors? }
 content.blocks.splice(1, 1);                        // drop the second block
 content.blocks.push({ card: { heading: 'Next', text: 'Forty more bikes.', icon: 'bolt' } });
 const changed = freeSlide(content);
@@ -114,6 +117,9 @@ type FreeBlockContent =
   | { card: { heading: string; text: string; icon?: ImageRef | string } }
   | { figure: { value: string; label: string } }
   | { step: { heading: string; text: string } }
+  | { phase: { heading: string; text?: string } }
+  | { milestone: { when: string; heading: string; text?: string } }
+  | { option: { heading: string; points: string[]; badge?: string } }
   | { quote: string; source?: string }
   | { note: string }
   | { chart: ChartValue; caption?: string }
@@ -127,6 +133,7 @@ interface FreeSlideContent {
   columns?: number;                           // how many blocks stand side by side on one line
   lead?: 'left' | 'right' | 'top' | 'none';   // where the first block stands when it is the main one
   dense?: boolean;                            // a long text a person asked to have whole (arrange.dense)
+  tone?: 'accent' | 'tint';                   // the band of colour the blocks stand on (arrange.tone)
   base?: string;
   colors?: DeckColors;
 }
@@ -147,6 +154,10 @@ The software decides, by rules. The same slide on the same template always gives
   their names and numbers (about 17% of the slide's width and 7.5% of it in height) wins. Figures that stand by
   themselves may be three quarters as high as wide, so that three on a line are not lower than four in two
   lines.
+- **Phases, milestones and options stand on one line** (from 0.8.0): up to six phases or milestones, and up
+  to four options, whatever shape that gives each, as long as each still has the least width its kind sits
+  well in. They are read along their line: a process in two lines of three is two processes. More of them, or
+  a room too narrow for them (beside a main block), are set out in lines as other blocks are.
 - **A last line that is not full** lines up with the lines above it. Cards, steps and figures share the whole
   width when the line holds at least half as many as a full one (three cards over two wide ones), and stand in
   the middle when it holds fewer; steps keep their order, so the fourth and fifth of five follow the third.
@@ -210,17 +221,18 @@ The software decides, by rules. The same slide on the same template always gives
   line of its text or than its heading. Its shapes are cut to it, so that no shape of one block lies on a
   neighbour, and the texts that have no room are reported (see "What the checks say").
 
-Two wishes can be stated in `arrange`:
+Three wishes can be stated in `arrange`:
 
 | Field | Values | Meaning |
 | --- | --- | --- |
 | `columns` | whole number from 1 | How many blocks stand side by side on one line. |
 | `lead` | `"left"`, `"right"`, `"top"`, `"none"` | The first block is the main one: larger, at that side of the slide or over the others. `none` sets all blocks alike. Left and right are sides of the slide, whatever the reading direction. |
+| `tone` | `"accent"`, `"tint"` | The blocks stand on a band of the template's colour (from 0.8.0; see "A band of colour"). |
 
 **A wish the room cannot hold is not followed.** A block has a smallest size: the least width its kind sits
 well in, and half the least height. The widths are 15% of the slide's width for a card or a step, 20% for a
-text, 18% for a list, 30% for a quotation, 11% for a figure, 10.5% for a chart, 22% for a table and 9% for a
-picture. Width and height are not alike because text is not: the size of a text follows the width of its
+text, 18% for a list, 30% for a quotation, 11% for a figure, 12% for a phase or a milestone, 17% for an
+option, 10.5% for a chart, 22% for a table and 9% for a picture. Width and height are not alike because text is not: the size of a text follows the width of its
 block, so twelve cards on one line have their text at about 5 pt, while a low block keeps the width of its lines
 and seven cards one under the other still hold a heading and a text at 12 pt.
 
@@ -422,12 +434,90 @@ and counts as crowded.
   starts under its corner and is as wide as it is. A graphic is shown whole in the middle of its box, and its
   caption stands under its middle.
 
+### A process, a timeline and a comparison
+
+From 0.8.0 three kinds of block are drawn. Their shapes are PowerPoint's own, filled in the template's main
+colour, and their texts are copies of the template's heading and body styles: a person can move, recolour and
+edit every one of them.
+
+```ts
+freeSlide({
+  title: 'How a new station opens',
+  blocks: [
+    { phase: { heading: 'Survey', text: 'Count riders at the corner for **two weeks**.' } },
+    { phase: { heading: 'Permit', text: 'The city signs off on the site.' } },
+    { phase: { heading: 'Build', text: 'Docks and power go in over **3 days**.' } },
+    { phase: { heading: 'Launch', text: 'Bikes arrive and the map updates.' } },
+  ],
+});
+```
+
+- **A phase** is an arrow with its name on it, in the middle, in a colour that reads on the arrow (white, on
+  most templates), and a short text under it in the template's body style. The first arrow of a line starts
+  flat; every other one takes the point of the arrow before it, and reaches into the gap towards the next. In a
+  deck read from the right the arrows are mirrored: they point left, and the first stands at the right. The
+  name has one line, or two where it is longer; every arrow of the slide is as high as the longest name asks.
+  The text is optional: give one to every phase, or to none.
+- **A milestone** is a dot on a line. Its date (`when`: a date, a quarter, a year) stands over the line, bold,
+  in the colour of the dots where that reads on the slide; its heading and an optional text stand under it. One
+  line runs under each row of milestones, from the first to the end of the last.
+- **An option** is a column: a name, a short bar, and a list of points in the template's list style, on the
+  template's panel. Where one option of the slide has a `badge` and another has none, the one with the badge
+  is picked out: its panel is filled in the template's main colour, and its badge, name, points and bullets
+  are white. Every option keeps the line of a badge when one has it, so that the names start on one line.
+  Where every option has a badge, none is picked out, and the badges stand in the template's colour. A template
+  without a panel draws the options as headed lists, and the one picked out on a box of its own.
+- **Sizes.** Like parts of like blocks share one size, as everywhere on a free slide: the narrowest phase gives
+  the size of every name. A name is sized so that 12 characters go on its arrow, a text under it so that 20 go
+  on a line, the points of an option 22. Text that does not fit is set smaller, down to four fifths, and
+  beyond that reported on its slot.
+- **The colour** of what is drawn is the template's main colour (the `accent` of its palette), where that
+  shows on the slide's background; else the colour of its big numbers; else that of its text. A deck's own
+  colours (`DeckSpec.colors`) change it with the rest of the slide.
+
+### A band of colour
+
+From 0.8.0 `arrange.tone` sets the blocks of a slide on a band, for the slide or two of a deck that carry its
+point: its key figures, a quotation, its conclusion.
+
+```ts
+freeSlide({
+  title: 'A year in three numbers',
+  tone: 'accent',
+  blocks: [
+    { figure: { value: '34%', label: 'more monthly passes than a year ago' } },
+    { figure: { value: '11', label: 'new stations, all in the east' } },
+    { figure: { value: '2 s', label: 'to unlock a bike, down from nine' } },
+  ],
+});
+```
+
+| `tone` | The band | The text on it |
+| --- | --- | --- |
+| `accent` | The template's main colour. | One colour for every text: white where white reads on the band, else the slide's own text made to read. |
+| `tint` | A tenth of the main colour in the slide's background. | As it is, and made to read only where it would not. |
+
+- **The band** is as wide as the template's content and as high as what is drawn on it, with a little room
+  around (2.2% of the slide's width). Where the template has a panel for its cards, the band is a copy of it,
+  so it has the panel's corners. The title, the logo and the rest of the frame stay as they are, outside it.
+- **Nothing on it stands on a panel of the template.** A panel, the box of a note and a rule were drawn for the
+  slide's own background. A card on a band is a heading and its text; a note is a line in the heading's
+  style; figures stand on the band itself. On a band in the main colour a card has no icon: an icon is drawn
+  for a light page.
+- **Arrows and dots turn white** on a band in the main colour, with the name of a phase in the band's colour.
+- **Which slides.** A slide of text, lists, cards, steps, figures, phases, milestones, quotations and notes.
+  A slide with a chart, a table, a photo, a graphic or an option is set out as without `tone`: these bring
+  colours and grounds of their own.
+- **Budgets follow.** The blocks have the room the band leaves, so a slot says what it holds there.
+- **In a plan** a model may ask for a band (`shows_on`), and code keeps the bands few: never two such slides in
+  a row, and no more than one slide in four (see "Free slides when a deck is planned").
+
 ### What a slot says before the slide is written
 
 A slide that is planned has no content yet, and its slots have to say how much each will hold. The slide is
 then set out as it will be when every text is about as long as texts of its kind usually are: a card or a
 step text of about 70 characters, a quotation of about 100, a list of about four points of 35, running text
-of about 300, a note of 110. The sizes are found by the same fitting that content gets, and each slot states
+of about 300, a note of 110, the text under a phase or a milestone about 60, an option four points of 30. The sizes are found by the same fitting that content gets, and each slot states
 what its box holds at the size that ends on.
 
 - **A budget is what the slide really takes.** A card is planned as high as a text of 70 characters needs,
@@ -446,7 +536,8 @@ what its box holds at the size that ends on.
   more; the budget stays that of the one line to take away.
 - **Optional parts are counted in by rule**: an icon for every card when an icon set is at hand, a heading
   over each text of a slide of several blocks, a caption for each chart, table, photo or graphic of a slide
-  that has two or more of the kind, the source of a quotation. A change to a deck names the optional slots
+  that has two or more of the kind, the source of a quotation, the text under a phase or a milestone, and the
+  badge of an option (told to go on the one option that is recommended). A change to a deck names the optional slots
   that hold a value on the slide (`withParts`, such as `b2Caption`), and those are counted in besides, so
   that a caption or a heading the slide has can be written again.
 - **A text a person asked a length for is planned at that length** (from 0.6.1). Where a plan has `words` for
@@ -731,7 +822,7 @@ well at the template's text size. While free slides are on offer no layout is ma
 
 | Kind | Offered when |
 | --- | --- |
-| `text`, `list`, `card`, `step`, `quote`, `note` | Always. In a text-only deck: `text`, `list`, `quote` and `note` alone. |
+| `text`, `list`, `card`, `step`, `phase`, `milestone`, `option`, `quote`, `note` | Always. In a text-only deck: `text`, `list`, `quote` and `note` alone. |
 | `figure`, `chart`, `table` | The brief holds digits, or `numberPatterns` is `always`. |
 | `photo` | `imageDensity` is not `none`. A plan gives one slide at most six photos to generate, and one more for each photo supplied in `assets`. Of the photos of a slide the writer may describe six; the others take a supplied photo. |
 | `graphic` | `assets` has a picture of kind `graphic`. |
@@ -750,6 +841,11 @@ A model names the parts in `shows`, as runs of like parts with the `count` of ea
 ```json
 { "pattern": "free", "purpose": "Every store at a glance", "shows": [{ "count": 4, "kind": "chart" }, { "count": 1, "kind": "note" }], "shows_main": "auto", "side_by_side": 2 }
 ```
+
+From 0.8.0 the entry may also say what the parts stand on, `"shows_on": "accent"` or `"tint"` (`"plain"`, or
+nothing, for the slide itself). It is read where every part can stand on a band, and kept in the plan as
+`arrange.tone`. Of the slides that ask for a band, the plan keeps the first of any two in a row, and no more
+than one slide in four of the deck, at least one.
 
 An answer that gives one entry for each part and numbers them (`count` 1, 2, 3, 4 for four charts) is read as
 four charts, not ten. A slide is planned with at most 400 parts, and `writeDeck` refuses a plan that gives a
@@ -850,6 +946,10 @@ the conditions above decide only what a new slide may be.
 - A free slide is laid out by rules, not by taste. It is tidy and in the template's look; it is not the work
   of a designer, and a designed pattern is the better slide wherever one fits.
 - Blocks are set out in the order given. There is no free placement by coordinates.
+- A phase, a milestone and an option are drawn one way each. There is no vertical timeline, no arrow between
+  cards, and no matrix of two by two.
+- A band of colour (`arrange.tone`) is as high as the boxes drawn on it. A short text alone keeps the box of a
+  text alone, so its band is higher than its lines: a quotation or a note says one sentence better there.
 - A free slide has no row of items to vary: its blocks are its items. `items` is ignored on it.
 - The title of a free slide of ten parts or more is changed, not removed, by an edit (`planEdit`, `editDeck`,
   the chat tools): such a slide is written by calls of its own, in which an empty title keeps the one the slide

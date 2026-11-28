@@ -63,6 +63,7 @@ slotdeck makes new PowerPoint files from an existing PowerPoint template.
 | Change an existing deck by instruction | `editDeck` (with pictures and pptx) or `planEdit` (JSON only) | 1 or 2 plus repairs |
 | Let a chat model do all of this | `presentationTools` | as above |
 | Give slides that the template has no layout for (goals, steps, a timeline) one made for the deck | `composeLayouts: 2` with `free: false` on the planner or the chat tools | 1, then 1 or 2 per layout |
+| Use the app's own folder of icons and pictures | `iconFiles`, `assetFiles` from `slotdeck/node`, given as `icons` and `assets` (generating.md) | none |
 | Put twelve charts, or a chart with three cards, on one slide | a free slide: `freeSlide` in a deck, or the planner's own choice | none |
 | Make a deck that carries a person's own document, word for word | `document` in the brief; `documents: true` in the chat tools | as for any deck |
 | Say before writing which slides are set small or cut | `planTextFit` | none |
@@ -86,8 +87,8 @@ slotdeck makes new PowerPoint files from an existing PowerPoint template.
 ## Facts worth knowing before writing code
 
 - The package is ESM only (`import`, not `require`) and needs Node 22.18 or later.
-- Entry points: `slotdeck` (everything that runs anywhere) and `slotdeck/node` (`directoryStore` and
-  `fontFiles`, which use the file system).
+- Entry points: `slotdeck` (everything that runs anywhere) and `slotdeck/node` (`directoryStore`, `fontFiles`,
+  `iconFiles` and `assetFiles`, which use the file system).
 - All binary data is `Uint8Array`. In Node a `Buffer` is a `Uint8Array`, so `fs.readFileSync(path)` can be
   passed directly.
 - Functions that call a model are `async`. `renderDeck`, `validateDeck`, `slideAlternatives`, `checkManifest`,

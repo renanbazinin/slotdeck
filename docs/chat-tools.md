@@ -33,8 +33,8 @@ const tools = presentationTools({
   llm,                                          // LlmProvider used inside the tools
   store: directoryStore('/mnt/presentations'),  // where plans, decks, pictures and files are kept
   images,                                       // optional ImageProvider; without it decks have no generated photos
-  icons,                                        // optional IconDef[]
-  assets,                                       // optional AssetDef[]
+  icons,                                        // optional IconDef[]: the app's icon set, such as iconFiles('/app/assets/icons') from slotdeck/node (generating.md)
+  assets,                                       // optional AssetDef[]: its own photos and graphics, such as assetFiles(folder, 'photo')
   layout: 'adaptive',                           // optional; default 'strict'
   fields: { organizationDepartment: 'Acme  |  Operations' }, // optional deck-level values every deck gets
   numberPatterns: 'from-brief',                 // optional
@@ -42,6 +42,7 @@ const tools = presentationTools({
   free: true,                                   // optional: free slides, for content no layout shows; on unless false (see below)
   countSpacing: true,                           // optional: a layout's budget told with its template's spacing counted (generating.md); on unless false
   delivery: 'read',                             // optional, 0.7.0: decks read on their own, not presented: full sentences, no thank-you slide (generating.md)
+  emphasis: false,                              // optional, 0.8.0: plain text only; left out, the writer may set a phrase in bold (deck-format.md)
   properties: { author: 'Studio' },             // optional, 0.7.0: what each file says of itself (rendering.md); set unless false
   composeLayouts: 2,                            // optional: new layouts for such slides in place of free slides; needs free: false (generating.md)
   patterns: ['cover', 'text-only', 'free'],     // optional: the only layouts the tools may use

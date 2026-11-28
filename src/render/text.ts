@@ -26,6 +26,18 @@ export interface TextOptions {
    * right to left, figures without letters ("+12%", "4.6 / 5") are set left to right.
    */
   templateDirection?: Direction;
+  /**
+   * The phrases of each paragraph that are set strong (`**like this**` in a deck's text): for
+   * paragraph n, where each starts and ends among its characters. Each is set in bold, in a run
+   * of its own that is otherwise the paragraph's. From 0.8.0.
+   */
+  strong?: ReadonlyArray<ReadonlyArray<readonly [number, number]> | undefined>;
+  /**
+   * The colour a strong phrase with a number in it is given besides ("**34%** of all rides"), as
+   * six hex digits: the template's accent, where the caller knows it reads on what the text
+   * stands on. Left out, such a phrase is bold like any other.
+   */
+  strongColor?: string;
 }
 
 /** What decides the language and direction a filled text is written in. */
@@ -119,7 +131,7 @@ export function setBodyText(body: Element, paragraphs: string[], options: TextOp
 
   const fresh = paragraphs.map((text, index) => {
     const proto = existing[Math.min(index, existing.length - 1)] as Element;
-    return buildParagraph(proto, text, options);
+    return buildParagraph(proto, text, options, options.strong?.[index]);
   });
   for (const paragraph of existing) removeNode(paragraph);
   for (const paragraph of fresh) body.appendChild(paragraph);
@@ -372,7 +384,7 @@ function setParagraphGap(paragraph: Element, points: number): void {
   props.insertBefore(gap, before ? before.nextSibling : props.firstChild);
 }
 
-function buildParagraph(proto: Element, text: string, options: TextOptions): Element {
+function buildParagraph(proto: Element, text: string, options: TextOptions, strong?: ReadonlyArray<readonly [number, number]>): Element {
   const doc = proto.ownerDocument;
   if (!doc) throw new Error('paragraph is detached from its document');
   const prefix = proto.prefix ? `${proto.prefix}:` : '';
@@ -414,9 +426,63 @@ function buildParagraph(proto: Element, text: string, options: TextOptions): Ele
     if (child.localName !== 'pPr' && child.localName !== 'endParaRPr') removeNode(child);
   }
   paragraph.insertBefore(run, endProps ?? null);
+  if (strong && strong.length > 0) setStrong(paragraph, run, text, strong, options.strongColor, prefix);
 
   applyDirection(paragraph, text, options, prefix);
   return paragraph;
+}
+
+/**
+ * Sets phrases of a paragraph strong: its one run becomes several, each a copy of it with its
+ * part of the text, and the runs of the phrases are bold. A phrase with a number in it takes
+ * `color` besides, where one is given. Phrases that lie outside the text, or over one another,
+ * are passed over: the paragraph then keeps its one run.
+ */
+function setStrong(paragraph: Element, run: Element, text: string, strong: ReadonlyArray<readonly [number, number]>, color: string | undefined, prefix: string): void {
+  const doc = paragraph.ownerDocument;
+  if (!doc) return;
+  const ranges = strong.map(([start, end]) => [start, end] as const).sort((a, b) => a[0] - b[0]);
+  let at = 0;
+  for (const [start, end] of ranges) {
+    if (!(Number.isInteger(start) && Number.isInteger(end) && start >= at && end > start && end <= text.length)) return;
+    at = end;
+  }
+  const pieces: Array<{ text: string; strong: boolean }> = [];
+  at = 0;
+  for (const [start, end] of ranges) {
+    if (start > at) pieces.push({ text: text.slice(at, start), strong: false });
+    pieces.push({ text: text.slice(start, end), strong: true });
+    at = end;
+  }
+  if (at < text.length) pieces.push({ text: text.slice(at), strong: false });
+  for (const piece of pieces) {
+    const part = run.cloneNode(true) as Element;
+    const node = childElement(part, NS.a, 't');
+    if (node) node.textContent = piece.text;
+    if (piece.strong) {
+      bold(part);
+      const props = childElement(part, NS.a, 'rPr');
+      if (props && color && /\p{Nd}/u.test(piece.text)) setColor(props, color, prefix);
+    }
+    paragraph.insertBefore(part, run);
+  }
+  removeNode(run);
+}
+
+/** Gives the text of a run a colour, as six hex digits. Run properties keep a fixed child order: line, fill, effects, then the typefaces. */
+function setColor(props: Element, hex: string, prefix: string): void {
+  const doc = props.ownerDocument;
+  if (!doc) return;
+  for (const fill of ['noFill', 'solidFill', 'gradFill', 'blipFill', 'pattFill', 'grpFill']) {
+    const old = childElement(props, NS.a, fill);
+    if (old) removeNode(old);
+  }
+  const fill = doc.createElementNS(NS.a, `${prefix}solidFill`);
+  const color = doc.createElementNS(NS.a, `${prefix}srgbClr`);
+  color.setAttribute('val', hex.replace(/^#/, '').toUpperCase());
+  fill.appendChild(color);
+  const line = childElement(props, NS.a, 'ln');
+  props.insertBefore(fill, line ? line.nextSibling : props.firstChild);
 }
 
 /**
@@ -447,19 +513,7 @@ function applyStyle(run: Element, style: TableTextStyle, prefix: string): void {
   if (style.size !== undefined) props.setAttribute('sz', String(Math.round(style.size * 100)));
   if (style.bold !== undefined) props.setAttribute('b', style.bold ? '1' : '0');
 
-  // Run properties keep a fixed child order: line, fill, effects, then the typefaces.
-  if (style.color) {
-    for (const fill of ['noFill', 'solidFill', 'gradFill', 'blipFill', 'pattFill', 'grpFill']) {
-      const old = childElement(props, NS.a, fill);
-      if (old) removeNode(old);
-    }
-    const fill = doc.createElementNS(NS.a, `${prefix}solidFill`);
-    const color = doc.createElementNS(NS.a, `${prefix}srgbClr`);
-    color.setAttribute('val', style.color.replace(/^#/, '').toUpperCase());
-    fill.appendChild(color);
-    const line = childElement(props, NS.a, 'ln');
-    props.insertBefore(fill, line ? line.nextSibling : props.firstChild);
-  }
+  if (style.color) setColor(props, style.color, prefix);
   if (style.font) {
     const after = ['hlinkClick', 'hlinkMouseOver', 'rtl', 'extLst'].map((name) => childElement(props as Element, NS.a, name)).find(Boolean) ?? null;
     for (const script of ['latin', 'ea', 'cs', 'sym']) {

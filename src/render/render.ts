@@ -1,10 +1,11 @@
 import { DeckValidationError, checkDeck, deckShapeIssues, fitOptions, freeTextFloor, resolveSlot } from '../deck/validate.ts';
 import type { Issue, LayoutMode } from '../deck/validate.ts';
-import { isFreeSlide } from '../deck/spec.ts';
+import { freeTone, isFreeSlide } from '../deck/spec.ts';
 import type { ChartValue, DeckSpec, SlideSpec } from '../deck/spec.ts';
 import { buildFreeSlide } from '../free/build.ts';
 import { freeFor } from '../free/resolve.ts';
 import type { FreeResolved } from '../free/resolve.ts';
+import { freeStrongColor } from '../free/plan.ts';
 import {
   ContentTypes,
   PptxPackage,
@@ -21,7 +22,7 @@ import { readPresentation } from '../pptx/presentation.ts';
 import { NS, childElement, childElements, descendants, openableSizes, parseXml, path, removeNode, rootElement, serializeXml } from '../pptx/xml.ts';
 import type { Element } from '../pptx/xml.ts';
 import { bodyTextScale, chartAtScale, chartsReadRightToLeft, defaultFit, effectiveSlots, itemCount, scalesWithText, slotSources, tableAtScale, templateTextSetting } from '../template/manifest.ts';
-import type { ChartSlotDef, PatternDef, SlideBox, TemplateManifest } from '../template/manifest.ts';
+import type { ChartSlotDef, PatternDef, SlideBox, SlotDef, TemplateManifest } from '../template/manifest.ts';
 import { withLayouts } from '../template/compose.ts';
 import { readImageInfo } from '../util/image.ts';
 import type { ImageInfo } from '../util/image.ts';
@@ -283,6 +284,12 @@ ${colors?.key}` : assetId;
       } else if (action.type === 'text' && slot.kind === 'text') {
         const align = slot.alignOnDirectionChange ?? manifest.alignOnDirectionChange ?? 'flip';
         const text: TextOptions = { flipAlign: directionChanged && align === 'flip', ...writing };
+        // Phrases the text sets strong (`**like this**`); on a free slide one with a number in it takes the template's accent where that reads.
+        if (action.strong) {
+          text.strong = action.strong;
+          const accent = free ? strongColorOn(free, slide, slot) : undefined;
+          if (accent) text.strongColor = accent;
+        }
         setShapeText(shape, action.paragraphs, slot.styleRun ? { ...text, styleRun: slot.styleRun } : text);
         if (slot.box) placeShape(shape, slot.box, pres.slideWidth, pres.slideHeight);
         const change: Parameters<typeof adjustText>[1] = {};
@@ -442,6 +449,21 @@ ${colors?.key}` : assetId;
   types.save(out);
 
   return { pptx: out.save(), warnings: issues.filter((issue) => issue.severity === 'warning'), shrunk };
+}
+
+/**
+ * The colour a phrase set strong takes on a free slide when it has a number in it, for one of
+ * its slots: the template's accent (`freeStrongColor`), in the running text of a block (its text,
+ * its items) that stands in the template's own colour. Not in a note, which is a line in a heavy
+ * face on a ground of its own; not where the plan gave the text a colour (the option a comparison
+ * picks out); and not on a band in the template's main colour, where every text has one colour.
+ */
+function strongColorOn(free: FreeResolved, slide: SlideSpec, slot: SlotDef): string | undefined {
+  const part = /^b(\d+)(Text|Items)$/.exec(slot.name);
+  const kind = part ? slide.blocks?.[Number(part[1]) - 1] : undefined;
+  if (!kind || kind === 'note' || freeTone(slide) === 'accent') return undefined;
+  if (free.plan.shapes.some((shape) => shape.id === slot.shapeId && shape.color !== undefined)) return undefined;
+  return freeStrongColor(free.kit);
 }
 
 /** Maps `p:cNvPr/@id` to the shape element that owns it. */

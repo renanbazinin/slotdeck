@@ -1433,9 +1433,9 @@ test('an instruction to a studio can set the colours and the free slides of a te
 
 test('a planner is offered the kinds of block a deck can fill, and how many read well', () => {
   const all = freeOffer(template, { figures: true, photos: true, graphics: true, icons: true });
-  assert.deepEqual(all, { kinds: ['text', 'list', 'card', 'figure', 'step', 'quote', 'note', 'chart', 'table', 'photo', 'graphic'], comfortable: 3, base: 'list-with-photo' });
+  assert.deepEqual(all, { kinds: ['text', 'list', 'card', 'figure', 'step', 'phase', 'milestone', 'option', 'quote', 'note', 'chart', 'table', 'photo', 'graphic'], comfortable: 3, base: 'list-with-photo' });
   // Without numbers in the brief there is nothing to chart; without pictures, none to show.
-  assert.deepEqual(freeOffer(template, { figures: false, photos: false, graphics: false, icons: false })?.kinds, ['text', 'list', 'card', 'step', 'quote', 'note']);
+  assert.deepEqual(freeOffer(template, { figures: false, photos: false, graphics: false, icons: false })?.kinds, ['text', 'list', 'card', 'step', 'phase', 'milestone', 'option', 'quote', 'note']);
   assert.deepEqual(freeOffer(template, { figures: true, photos: true, graphics: true, icons: true, textOnly: true })?.kinds, ['text', 'list', 'quote', 'note']);
   assert.equal(freeOffer(loadTemplate(demoPptx, { ...manifest, free: false }), { figures: true, photos: true, graphics: true, icons: true }), undefined);
   for (const kind of all?.kinds ?? []) assert.ok(FREE_KIND_NOTES[kind].length > 5, kind);

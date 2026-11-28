@@ -107,7 +107,7 @@ A deck without `colors`, `patterns` and free slides renders to the same bytes as
 | `items` | integer | no | Only for a pattern with a row or grid of items: how many items this slide has. Defaults to the number drawn on the template slide. Must be within the pattern's range. |
 | `colors` | `DeckColors` | no | Colours for this slide alone, in place of the deck's. See [colors.md](colors.md). |
 | `blocks` | array of kinds | no | Makes the slide a free slide: one the software lays out itself from these blocks, such as `["chart", "chart", "note"]`. With it go `arrange` and `base`. See "Free slides" below. |
-| `arrange` | `{ columns?, lead?, dense? }` | no | A free slide only: wishes about how its blocks are set out. `dense: true`, set by the planner, marks a long text a person asked to have whole: where it is too long for the template's size it is set smaller, down to the least size that reads. See "A long text a person asked for" in [free-slides.md](free-slides.md). |
+| `arrange` | `{ columns?, lead?, dense?, tone? }` | no | A free slide only: wishes about how its blocks are set out. `dense: true`, set by the planner, marks a long text a person asked to have whole: where it is too long for the template's size it is set smaller, down to the least size that reads. See "A long text a person asked for" in [free-slides.md](free-slides.md). |
 | `base` | string | no | A free slide only: the id of the pattern whose frame it stands on. Left out, the template's usual one. |
 | `passages` | integer[] | no | A deck made from a document: the passages of it this slide carries, by number from 1, as `documentPassages` numbers them. Rendering does not read it. |
 | `headings` | string[] | no | A deck made from a document: the headings of the document that stand in the slide's text as paragraphs of their own, word for word, in the order of the text. Each is set in bold at the head of the paragraph under it (run in), an em space opening the paragraph's text, or on a line of its own over a list item, a table row or another heading, over a paragraph it would turn the other way, or where it is too long to run in. Set by the planner; a paragraph no entry names is plain text, and a value that is not a list of strings names none (from 0.6.6). |
@@ -132,9 +132,32 @@ A string, or an array of strings with one entry per paragraph.
   position. When there are more paragraphs than the template slot has, the last template paragraph's formatting
   is reused. This is how a bulleted list works: the template shape has bulleted paragraphs, and the deck gives
   one string per bullet.
-- Do not put bullet characters, numbering or Markdown in the text. The text is used literally.
+- Do not put bullet characters, numbering or Markdown in the text. The text is used literally, with one
+  exception from 0.8.0: a strong phrase (see below).
 - Limits: `maxChars` counts all characters of all paragraphs together; `maxParagraphs` counts paragraphs. Both
   are soft (a warning, not an error).
+
+#### Strong phrases
+
+From 0.8.0 a phrase between two pairs of asterisks is set in bold:
+
+```json
+"body": ["**Faster unlock:** the app opens a dock in 2 seconds.", "Monthly passes grew **34%** over the year."]
+```
+
+- The phrase is a run of its own in the paragraph, bold, and otherwise set as the paragraph is. Its language and
+  direction are the paragraph's, in a right-to-left paragraph too.
+- The marks are no part of the text. `maxChars`, every budget a writer is told and every check count what the
+  slide shows: the first paragraph above is 49 characters.
+- No space stands inside the marks: `**34%**`, not `** 34% **`. Asterisks that are no such pair stay as they are
+  written: `Price**`, `2 ** 3 = 8`, `a * b`.
+- On a free slide a strong phrase with a number in it also takes the template's accent, the colour of its big
+  numbers, in running text, lists and the text of cards, where that colour reads on the slide and on its cards.
+  On a slide of a layout it is bold and no more: what a text stands on there is the template's to know.
+- In a cell of a table, a label of a chart and the alternative text of a picture nothing is bold: the marks are
+  taken off and the words stay.
+- A style that is bold already (most titles and headings) shows no difference.
+- A writer is told of the mark unless an app sets `emphasis: false` (see [generating.md](generating.md)).
 
 ### Image slot
 
@@ -258,7 +281,10 @@ figures, charts, tables and pictures, in reading order. Its `pattern` is `"free"
 `freeSlide` writes such a slide from its blocks, so that nobody numbers slot names by hand. The kinds of block,
 their parts, the two optional fields `arrange` and `base`, and how the blocks are set out are in
 [free-slides.md](free-slides.md). `arrange` states wishes: a number of blocks side by side that would leave a
-block under its smallest size is not followed, and `validateDeck` says what the slide holds.
+block under its smallest size is not followed, and `validateDeck` says what the slide holds. From 0.8.0
+`arrange.tone` (`"accent"` or `"tint"`) sets the blocks on a band of the template's colour, and three kinds of
+block are drawn: `phase` (a process as a chain of arrows), `milestone` (a timeline) and `option` (a
+comparison).
 
 ## A deck's own layouts
 

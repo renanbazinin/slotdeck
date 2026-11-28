@@ -416,6 +416,12 @@ export const SHOWS_MAIN = ['auto', 'left', 'right', 'top', 'none'] as const;
 /** Said of the count of a run of like parts. */
 export const SHOWS_COUNT_NOTE = 'How many parts of this kind stand here, one after another: 8 for eight charts. One entry for them all, not one entry for each.';
 export const SHOWS_MAIN_NOTE = 'Only for free: where the first part stands when it is the main one and larger. auto lets the software decide; none sets all parts alike.';
+/** What the parts of a free slide stand on, as a plan states it: the slide itself, or a band of colour (`FreeArrange.tone`). */
+export const SHOWS_ON = ['plain', 'accent', 'tint'] as const;
+export const SHOWS_ON_NOTE =
+  "Only for free: what the parts stand on. plain is the slide itself, and is right for nearly every slide. accent sets them on a band in the template's main colour, in white: " +
+  'for the one slide in about six that carries a main point of the deck (its key figures, a quotation, a conclusion, the phases of the plan), so that the deck is not one white page after another. ' +
+  'tint sets them on a pale band of that colour. Never two such slides in a row, and never with a chart, a table, a picture or options.';
 
 /**
  * Schema of one slide of an outline: its pattern, the point it makes and, where a row of items
@@ -456,6 +462,8 @@ export function outlineEntrySchema(catalog: Catalog, free?: FreeShows, document?
       },
       shows_main: { type: 'string', enum: [...SHOWS_MAIN], description: SHOWS_MAIN_NOTE },
       side_by_side: { type: 'integer', minimum: 0, description: 'Only for free, when the brief asks for a number of columns; 0 lets the software decide.' },
+      // Optional: a slide that does not say stands on the slide itself.
+      shows_on: { type: 'string', enum: [...SHOWS_ON], description: SHOWS_ON_NOTE },
       words,
       ...passages,
     },

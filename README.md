@@ -104,7 +104,7 @@ const { pptx, deck, warnings } = await generateDeck(
   {
     llm: gemini({ model: textModel, apiKey }),
     images: geminiImages({ model: imageModel, apiKey }),
-    icons: [{ id: 'clock', description: 'a clock: time, schedule', data: clockPng }],
+    icons: [{ id: 'clock', description: 'a clock: time, schedule', data: clockPng }], // or iconFiles('assets/icons') from 'slotdeck/node'
     assets: [{ id: 'flow', kind: 'graphic', description: 'adoption process diagram', data: mermaidPng }],
     layout: 'adaptive', // or 'strict'
     onProgress: (event) => console.log(event.stage),
@@ -344,8 +344,10 @@ const { pptx } = renderDeck(template, deck);
 
 A free slide is laid out by rules, with no model: one kind of block as a grid, several kinds in bands, a single
 chart or picture among a few cards beside them, a note across the bottom. Texts, panels and tables are copies
-of shapes the template has. The planner uses free slides for content that no pattern shows, and the chat
-tools take a colour as an argument. See [docs/free-slides.md](docs/free-slides.md) and
+of shapes the template has. From 0.8.0 a free slide also draws a process as a chain of arrows (`phase`), a
+timeline (`milestone`) and a comparison that picks one option out (`option`), sets its blocks on a band of the
+template's colour (`tone`), and any text of any slide sets a phrase in bold (`**like this**`). The planner uses
+free slides for content that no pattern shows, and the chat tools take a colour as an argument. See [docs/free-slides.md](docs/free-slides.md) and
 [docs/colors.md](docs/colors.md).
 
 ### Another layout for a slide

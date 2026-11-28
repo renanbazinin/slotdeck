@@ -22,7 +22,7 @@ import type { AssetDef, Catalog, CatalogContext, IconDef, ImageDensity, UsablePa
 import { withLayouts } from '../template/compose.ts';
 import { toldCounter } from '../template/told.ts';
 import type { PatternDesign } from '../template/compose.ts';
-import { FREE_CHANGE_RULE, FREE_OUTLINE_RULE, MOST_PARTS, describeEntry, entryBlocks, freeKnown, freeLine, freeOnOffer, freeReading, freeTurnedOff, freeWritePattern, isFreeEntry, kindsUsed, namesFree, readShows, withFreePhotos } from './free.ts';
+import { FREE_CHANGE_RULE, FREE_OUTLINE_RULE, MOST_PARTS, calmTones, describeEntry, entryBlocks, freeKnown, freeLine, freeOnOffer, freeReading, freeTurnedOff, freeWritePattern, isFreeEntry, kindsUsed, namesFree, readShows, withFreePhotos } from './free.ts';
 import type { FreeReading } from './free.ts';
 import {
   DOCUMENT_CHANGE_RULES,
@@ -176,6 +176,13 @@ export interface PlanOptions {
    * app whose decks are read. From 0.7.0.
    */
   delivery?: Delivery;
+  /**
+   * Whether a writer may set a phrase strong (the default): the few words or the figure that
+   * carry a point, written `**like this**` and set in bold (see "Strong phrases" in
+   * deck-format.md). `false` tells the writer plain text only, as before 0.8.0. A deck that has
+   * such phrases shows them either way. From 0.8.0.
+   */
+  emphasis?: boolean;
   /**
    * Whether a writer of a template's slot of paragraphs is told what its box holds with the
    * template's own spacing counted (the default), or its stored budget, as 0.6.7 told it. The
@@ -779,6 +786,8 @@ function readOutline(answer: unknown, byId: Map<string, UsablePattern>, free?: F
     }
     return entry;
   });
+  // A band of colour is for the slide or two that carry the deck's point, whatever the answer gave it to.
+  calmTones(entries);
   const unknown = entries.filter((entry) => !byId.has(entry.pattern) && !isFreeEntry(entry)).map((entry) => entry.pattern || '(empty)');
   const outline = { title: cleanText(raw?.title), entries };
   if (entries.length === 0) return { ...outline, problem: 'the answer contained no slides' };
@@ -818,7 +827,7 @@ export async function planOutline(template: Template, brief: Brief, options: Pla
   const own = doc && rooms ? Math.max(1, Math.ceil(doc.chars / rooms.target)) : 0;
   const count = given ?? (doc ? { min: 1, max: Math.min(MOST_DOCUMENT_SLIDES, Math.max(10, own + 4)) } : { min: 6, max: 10 });
   // Choosing a pattern for each slide needs little reasoning, and is much quicker with little.
-  const ask = asker(options.llm, systemPrompt(language, 'brief', doc !== undefined, options.delivery), options.signal, 'low');
+  const ask = asker(options.llm, systemPrompt(language, 'brief', doc !== undefined, options.delivery, options.emphasis !== false), options.signal, 'low');
   const reading: FreeAnswer | undefined = free ? { ...freeReading(free.kinds, context), offered: true } : undefined;
   const passages = doc?.passages.length;
   const asksCount = brief.slideCount === undefined;
@@ -1696,7 +1705,7 @@ export async function editPlan(
     required: ['summary', 'language', 'title', 'slides', ...Object.keys(more)],
   };
 
-  const ask = asker(options.llm, systemPrompt(language, 'brief', doc !== undefined, options.delivery), options.signal, 'low');
+  const ask = asker(options.llm, systemPrompt(language, 'brief', doc !== undefined, options.delivery, options.emphasis !== false), options.signal, 'low');
   // An edit may add slides, so the room is for a plan somewhat longer than the one it starts from.
   // Where slides name their parts, that is a little more for each slide, and for each run of parts
   // the plan has; where they name their passages, a little more again.
@@ -1984,7 +1993,7 @@ export async function writeDeck(loaded: Template, plan: DeckPlan, options: PlanO
     }
     return { number, pattern: asked(pattern), purpose: entry.purpose, ...passage };
   });
-  const system = systemPrompt(language, 'brief', doc !== undefined, options.delivery);
+  const system = systemPrompt(language, 'brief', doc !== undefined, options.delivery, options.emphasis !== false);
   // A text written well short of the length asked for it goes back once, with the first answer's
   // problems, and so does a slide that keeps too few of the words of its text from the document.
   // The issues that send them are the writer's alone: the deck is told after the last answer.

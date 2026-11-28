@@ -51,6 +51,8 @@ export interface PresentationToolsOptions {
   fields?: Record<string, string>;
   /** How the app's decks are used, as `delivery` of `planDeck`: `read` for decks that are mailed and read on their own. From 0.7.0. */
   delivery?: PlanOptions['delivery'];
+  /** Whether a writer may set a phrase in bold, as `emphasis` of `planDeck`: `false` for plain text only. From 0.8.0. */
+  emphasis?: PlanOptions['emphasis'];
   /**
    * What a presentation's file says of itself (see `RenderOptions.properties`): its title,
    * language, number of slides and the version that made it, in place of the template's. Set
@@ -1095,6 +1097,7 @@ export function presentationTools(options: PresentationToolsOptions): Presentati
   const planOptions = (tool: string, signal: AbortSignal | undefined): PlanOptions => {
     const plan: PlanOptions = { llm };
     if (options.delivery) plan.delivery = options.delivery;
+    if (options.emphasis !== undefined) plan.emphasis = options.emphasis;
     if (options.layout) plan.layout = options.layout;
     if (options.icons) plan.icons = options.icons;
     if (options.assets) plan.assets = options.assets;
