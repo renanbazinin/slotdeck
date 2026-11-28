@@ -3,6 +3,7 @@ import type { Issue, LayoutMode } from '../deck/validate.ts';
 import { freeTone, isFreeSlide } from '../deck/spec.ts';
 import type { ChartValue, DeckSpec, SlideSpec } from '../deck/spec.ts';
 import { buildFreeSlide } from '../free/build.ts';
+import { TextStyles } from '../text/styles.ts';
 import { freeFor } from '../free/resolve.ts';
 import type { FreeResolved } from '../free/resolve.ts';
 import { freeStrongColor } from '../free/plan.ts';
@@ -226,8 +227,12 @@ ${colors?.key}` : assetId;
       shapes = ref && source.has(ref.part) ? indexShapes(rootElement(parseXml(source.readText(ref.part)))) : new Map();
       sourceShapes.set(slideNumber, shapes);
     }
-    return shapes.get(shapeId);
+    const found = shapes.get(shapeId);
+    // A placeholder is copied as the shape it is once it states what its layout and master give it.
+    if (found && found.localName === 'sp' && descendants(found, NS.p, 'ph').length > 0) return (textStyles ??= new TextStyles(source)).standalone(slideNumber, shapeId) ?? found;
+    return found;
   };
+  let textStyles: TextStyles | undefined;
   const usedSlideParts = new Set<string>();
   /** Where each picture of the deck stands, by slide and shape: what a deck kept in its file names its pictures by. */
   const placed: Array<{ asset: string; slide: number; shape: string; recolored: boolean }> = [];

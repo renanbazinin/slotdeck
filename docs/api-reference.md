@@ -1097,6 +1097,33 @@ function changeManifest(template: Template, changes: ManifestChange[]): ChangeRe
 function editManifest(template: Template, instruction: string, options: ManifestEditOptions): Promise<ManifestEditResult>;
 ```
 
+### `styleManifest`
+
+```ts
+function styleManifest(pptx: Uint8Array | PptxPackage, options?: StyleManifestOptions): StyleManifest;
+
+interface StyleManifestOptions {
+  name?: string;                   // the manifest's name; default 'style'
+}
+
+interface StyleManifest {
+  manifest: TemplateManifest;      // a manifest like any other
+  patterns: string[];              // what a deck is planned from: the cover, 'free', the closing slide
+  reason?: string;                 // why the file cannot carry slides the software lays out; left out where it can
+  cover?: string;                  // 'cover', where the first slide can be one
+  closing?: string;                // 'closing', where the last slide can be one
+  fields: Record<string, string>;  // the deck's own texts of the frame: field name -> the sample the file shows there
+  notes: string[];                 // what was decided and why, in sentences
+}
+```
+
+From 0.10.0. Synchronous, no model. Makes a manifest from a `.pptx` alone, by rules, for style-only mode: a deck
+takes the file's cover and closing slide and, between them, slides the software lays out in the file's
+typefaces, sizes and colours. Give `patterns` to a brief or to `presentationTools`; the manifest's other layouts
+are the file's slides as they are drawn, there for their text styles. With a `reason` the file cannot be used
+this way, `patterns` has no `free`, and the manifest says `"free": false`. The same file always gives the same
+manifest. See [style-only.md](style-only.md).
+
 ### `prepareManifest`
 
 ```ts

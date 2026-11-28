@@ -43,7 +43,7 @@ Each has the slide number and usually the slot name.
 | `asset "x" was not provided` | The deck refers to a picture whose bytes were not passed. | Add it to `options.assets` under that id. With the planner, pass the same `icons` and `assets` to rendering as to planning, or use `resolveAssets`. |
 | `a free slide needs at least one block, such as "blocks": ["text"]` | A slide with an empty `blocks` list. | Name at least one block, or use a pattern. See [free-slides.md](free-slides.md). |
 | `"blocks" names "x"; a free slide is made of text, list, card, ...` | A kind of block that does not exist. | Use one of the kinds listed. |
-| `a free slide cannot be made from this template: ...` | The template has no layout a free slide can stand on, or no running text to copy. The sentence says which: no layout with a title, a title whose place neither its slide layout nor the master states, running text that does not read on the frame's background, or running text that is all in placeholders. | Add a pattern with a title at the top and running text in text boxes to the manifest, or name a frame with `free.base`. |
+| `a free slide cannot be made from this template: ...` | The template has no layout a free slide can stand on, or no running text to copy. The sentence says which: no layout with a title, a title whose place neither its slide layout nor the master states, or running text that does not read on the frame's background. Before 0.10.0 also: running text that is all in placeholders, which is now copied. | Add a pattern with a title at the top and running text to the manifest, or name a frame with `free.base`. |
 
 ## Deck warnings
 

@@ -605,7 +605,7 @@ Free slides are on offer when all of this holds:
 | Condition | Otherwise |
 | --- | --- |
 | The option `free` is not `false`. | `free: false` plans without free slides: the prompts and schemas say nothing of them. |
-| The template can carry them: its manifest does not say `"free": false`, it has a layout with a title for them to stand on, that layout leaves room under the title, the template's running text is in text boxes of its own and not only in placeholders, and `brief.fields` has the deck fields that layout shows. See "What a template gives a free slide" and "Limits" in [free-slides.md](free-slides.md). | No free slide is offered. |
+| The template can carry them: its manifest does not say `"free": false`, it has a layout with a title for them to stand on, that layout leaves room under the title, the template has running text that can be copied (before 0.10.0: in text boxes of its own and not only in placeholders), and `brief.fields` has the deck fields that layout shows. See "What a template gives a free slide" and "Limits" in [free-slides.md](free-slides.md). | No free slide is offered. |
 | No list of patterns is in force, or the list names `free`. That goes for the app's list (`patterns` in the options) and for the person's (`Brief.patterns`). | An app that passes `patterns: ['cover', 'text-only']` gets no free slides by upgrading; it adds `'free'` to have them. |
 
 A new brief whose own list names `free` where none can be made is a `PlanError` that says why, such as

@@ -3,6 +3,48 @@
 What changed in each version, newest first, with what to do when upgrading. The version you have installed is
 in `node_modules/slotdeck/package.json`.
 
+## 0.10.0
+
+Style-only mode: a deck in the style of a file nobody prepared. `styleManifest` makes a manifest from a `.pptx`
+by rules, with no model, and a deck takes the file's cover, its closing slide and, between them, slides the
+software lays out in the file's typefaces, sizes and colours. And a file whose text is all in placeholders, as
+most decks people make by hand are, can carry such slides.
+
+### Added
+
+- **`styleManifest(pptx, { name? })`**: a manifest from a file alone, in a fraction of a second. Every slide
+  becomes a layout whose texts are slots named by what can be measured (a title, the line under it, a heading
+  over its text, a big number, a list); footers and texts that repeat in the margins become deck fields; the
+  first and the last slide become `cover` and `closing`; the frame of free slides is the slide whose title sits
+  where most titles sit, with the least drawn under it. It returns the manifest, `patterns` (what a deck is
+  planned from: the cover, `free`, the closing slide), `fields`, `notes` in sentences, and a `reason` where the
+  file cannot carry slides the software lays out. See [style-only.md](style-only.md).
+- **A placeholder can be the source of a free slide's text style.** A free slide copies the template's shapes,
+  and a placeholder states almost nothing itself: its place, typeface, size and bullets come from the slide
+  layout, the master and the master's text styles. It is now copied as a shape that states its own look, with
+  the list style of every level, the insets and the anchor written into it, the nearest statement of each
+  property kept. `manifest.free.styles` may name a placeholder, and `changeManifest` no longer refuses one.
+
+### Changed
+
+- **A template whose running text is all in placeholders can carry free slides.** Before, `validateDeck` said
+  `the template's running text is in placeholders, which a free slide cannot copy`, and a planner was offered
+  no free slide. Now the placeholders are copied. Running text taken from a bulleted body has no bullet, and a
+  body set larger than seven tenths of the title's size stands in at under half that size. A template with a
+  text box of its own to copy keeps the styles it always had: placeholders are taken only where there is
+  nothing else, or where the manifest names one.
+
+### Upgrading from 0.9.0
+
+- Nothing changes for a template that carried free slides before: its styles, its stored decks and its
+  rendered files are the same.
+- A template that was refused for placeholders now offers free slides to a planner, and a deck on it may hold
+  them. To keep it as it was, set `"free": false` in its manifest (`changeManifest` with
+  `{ op: 'setManifest', free: false }`).
+- An app that shows the sentence of that refusal, or tests for it: the sentence is no longer said.
+- A prompt for a coding agent that adds style-only mode to an app is in
+  [prompts/style-only.md](prompts/style-only.md).
+
 ## 0.9.0
 
 Free slides use their room. A row of three cards, a few figures or a timeline under a title used to stand

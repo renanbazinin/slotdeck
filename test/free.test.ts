@@ -1385,23 +1385,31 @@ test('a style of free slides that can no longer be copied is told when the manif
   assert.deepEqual(validateDeck(broken, deckOf([threeCards])), []);
 });
 
-test('running text that is all in placeholders cannot be copied, and the reason says so', () => {
+test('running text that is all in placeholders is copied as the shapes it is once it states what it inherits', () => {
   // The demo with the content texts of every slide made body placeholders that keep their position.
   const keep = /^(Title|Organization|Page number)$/;
   let index = 20;
   const held = (xml: string) => xml.replace(/<p:cNvPr id="(\d+)" name="([^"]*)"\/><p:cNvSpPr txBox="1"\/><p:nvPr\/>/g, (whole, id: string, name: string) => (keep.test(name) ? whole : `<p:cNvPr id="${id}" name="${name}"/><p:cNvSpPr/><p:nvPr><p:ph type="body" idx="${index++}"/></p:nvPr>`));
   const slides = Object.fromEntries(Array.from({ length: 13 }, (_, number) => [`ppt/slides/slide${number + 1}.xml`, held]));
+  // Before 0.10.0 such a template could carry no free slide: there was no text box to copy a style from.
   const placed = loadTemplate(demoWith(slides), manifest);
-  const reason = freeKitOrReason(placed);
-  assert.equal(reason, "the template's running text is in placeholders, which a free slide cannot copy: there is no text style to take unless some of it is set in text boxes of their own");
-  assert.deepEqual(validateDeck(placed, deckOf([threeCards])), [{ severity: 'error', slide: 1, message: `a free slide cannot be made from this template: ${reason}` }]);
-  // One placeholder among text boxes: it cannot be named as a style, and a studio is told why.
+  const kit = freeKitOrReason(placed);
+  assert.ok(typeof kit !== 'string', String(kit));
+  assert.deepEqual(validateDeck(placed, deckOf([threeCards])), []);
+  // The slide that is made holds no placeholder but the frame's own: a copy states its look itself.
+  const made = strFromU8(unzipSync(renderDeck(placed, deckOf([threeCards])).pptx)['ppt/slides/slide1.xml'] as Uint8Array);
+  assert.doesNotMatch(made, /<p:ph type="body"/);
+  assert.match(made, /<a:lstStyle>/);
+  // One placeholder among text boxes: the template keeps the styles it always had, and a studio may name the placeholder.
   const one = loadTemplate(demoWith({ 'ppt/slides/slide11.xml': held }), manifest);
-  assert.ok(typeof freeKitOrReason(one) !== 'string');
-  assert.equal(
-    changeManifest(one, [{ op: 'setManifest', free: { styles: { quote: { slide: 11, shape: '6' } } } }]).rejected[0]?.reason,
-    'shape #6 of slide 11 cannot be the quote of a free slide: it is a placeholder, which takes its look from the slide layout, and a free slide copies a text box that states its own',
-  );
+  const [same, plain] = [freeKitOrReason(one), freeKitOrReason(template)];
+  assert.ok(typeof same !== 'string' && typeof plain !== 'string');
+  if (typeof same === 'string' || typeof plain === 'string') return;
+  for (const role of ['body', 'heading', 'figure', 'list'] as const) assert.deepEqual([same.styles[role].slide, same.styles[role].shapeId], [plain.styles[role].slide, plain.styles[role].shapeId], role);
+  const named = changeManifest(one, [{ op: 'setManifest', free: { styles: { quote: { slide: 11, shape: '6' } } } }]);
+  assert.deepEqual(named.rejected, []);
+  const quote = freeKit(loadTemplate(demoWith({ 'ppt/slides/slide11.xml': held }), named.manifest))?.styles.quote;
+  assert.deepEqual([quote?.slide, quote?.shapeId], [11, '6']);
 });
 
 test('an instruction to a studio can set the colours and the free slides of a template', async () => {
