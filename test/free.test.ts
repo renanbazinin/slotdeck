@@ -822,7 +822,8 @@ test('on a template with wide line spacing the text of a card is fitted as on an
   // height as it is and the length by the estimate set card text that fitted a fifth smaller, in a card a third empty.
   const spaced = loadTemplate(spacedBody('<a:spcPct val="130000"/>'), manifest);
   const long = 'Bikes unlock from five in the morning, for early shifts and the first trams. '.repeat(5).trim();
-  const three = (text: string) => freeSlide({ title: 'Three ways in', blocks: [card('Longer hours', text), card('Safer docks', text), card('Group passes', text)] });
+  // At the template's own sizes (`grow: false`): what is compared here is how a line is counted, not how a slide with room is set larger.
+  const three = (text: string) => freeSlide({ title: 'Three ways in', grow: false, blocks: [card('Longer hours', text), card('Safer docks', text), card('Group passes', text)] });
   const cardOf = (text: string, on: typeof template) => {
     const plan = planOf(three(text), {}, on);
     // A card that grew into room left over is counted as high as its content asked.
@@ -949,9 +950,12 @@ test('larger text for a deck never makes a text of a free slide smaller', () => 
       }
     }
   }
-  // Where there is room, larger text is larger: three cards have it.
-  const three = (textScale: number) => planOf(threeCards, { textScale }).shape('Block 1 text').size ?? 0;
-  assert.ok(three(1.25) > three(1));
+  // Where there is room, larger text is larger: three cards have it. From 0.9.0 three short cards take
+  // that room without the wish too (`arrange.grow`), up to what their width holds, so the wish
+  // adds to the slide as the template sets it, and never sets the slide that grew smaller.
+  const three = (textScale: number, grow?: false) => planOf(grow === false ? { ...threeCards, arrange: { grow } } : threeCards, { textScale }).shape('Block 1 text').size ?? 0;
+  assert.ok(three(1.25, false) > three(1, false));
+  assert.ok(three(1) > three(1, false) && three(1.25) >= three(1) && three(1.25) >= three(1.25, false));
   // A chart's labels and a table's text are part of it.
   const mixed = freeSlide({ title: 'Stations', blocks: [{ chart, caption: 'Rides' }, { table: { header: ['Station', 'Docks'], rows: Array.from({ length: 9 }, (_, row) => [`Station ${row + 1}`, '24']) }, caption: 'Docks' }] });
   const sizesOf = (textScale: number) => planOf(mixed, { textScale }).plan.pattern.slots.map((slot) => (slot.kind === 'chart' ? (slot.text?.size ?? 0) : slot.kind === 'table' ? (slot.bodyText?.size ?? 0) : 0));
@@ -1654,10 +1658,14 @@ test('a planned slide is set out for texts of the usual length, and each slot is
     const blocks = Array<FreeBlockKind>(count).fill('card');
     const before = planned(blocks);
     const told = before.pattern.slots.find((entry) => entry.name === 'b1Text');
-    const laid = planOf(freeSlide({ title: 'A title', blocks: Array.from({ length: count }, () => card('A heading', wordsOf(Math.min(70, told?.kind === 'text' ? (told.maxChars ?? 70) : 70)))) }));
+    const written = (grow?: false) => planOf(freeSlide({ title: 'A title', ...(grow === false ? { grow } : {}), blocks: Array.from({ length: count }, () => card('A heading', wordsOf(Math.min(70, told?.kind === 'text' ? (told.maxChars ?? 70) : 70)))) }));
+    const laid = written(false);
     const [budget, text] = [told, laid.slot('b1Text')];
     assert.ok(budget?.kind === 'text' && text.kind === 'text');
     assert.deepEqual([text.fontSize, text.maxChars], [budget.fontSize, budget.maxChars], `${count} cards`);
+    // From 0.9.0 a slide that leaves room sets its text larger: never smaller than was planned, and what a writer was told still fits.
+    const larger = written().slot('b1Text');
+    assert.ok(larger.kind === 'text' && (larger.fontSize ?? 0) >= (budget.fontSize ?? 0) && (larger.maxChars ?? 0) >= Math.min(70, budget.maxChars ?? 0), `${count} cards, set larger: ${larger.kind === 'text' ? [larger.fontSize, larger.maxChars] : ''}`);
   }
   // No body text is told less than a dozen characters, however many blocks the slide has: twenty-four
   // quotations, whose boxes hold no line, were told 1. A note is never told more than a note alone.
@@ -1666,7 +1674,8 @@ test('a planned slide is set out for texts of the usual length, and each slot is
     assert.ok(Math.min(...budgets) >= 12, `${kind}: ${budgets.join(' ')}`);
     if (kind === 'note') assert.ok(Math.max(...budgets) <= (budgets[0] as number), budgets.join(' '));
   }
-  assert.deepEqual([told('quote', 'Quote', 24), told('text', 'Text', 24), told('note', 'Text', 1), told('note', 'Text', 24)], [17, 12, 153, 153]);
+  // From 0.9.0 one note alone is a statement, set large in up to four lines: it is told what those hold, 163 where a bottom line was told 153.
+  assert.deepEqual([told('quote', 'Quote', 24), told('text', 'Text', 24), told('note', 'Text', 1), told('note', 'Text', 24)], [17, 12, 163, 153]);
   // Running text and a quotation alone are told what the slide holds at the size a text of the usual length gets there.
   const alone = planned(['text']).pattern.slots.find((entry) => entry.name === 'b1Text');
   assert.ok(alone?.kind === 'text');
@@ -2184,8 +2193,8 @@ test('cards and steps grow into room that is left over, and hold what they held'
   assert.equal(arrangeBlocks(['card', 'card', 'card'], { frame: { ...frame, card: 0 }, rtl: false, needed: () => 0.12 }).blocks[0]?.grown, undefined);
   // A card grows only while what is written on it, from its top to the foot of its text, fills 60% of it:
   // three cards of a short line each do not grow at all, and the slide settles them in its room.
-  assert.deepEqual(planOf(threeCards).plan.layout.blocks.map((entry) => entry.grown), [undefined, undefined, undefined]);
-  const fuller = freeSlide({ title: 'Three ways in', blocks: [card('Longer hours', 'Bikes unlock from five in the morning, for early shifts and the first trams.'), card('Safer docks', 'Every station gets lighting and a camera before the season opens.'), card('Group passes', 'One pass for up to five riders, bought once and shared by link.')] });
+  assert.deepEqual(planOf({ ...threeCards, arrange: { grow: false } }).plan.layout.blocks.map((entry) => entry.grown), [undefined, undefined, undefined]);
+  const fuller = freeSlide({ title: 'Three ways in', grow: false, blocks: [card('Longer hours', 'Bikes unlock from five in the morning, for early shifts and the first trams.'), card('Safer docks', 'Every station gets lighting and a camera before the season opens.'), card('Group passes', 'One pass for up to five riders, bought once and shared by link.')] });
   // On the slide the panel is as high as the card grew, and heading and text are set out as in the card that was asked for.
   const plan = planOf(fuller);
   const block = plan.plan.layout.blocks[0];

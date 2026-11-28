@@ -974,8 +974,13 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
   // whose notes are set smaller to share their room (layout.ts): the factor on the size of the
   // text, and on the least space kept around it.
   const noteInset = 0.019 * Wpt;
+  // One note alone is the slide (from 0.9.0): its sentence is set as a statement, at up to seven
+  // tenths of the title's size and no more than twice the size of running text, on lines of at
+  // least 22 characters, in up to four lines. A bottom line under other blocks stays a bottom line.
+  const statement = kinds.length === 1 && kinds[0] === 'note';
+  const noteMost = statement ? Math.max(noteN, Math.min(half(0.7 * T), half(2 * bodyN))) : noteN;
   const noteSize = (width: number, lower = 1) => {
-    const size = Math.max(HARD, Math.min(noteN, halfDown((width - 2 * noteInset) / (WIDE * 30))));
+    const size = Math.max(HARD, Math.min(noteMost, halfDown((width - 2 * noteInset) / (WIDE * (statement ? 22 : 30)))));
     return lower < 1 ? Math.max(HARD, halfDown(size * lower)) : size;
   };
   /**
@@ -986,7 +991,7 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
    */
   const oneLine = (index: number, width: number, size: number) => !planning && said(index, 'Text') <= Math.floor((width - 2 * noteInset) / (0.5 * size));
   // A note that fits one line is one line: nothing is lost at a break that is not there.
-  const noteLines = (index: number, width: number, size: number) => (said(index, 'Text') <= perLine(width - 2 * noteInset, size) || oneLine(index, width, size) ? 1 : clamp(Math.ceil(said(index, 'Text') / (perLine(width - 2 * noteInset, size) * FULL)), 1, 3));
+  const noteLines = (index: number, width: number, size: number) => (said(index, 'Text') <= perLine(width - 2 * noteInset, size) || oneLine(index, width, size) ? 1 : clamp(Math.ceil(said(index, 'Text') / (perLine(width - 2 * noteInset, size) * FULL)), 1, statement ? 4 : 3));
   const noteAround = (size: number, lower: number) => 2 * Math.max(0.011 * Wpt * lower, 0.6 * LINE * size);
   const noteHeight = (index: number, width: number, lower = 1): number => {
     const size = noteSize(width * Wpt, lower);

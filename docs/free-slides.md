@@ -65,7 +65,7 @@ the deck format.
 | `pattern` | `"free"` | Always `free` (`FREE_PATTERN`). |
 | `blocks` | array of kinds | What the slide is made of, in reading order. Any number, at least one. This field is what makes a slide a free slide (`isFreeSlide`). |
 | `slots` | object | The content. The title is `title` and may be left out. The parts of block *n* (from 1) are `b`*n* followed by the part's name: `b1Text`, `b2Chart`, `b12Heading`. |
-| `arrange` | object | Optional wishes about the arrangement: `columns` and `lead` (see "How the blocks are set out"). `tone` sets the blocks on a band of colour (see "A band of colour"). `dense` marks a long text a person asked to have whole, set by the planner (see "A long text a person asked for"). |
+| `arrange` | object | Optional wishes about the arrangement: `columns` and `lead` (see "How the blocks are set out"). `tone` sets the blocks on a band of colour (see "A band of colour"). `grow: false` keeps the template's sizes where the blocks leave room (see "A slide that leaves room"). `dense` marks a long text a person asked to have whole, set by the planner (see "A long text a person asked for"). |
 | `base` | string | Optional. The id of the pattern whose frame the slide stands on. Left out, the template's usual one. A pattern that cannot be a frame gives way to the usual one, and the deck is told (see "What the checks say"). |
 | `colors` | `DeckColors` | Optional. Colours for this slide alone; see [colors.md](colors.md). |
 
@@ -104,7 +104,7 @@ reported as `expected text`.
 its reverse, so that code adds, removes or reorders blocks without renumbering slot names by hand:
 
 ```ts
-const content = freeContent(slide);                 // { title, blocks: [{ chart, caption }, ...], columns?, lead?, dense?, tone?, base?, colors? }
+const content = freeContent(slide);                 // { title, blocks: [{ chart, caption }, ...], columns?, lead?, dense?, tone?, grow?, base?, colors? }
 content.blocks.splice(1, 1);                        // drop the second block
 content.blocks.push({ card: { heading: 'Next', text: 'Forty more bikes.', icon: 'bolt' } });
 const changed = freeSlide(content);
@@ -134,6 +134,7 @@ interface FreeSlideContent {
   lead?: 'left' | 'right' | 'top' | 'none';   // where the first block stands when it is the main one
   dense?: boolean;                            // a long text a person asked to have whole (arrange.dense)
   tone?: 'accent' | 'tint';                   // the band of colour the blocks stand on (arrange.tone)
+  grow?: boolean;                             // false keeps the template's sizes where the blocks leave room (arrange.grow)
   base?: string;
   colors?: DeckColors;
 }
@@ -202,7 +203,10 @@ The software decides, by rules. The same slide on the same template always gives
   notes that close them as one group. Blocks that leave three tenths of the room or more have two fifths of what
   they leave above them. Blocks that leave less sit down by evenly less, and blocks that leave a tenth of the
   room or less start at its top: there is no height at which a slide jumps from one to the other. What is left
-  is under the note, never between the blocks and their note. A slide of nothing but running text, lists,
+  is under the note, never between the blocks and their note. The room meant is the one the template's own
+  layouts use. From 0.9.0, where that room ends a tenth of the slide's height or more above the foot of the
+  larger room (a template whose layouts keep to the upper part of the page), the blocks are settled in the
+  room down to that foot, at the size they have: a low row no longer stands over an empty lower third. A slide of nothing but running text, lists,
   quotations and tables hangs from the top line, as the template's own text layouts do.
 - **A title of two lines** has the blocks start as far under its second line as they start under a title of
   one: the room starts lower by the line the title has more, and never less than half a gap under its last
@@ -221,13 +225,14 @@ The software decides, by rules. The same slide on the same template always gives
   line of its text or than its heading. Its shapes are cut to it, so that no shape of one block lies on a
   neighbour, and the texts that have no room are reported (see "What the checks say").
 
-Three wishes can be stated in `arrange`:
+Four wishes can be stated in `arrange`:
 
 | Field | Values | Meaning |
 | --- | --- | --- |
 | `columns` | whole number from 1 | How many blocks stand side by side on one line. |
 | `lead` | `"left"`, `"right"`, `"top"`, `"none"` | The first block is the main one: larger, at that side of the slide or over the others. `none` sets all blocks alike. Left and right are sides of the slide, whatever the reading direction. |
 | `tone` | `"accent"`, `"tint"` | The blocks stand on a band of the template's colour (from 0.8.0; see "A band of colour"). |
+| `grow` | `false` | The slide keeps the template's own text sizes whatever room its blocks leave (from 0.9.0; see "A slide that leaves room"). Left out, a slide that leaves room sets its text larger. |
 
 **A wish the room cannot hold is not followed.** A block has a smallest size: the least width its kind sits
 well in, and half the least height. The widths are 15% of the slide's width for a card or a step, 20% for a
@@ -433,6 +438,35 @@ and counts as crowded.
   one, is not filled edge to edge, and the photo then stands at the edge reading starts at. Its caption
   starts under its corner and is as wide as it is. A graphic is shown whole in the middle of its box, and its
   caption stands under its middle.
+
+### A slide that leaves room
+
+Three cards under a title, at the template's own sizes, are a low row over an empty lower half. From 0.9.0
+such a slide sets its text larger.
+
+- **When.** The blocks, with their notes, take less than two thirds of the room's height. The slide has no
+  chart, table, photo or graphic, which take the room there is. It is not a slide of running text, lists or
+  quotations alone, which hangs from the top line and has its own rules for a text alone. It was not set out
+  for want of room (in the larger room, or with notes set smaller), and its deck does not say
+  `"arrange": { "grow": false }`.
+- **How much.** Every text style of the template is tried at 1.5, 1.4, 1.3, 1.2 and 1.1 times its size, and
+  the first is taken at which all of this holds: the blocks are set out as they were, as many on a line in as
+  many lines; no text is smaller than it was and some text is larger; the text that grew most grew no more
+  than 1.3 times what the one that grew least did; a text of one line is still one line; and nothing that
+  fitted its box is now over it.
+- **What holds it back.** The size of a text still follows the width of its block: a line of a card holds
+  its twenty characters and a heading its twelve. Three wide cards grow; five narrow phases grow little or not
+  at all. The limits that keep a text under the title's size are the same, so the title stays the largest
+  text. The cards then take room that is still left, as they always did.
+- **Planned at the template's own sizes.** A slide that is planned for a writer has no content, and is not
+  set larger: what a writer is told always fits, and the slide grows by what was written.
+- **With a deck's larger text.** A deck that asks for larger text (`textScale`) has its slide grow from the
+  size the wish gave it. Where the slide without the wish still has some text larger, that slide is made: a
+  wish for larger text never gets smaller text.
+- **One note alone is a statement.** A slide of one note and nothing else sets it at up to seven tenths of
+  the title's size, and no more than twice the size of running text, on lines of at least 22 characters, in
+  up to four lines. Notes alone, one or several, sit down their room as other low blocks do, two fifths of
+  what they leave above them.
 
 ### A process, a timeline and a comparison
 
@@ -691,6 +725,7 @@ Nothing has to be set up. When a template is loaded, the software reads from the
 | --- | --- |
 | The frame | The layout whose title sits where most of the template's titles sit, when it leaves room under that title. Its background, logo, header and footer texts, page number and title stay; its own content is taken off. |
 | Text styles | The shapes the template's patterns use for running text, headings, big numbers, captions, lists and quotations. Each text of a free slide is a copy of one of them: typeface, colour, weight and line spacing come with it, the line spacing closed up a little where running text gives way. The space between paragraphs is the software's own. |
+| The page | The colour the frame's background shows where content stands, which the texts are chosen to read on: its fill, or of a gradient the colour that stands for three fifths of its length or more (from 0.9.0: a white page with a glow in one corner is a white page), or else the gradient's first colour. |
 | The card | A tinted or outlined box that the template sets text on. |
 | The note | A text the template sets on a box of its own (a takeaway line), or a strongly filled box with the text style used on it. It is set no larger than nine tenths of a heading: the bottom line is not the loudest text of the slide. |
 | The quotation | The template's own quotation. A template without one has it made from its heading: light, in the colour of running text, slanted when the template is read from the left and upright when it is read from the right, whose letters have no slant. |
@@ -841,6 +876,11 @@ A model names the parts in `shows`, as runs of like parts with the `count` of ea
 ```json
 { "pattern": "free", "purpose": "Every store at a glance", "shows": [{ "count": 4, "kind": "chart" }, { "count": 1, "kind": "note" }], "shows_main": "auto", "side_by_side": 2 }
 ```
+
+From 0.9.0 the line that offers free slides says what a low row needs, where notes and figures, phases or
+milestones are on offer: `A slide of one row of figures, phases or milestones alone leaves its lower half
+empty: give it a note under the row, with the point the row makes.` It names those of the three kinds that
+are on offer.
 
 From 0.8.0 the entry may also say what the parts stand on, `"shows_on": "accent"` or `"tint"` (`"plain"`, or
 nothing, for the slide itself). It is read where every part can stand on a band, and kept in the plan as

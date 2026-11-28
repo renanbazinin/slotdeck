@@ -3,6 +3,69 @@
 What changed in each version, newest first, with what to do when upgrading. The version you have installed is
 in `node_modules/slotdeck/package.json`.
 
+## 0.9.0
+
+Free slides use their room. A row of three cards, a few figures or a timeline under a title used to stand
+at the template's own sizes over an empty lower half. Such a slide now sets its text larger, a sentence alone
+is set as a statement, and a planner is told to give a low row its bottom line.
+
+### Changed
+
+- **A free slide whose blocks leave much of its room free sets its text larger.** Where the blocks take
+  less than two thirds of the room's height, every text style is tried at up to one and a half times its
+  size, the largest first, and the first that suits is taken: the blocks are set out as they were, no text is
+  smaller than before, the texts grew together (none more than 1.3 times what another did), a heading of one
+  line is still one line, and nothing that fitted is now over its box. The size of a text still follows the
+  width of its block, so a row of many narrow blocks grows little or not at all, and the title stays the
+  largest text. Cards, steps, figures, phases, milestones, options and notes grow so. A slide with a chart, a
+  table or a picture does not, and neither does a slide of running text, lists or quotations alone. A slide is
+  planned for a writer at the template's own sizes, so what a writer is told always fits. See "A slide that
+  leaves room" in [free-slides.md](free-slides.md).
+- **One note alone is a statement.** A free slide of one note and nothing else sets it at up to seven tenths
+  of the title's size, and no more than twice the size of running text, in up to four lines, where it was a
+  thin band of small text. A slot of such a note is told what those lines hold (163 characters on the demo
+  template, where a bottom line is told 153).
+- **Notes alone sit down their room**, as other blocks that are lower than it do: two fifths of what they
+  leave is above them. They stood under the title.
+- **Where a template's own room ends well short of the page, a low row sits down the room to the page's
+  foot.** Blocks that are lower than their room are settled in the room the template's own layouts use. On a
+  template whose layouts use the upper part of the page, that room ends a tenth of the slide's height or
+  more above the foot of the larger room a full slide may take, and a low row stood over an empty lower
+  third. Such a row is now settled in the room down to that foot. The blocks keep their size, and a template
+  whose own room ends near the foot of the page (the demo template does) sets its slides as before.
+- **A page that is one colour but for a glow in a corner is read by that colour.** The text of a free slide
+  is chosen to read on the page of the slide it stands on. A page with a gradient was read by the gradient's
+  first colour, so a white page with a green glow in one corner was a green page: the dates of a timeline
+  were set in black, and a band of colour was mixed from the green. A gradient in which one colour stands for
+  three fifths of its length or more is now read by that colour. Any other gradient is read by its first
+  colour, as before.
+- **A planner is told what a low row needs.** Where notes and figures, phases or milestones are on offer, the
+  line that offers free slides ends: `A slide of one row of figures, phases or milestones alone leaves its
+  lower half empty: give it a note under the row, with the point the row makes.`
+- **A deck that asks for larger text (`textScale`) never gets smaller text than one that does not**, also
+  now that a slide grows without the wish: such a slide grows from the size the wish gave it, and where the
+  slide without the wish still has some text larger, that slide is made.
+
+### Added
+
+- **`arrange.grow: false`** on a free slide (and `grow` on `freeSlide`): the slide keeps the template's own
+  sizes whatever room its blocks leave, as before 0.9.0.
+
+### Upgrading from 0.8.0
+
+- A stored deck renders again with larger text on its free slides of cards, steps, figures, phases,
+  milestones, options and notes that leave room, and with a lone note as a statement. Nothing that fitted
+  stops fitting. To keep a slide as it was, set `"arrange": { "grow": false }` on it.
+- An app that pins the writer's or the planner's prompts in tests: the line that offers free slides has one
+  more sentence where notes and figures, phases or milestones are on offer.
+- A template whose own layouts keep their content in the upper part of the page: a stored deck renders again
+  with its low rows lower on the slide. Nothing changes its size.
+- A template whose free slides stand on a page with a gradient that is mostly one colour and starts in
+  another: a stored deck renders again with the texts, the band of colour and the strong fills that read on
+  the colour most of the page shows. `manifest.free.styles` still names a style where another is wanted.
+- A prompt for a coding agent that does the upgrade in an app is in
+  [prompts/upgrade-0.9.0.md](prompts/upgrade-0.9.0.md).
+
 ## 0.8.0
 
 Slides that say more at a glance. A text can set the words that carry its point in bold. A free slide can

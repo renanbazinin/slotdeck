@@ -166,6 +166,14 @@ const MOST_READ = 24;
 /** Kinds whose short last line shares the whole width, however few they are: text has no box whose edge would have to line up. */
 const FLOWS = new Set<FreeBlockKind>(['text', 'list', 'quote', 'table']);
 
+/**
+ * The usual room ends short of the page when its foot is this far above the foot of the larger
+ * room, as a fraction of the slide's height, or further: the template's own layouts end their
+ * content there because their sample texts are short, not because the page ends. Blocks are then
+ * settled in the room down to the foot of the larger one (from 0.9.0).
+ */
+const SHORT_ROOM = 0.1;
+
 /** How far down its room a group of blocks sits that takes `used` of a room `height` high. */
 export function settle(used: number, height: number): number {
   const free = height - used;
@@ -458,7 +466,18 @@ export function arrangeBlocks(kinds: readonly FreeBlockKind[], options: ArrangeO
    * before anything grows. `snug` is for the larger room of a crowded slide: its lines of blocks
    * stand closer together.
    */
-  const set = (room: Box, heights: number[], noteGap: number, columns: number | undefined, grow: boolean, snug: boolean): { notes: Placed[]; placed: Placed[]; tiles: boolean; tight: boolean; small: boolean; spare: number } => {
+  const set = (room: Box, heights: number[], noteGap: number, columns: number | undefined, grow: boolean, snug: boolean, below = 0): { notes: Placed[]; placed: Placed[]; tiles: boolean; tight: boolean; small: boolean; spare: number } => {
+    /**
+     * How far down a group sits that takes `used` of a room `height` high (`settle`), in the room
+     * it has and the room under it (`below`, from 0.9.0). The usual room ends where the template's
+     * own layouts end their content, which can be well above the foot of the slide: a template whose
+     * sample texts are short ends it at three quarters of the page. Blocks are sized for that room,
+     * so that a slide has the density of the template's own, but where they sit is judged by the
+     * page: a group settled in the usual room alone hangs in the upper half of it. Only where
+     * the usual room ends short of the page (`SHORT_ROOM`): on a template whose layouts use the
+     * page to its foot `below` is 0, and everything sits where it sat.
+     */
+    const sit = (used: number, height: number): number => settle(used, height + below);
     let box = room;
     const notes: Placed[] = [];
     const rest: Block[] = [];
@@ -474,6 +493,12 @@ export function arrangeBlocks(kinds: readonly FreeBlockKind[], options: ArrangeO
         trailing.push({ block, height });
       }
     });
+    // Notes alone (from 0.9.0) sit a little down their room, as other blocks that are lower than
+    // it do: a statement does not hang under the title over an empty slide.
+    if (rest.length === 0 && notes.length > 0) {
+      const down = sit(box.y - room.y - noteGap, room.h);
+      for (const note of notes) note.box = { ...note.box, y: note.box.y + down };
+    }
     // Notes after the first block stand under the rest; their room is kept free below.
     const kept = trailing.reduce((sum, entry) => sum + entry.height + noteGap, 0);
     const body: Box = { ...box, h: Math.max(0.02, box.h - kept) };
@@ -542,7 +567,7 @@ export function arrangeBlocks(kinds: readonly FreeBlockKind[], options: ArrangeO
     // A slide of nothing but running text, lists, quotations and tables hangs from the top line,
     // as the template's own text layouts do. Blocks that fill their room have their notes at its foot.
     const used = bottomOf();
-    const down = placed.length > 0 && !placed.every((entry) => PROSE.has(entry.kind) || entry.kind === 'table') ? settle(used + kept, box.h) : 0;
+    const down = placed.length > 0 && !placed.every((entry) => PROSE.has(entry.kind) || entry.kind === 'table') ? sit(used + kept, box.h) : 0;
     if (down > 0) for (const entry of placed) entry.box = { ...entry.box, y: entry.box.y + down };
     let y = body.y + down + (placed.length > 0 ? used : body.h) + noteGap;
     for (const { block, height } of trailing) {
@@ -572,6 +597,8 @@ export function arrangeBlocks(kinds: readonly FreeBlockKind[], options: ArrangeO
   const attempt = (top: number, bottom: number, columns: number | undefined, snug = false): { placed: Placed[]; tiles: boolean; tight: boolean; small: boolean; lower: number } => {
     // Heights in slide widths.
     const room: Box = { x: frame.x, y: top / frame.aspect, w: frame.w, h: (bottom - top) / frame.aspect };
+    // The room under this one, where the usual room ends short of the page (`SHORT_ROOM`): blocks are then settled in both.
+    const below = frame.denseBottom - bottom >= SHORT_ROOM - 1e-9 ? (frame.denseBottom - bottom) / frame.aspect : 0;
     // Notes are for the bottom line, not for the slide. When they ask for more than two fifths of
     // the room (NOTES), counting the gap that sets each apart from its neighbour, their text is
     // set smaller, by one factor for every note of the slide, and each is asked again how high it
@@ -610,7 +637,7 @@ export function arrangeBlocks(kinds: readonly FreeBlockKind[], options: ArrangeO
     let fit = fitted(most);
     // Cards grow only on a slide whose notes are as they asked to be: room that is left over
     // goes to notes that were set smaller first.
-    let made = set(room, fit.heights, fit.noteGap, columns, fit.lower >= 1, snug);
+    let made = set(room, fit.heights, fit.noteGap, columns, fit.lower >= 1, snug, below);
     // What the other blocks leave of their share is the notes' again: three low cards do not
     // keep three fifths of a slide empty. No block is made smaller for it. It is asked for again
     // until nothing more comes of it.
@@ -618,7 +645,7 @@ export function arrangeBlocks(kinds: readonly FreeBlockKind[], options: ArrangeO
       const spare = made.spare;
       if (!(spare > 1e-6)) break;
       const more = fitted(fit.heights.reduce((sum, height) => sum + height, 0) + gaps * fit.noteGap + spare);
-      const again = set(room, more.heights, more.noteGap, columns, false, snug);
+      const again = set(room, more.heights, more.noteGap, columns, false, snug, below);
       const before = new Map(made.placed.map((entry) => [entry.index, entry.box]));
       const kept = again.placed.every((entry) => {
         const was = before.get(entry.index);

@@ -4,7 +4,7 @@
 // one a composed layout stands on; everything else is chosen here, by rules that look at how the
 // template's own layouts use their shapes.
 import { contrast, luminance } from '../color/space.ts';
-import { chartColors, fillColor, inheritedBackground, isColor, literalOf, ownBackground, paletteOf, schemeOf } from '../color/recolor.ts';
+import { chartColors, fillColor, isColor, literalOf, pageColor, paletteOf, schemeOf } from '../color/recolor.ts';
 import type { Scheme } from '../color/recolor.ts';
 import type { TemplatePalette } from '../color/palette.ts';
 import type { PptxPackage } from '../pptx/package.ts';
@@ -250,7 +250,8 @@ function scan(template: Template): Scan {
     const root = rootElement(parseXml(xml));
     const elements = indexShapes(root);
     const scheme = schemeOf(pkg, ref.part);
-    const background = ownBackground(root, scheme) ?? inheritedBackground(pkg, ref.part)?.color ?? 'FFFFFF';
+    // The colour the page shows where content stands: of a page that is white but for a glow in a corner, white.
+    const background = pageColor(pkg, ref.part, root).color ?? 'FFFFFF';
     result.backgrounds.set(number, background);
     result.inks.set(number, scheme.resolve('tx1') ?? '000000');
     const patterns = manifest.patterns.filter((pattern) => pattern.sourceSlide === number);
