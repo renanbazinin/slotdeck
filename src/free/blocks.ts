@@ -106,6 +106,8 @@ export interface FreeSlideContent {
   dense?: boolean;
   /** The band of colour the blocks stand on (`FreeArrange.tone`). */
   tone?: FreeArrange['tone'];
+  /** `false` keeps the template's own text sizes where the blocks leave room (`FreeArrange.grow`). */
+  grow?: boolean;
 }
 
 /**
@@ -190,12 +192,13 @@ export function freeSlide(content: FreeSlideContent): SlideSpec {
     }
   });
   const slide: SlideSpec = { pattern: FREE_PATTERN, blocks, slots };
-  if (content.columns !== undefined || content.lead !== undefined || content.dense === true || content.tone !== undefined) {
+  if (content.columns !== undefined || content.lead !== undefined || content.dense === true || content.tone !== undefined || content.grow !== undefined) {
     slide.arrange = {};
     if (content.columns !== undefined) slide.arrange.columns = content.columns;
     if (content.lead !== undefined) slide.arrange.lead = content.lead;
     if (content.dense === true) slide.arrange.dense = true;
     if (content.tone !== undefined) slide.arrange.tone = content.tone;
+    if (content.grow !== undefined) slide.arrange.grow = content.grow;
   }
   if (content.base !== undefined) slide.base = content.base;
   if (content.colors !== undefined) slide.colors = content.colors;
@@ -261,5 +264,6 @@ export function freeContent(slide: SlideSpec): FreeSlideContent {
   if (slide.colors !== undefined) content.colors = slide.colors;
   if (slide.arrange?.dense === true) content.dense = true;
   if (slide.arrange?.tone !== undefined) content.tone = slide.arrange.tone;
+  if (slide.arrange?.grow !== undefined) content.grow = slide.arrange.grow;
   return content;
 }

@@ -735,6 +735,7 @@ interface FreeSlideContent {
   lead?: 'left' | 'right' | 'top' | 'none';   // where the first block stands when it is the main one
   dense?: boolean;                            // a long text a person asked to have whole (FreeArrange.dense); kept both ways
   tone?: 'accent' | 'tint';                   // from 0.8.0: the band of colour the blocks stand on (FreeArrange.tone)
+  grow?: boolean;                             // from 0.9.0: false keeps the template's sizes where the blocks leave room (FreeArrange.grow)
   base?: string;                              // the pattern whose frame the slide stands on
   colors?: DeckColors;                        // colours for this slide alone
 }
@@ -768,11 +769,13 @@ function isFreeSlide(slide: Pick<SlideSpec, 'blocks'>): boolean;
 const FREE_PATTERN: 'free';
 const FREE_BLOCK_KINDS: readonly ['text', 'list', 'card', 'figure', 'step', 'phase', 'milestone', 'option', 'quote', 'note', 'chart', 'table', 'photo', 'graphic'];
 type FreeBlockKind = (typeof FREE_BLOCK_KINDS)[number];
-interface FreeArrange { columns?: number; lead?: 'left' | 'right' | 'top' | 'none'; dense?: boolean; tone?: 'accent' | 'tint' }
+interface FreeArrange { columns?: number; lead?: 'left' | 'right' | 'top' | 'none'; dense?: boolean; tone?: 'accent' | 'tint'; grow?: boolean }
 ```
 
 `phase`, `milestone` and `option` are from 0.8.0, and so is `tone`: the band of colour a slide's blocks stand on
-(see "A band of colour" in [free-slides.md](free-slides.md)).
+(see "A band of colour" in [free-slides.md](free-slides.md)). `grow` is from 0.9.0: left out, a slide whose
+blocks leave much of its room free sets its text larger; `false` keeps the template's sizes (see "A slide that
+leaves room").
 
 A slide is a free slide when it lists `blocks`; its `pattern` is then `FREE_PATTERN`. `FreeArrange` is the type
 of `SlideSpec.arrange`. `dense` is set by the planner on a free slide of one text that carries an amount of text

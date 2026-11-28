@@ -304,6 +304,41 @@ function backgroundSurface(root: Element, scheme: Scheme): Surface | undefined {
   return surfaceOf(childElement(background, NS.p, 'bgPr'), scheme) ?? (own ? [{ hex: own, share: 1 }] : undefined);
 }
 
+/**
+ * A background is mostly one colour when that colour stands for this share of it or more: a
+ * page that is white but for a glow in one corner. Under it a gradient is a blend of its colours,
+ * and is read by its first, as it always was.
+ */
+const MOSTLY = 0.6;
+
+/** The one colour a surface shows over most of it (`MOSTLY`), and the share of it that colour has; `undefined` for a surface that is a blend. */
+function mostOf(surface: Surface | undefined): { hex: string; share: number } | undefined {
+  if (!surface) return undefined;
+  const shares = new Map<string, number>();
+  for (const { hex, share } of surface) shares.set(hex.toUpperCase(), (shares.get(hex.toUpperCase()) ?? 0) + share);
+  const [hex, share] = [...shares].sort((a, b) => b[1] - a[1])[0] ?? [];
+  return hex !== undefined && share !== undefined && share >= MOSTLY ? { hex, share } : undefined;
+}
+
+/**
+ * The colour a slide's page shows where its content stands (from 0.9.0): its own background or
+ * the one it inherits; of a gradient that is mostly one colour (a white page with a glow in a
+ * corner), that colour, and of any other gradient its first colour, as `ownBackground` and
+ * `inheritedBackground` give it. `glow` is there for such a page that is mostly one colour and
+ * not all of it: the share of the page that colour has.
+ *
+ * A free slide chooses its text by this: read by its first colour, a white page with a green glow
+ * in one corner was a green page, and its dates were set in black on white.
+ */
+export function pageColor(pkg: PptxPackage, slidePart: string, root: Element): { color: string | undefined; glow?: number } {
+  const scheme = schemeOf(pkg, slidePart);
+  const inherited = path(root, [NS.p, 'cSld'], [NS.p, 'bg']) ? undefined : inheritedBackground(pkg, slidePart);
+  const surface = backgroundSurface(root, scheme) ?? inherited?.surface;
+  const most = mostOf(surface);
+  if (most) return { color: most.hex, ...(surface && surface.length > 1 && most.share < 1 - 1e-9 ? { glow: most.share } : {}) };
+  return { color: ownBackground(root, scheme) ?? inherited?.color };
+}
+
 /** The colour of a slide's own background, when it states one. */
 export function ownBackground(root: Element, scheme: Scheme): string | undefined {
   const background = path(root, [NS.p, 'cSld'], [NS.p, 'bg']);

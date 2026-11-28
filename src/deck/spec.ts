@@ -105,6 +105,15 @@ export interface FreeArrange {
    * out as without it. Left out, the blocks stand on the slide itself. From 0.8.0.
    */
   tone?: 'accent' | 'tint';
+  /**
+   * `false` keeps the template's own text sizes on a slide whose blocks leave much of its room
+   * free. Left out, such a slide sets its text larger, by up to half, where the width of its
+   * blocks holds larger text and what is written still fits: three cards under a title are not
+   * three small cards over an empty half. Never on a slide with a chart, a table or a picture,
+   * which take the room there is, nor on a slide of running text, lists or quotations alone,
+   * which hang from the top line as the template's own text layouts do. From 0.9.0.
+   */
+  grow?: boolean;
 }
 
 /** The kinds of block a band of colour can carry (`FreeArrange.tone`): those whose text stands on the slide itself, or on a box the software may leave out. */

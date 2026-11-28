@@ -239,6 +239,11 @@ export function freeLine(
     }
     const most = options.comfortable ?? 3;
     sentences.push(`About ${most} ${most === 1 ? 'part reads' : 'parts read'} well at the template's text size; more are set smaller, so plan more only when the ${options.asked ?? 'brief'} asks for them.`);
+    // A row of small parts is low, whatever size its text is set at: what fills the slide is one part more.
+    const low = [kinds.includes('figure') ? 'figures' : '', kinds.includes('phase') ? 'phases' : '', kinds.includes('milestone') ? 'milestones' : ''].filter(Boolean);
+    if (low.length > 0 && kinds.includes('note')) {
+      sentences.push(`A slide of one row of ${low.length < 2 ? low.join('') : `${low.slice(0, -1).join(', ')} or ${low.at(-1)}`} alone leaves its lower half empty: give it a note under the row, with the point the row makes.`);
+    }
   }
   if (options.plain) sentences.push('Plain text.');
   return `- ${FREE_PATTERN}: ${sentences.join(' ')}`;

@@ -71,7 +71,9 @@ const KINDS = 'text (running text, with a heading when there are several), list 
 const FREE_LINE =
   `- free: A slide the software lays out itself from the parts you name in "shows", any number of each: ${KINDS}. ` +
   'Only for content that no layout above shows: several pictures on one slide, a process as a chain of arrows, a timeline or a comparison of options, more items than a layout takes, or parts that no layout combines. ' +
-  "A slide that a layout above shows well uses that layout. About 8 parts read well at the template's text size; more are set smaller, so plan more only when the brief asks for them.";
+  "A slide that a layout above shows well uses that layout. About 8 parts read well at the template's text size; more are set smaller, so plan more only when the brief asks for them. A slide of one row of phases or milestones alone leaves its lower half empty: give it a note under the row, with the point the row makes.";
+// From 0.9.0 the line ends with what a low row needs; with numbers in the brief it names figures too.
+const LOW_ROW = /\. A slide of one row of (figures, )?phases or milestones alone leaves its lower half empty: give it a note under the row, with the point the row makes\.$/;
 const PARTS_RULE =
   '- A slide with the layout free names its parts in "shows", in reading order. A number of things the brief asks to see on one slide (twelve charts, forty logos) is that number of parts, however many.';
 const KEEP_PARTS_RULE = '- A slide with the layout free names its parts in "shows". Repeat them exactly as the plan has them unless the request changes what that slide shows.';
@@ -364,7 +366,7 @@ test('a list may name free slides, alone or with patterns, and a list that canno
   assert.deepEqual(offered(alone.requests[0]), ['free']);
   assert.equal(
     freeLineOf(alone.requests[0]),
-    `- free: A slide the software lays out itself from the parts you name in "shows", any number of each: ${KINDS}. About 8 parts read well at the template's text size; more are set smaller, so plan more only when the brief asks for them.`,
+    `- free: A slide the software lays out itself from the parts you name in "shows", any number of each: ${KINDS}. About 8 parts read well at the template's text size; more are set smaller, so plan more only when the brief asks for them. A slide of one row of phases or milestones alone leaves its lower half empty: give it a note under the row, with the point the row makes.`,
   );
   assert.doesNotMatch(promptOf(alone.requests[0]), /layout above|- content: |- cards: /);
   assert.ok(!('items' in entryOf(alone.requests[0]).properties), 'no row of items is on offer');
@@ -450,7 +452,7 @@ test('a change to a plan lists a free slide with its parts, and keeps them unles
   const first = await editPlan(template, plan, 'Open with the closing slide', { llm: kept.llm });
   assert.match(promptOf(kept.requests[0]), /\n1\. cards \(2 items\): Two things\n2\. free \(6 charts and a note; 3 side by side; main part at the left\): Six store charts\n\nRequested change:/);
   assert.equal(rulesOf(kept.requests[0])[2], KEEP_PARTS_RULE);
-  assert.match(freeLineOf(kept.requests[0]) ?? '', /so plan more only when the request asks for them\.$/);
+  assert.match((freeLineOf(kept.requests[0]) ?? '').replace(LOW_ROW, '.'), /so plan more only when the request asks for them\.$/);
   assert.deepEqual(first.plan.slides, [{ pattern: 'closing', purpose: 'Thanks' }, plan.slides[1], plan.slides[0]]);
   assert.equal(kept.requests.length, 1, 'no second call for it');
   // One schema for a slide of a plan, new or changed.
@@ -1395,7 +1397,7 @@ test('a change to a deck lists a free slide by its parts, without their data, an
     ),
     prompt.slice(-1600),
   );
-  assert.match(freeLineOf(requests[0]) ?? '', /^- free: A slide the software lays out itself from the parts you name in "parts", any number of each: text \(.* so plan more only when the request asks for them\.$/);
+  assert.match((freeLineOf(requests[0]) ?? '').replace(LOW_ROW, '.'), /^- free: A slide the software lays out itself from the parts you name in "parts", any number of each: text \(.* so plan more only when the request asks for them\.$/);
   assert.ok(prompt.endsWith(freeLineOf(requests[0]) ?? 'no line for free slides'));
 
   // An entry: what it was, and three properties that every slide answers. Its parts are named one by one.
