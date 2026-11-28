@@ -11,7 +11,7 @@ import { placeholderPhoto } from '../examples/placeholder.ts';
 import { PlanError, TOOL_NAMES, editPlan, freeSlide, generateDeck, loadTemplate, memoryStore, planDeck, planEdit, planOutline, presentationTools, renderDeck, resolveAssets, storeKeys, validateDeck, writeDeck } from '../src/index.ts';
 import type { Brief, ChartValue, DeckPlan, DeckSpec, FreeBlockKind, Issue, JsonRequest, LlmProvider, OutlineEntry, SlideSpec, TemplateManifest } from '../src/index.ts';
 import { freePattern } from '../src/free/offer.ts';
-import { slotNote } from '../src/plan/catalog.ts';
+import { SHOWS_ON_NOTE, slotNote } from '../src/plan/catalog.ts';
 import type { CatalogContext } from '../src/plan/catalog.ts';
 import { freeWritePattern } from '../src/plan/free.ts';
 import { partRanges, rangeSchema, readRange } from '../src/plan/parts.ts';
@@ -66,11 +66,11 @@ const freeEntry = (purpose: string, shows: Array<[kind: string, number: number]>
   entry('free', purpose, { shows: shows.map(([kind, number]) => ({ kind, number })), shows_main: main, side_by_side: side });
 const outlineOf = (...slides: unknown[]) => ({ title: 'Dogs', slides });
 
-const KINDS = 'text (running text, with a heading when there are several), list (a list of short points), card (a heading and a short text in a box), step (a numbered step: a heading and a short text), quote (a quotation), note (one highlighted line across the slide, for the bottom line), photo (a photo)';
+const KINDS = 'text (running text, with a heading when there are several), list (a list of short points), card (a heading and a short text in a box), step (a numbered step: a heading and a short text), phase (one link of a process, drawn as a chain of arrows: its name on the arrow and a short text under it. For three to six phases that follow one another), milestone (one point on a timeline: when, what happened, and a short text. For three to six dated events in order), option (one of two to four things set side by side to compare: its name and a few short points; the recommended one may carry a badge), quote (a quotation), note (one highlighted line across the slide, for the bottom line), photo (a photo)';
 // The brief of the fixture has no number, so neither charts nor tables are on offer: of the three, the line names pictures alone.
 const FREE_LINE =
   `- free: A slide the software lays out itself from the parts you name in "shows", any number of each: ${KINDS}. ` +
-  'Only for content that no layout above shows: several pictures on one slide, more items than a layout takes, or parts that no layout combines. ' +
+  'Only for content that no layout above shows: several pictures on one slide, a process as a chain of arrows, a timeline or a comparison of options, more items than a layout takes, or parts that no layout combines. ' +
   "A slide that a layout above shows well uses that layout. About 8 parts read well at the template's text size; more are set smaller, so plan more only when the brief asks for them.";
 const PARTS_RULE =
   '- A slide with the layout free names its parts in "shows", in reading order. A number of things the brief asks to see on one slide (twelve charts, forty logos) is that number of parts, however many.';
@@ -201,7 +201,7 @@ test('the outline offers free slides after the template\'s patterns, and reads t
           type: 'object',
           properties: {
             count: { type: 'integer', minimum: 1, description: 'How many parts of this kind stand here, one after another: 8 for eight charts. One entry for them all, not one entry for each.' },
-            kind: { type: 'string', enum: ['text', 'list', 'card', 'step', 'quote', 'note', 'photo'] },
+            kind: { type: 'string', enum: ['text', 'list', 'card', 'step', 'phase', 'milestone', 'option', 'quote', 'note', 'photo'] },
           },
           required: ['count', 'kind'],
         },
@@ -212,11 +212,13 @@ test('the outline offers free slides after the template\'s patterns, and reads t
         description: 'Only for free: where the first part stands when it is the main one and larger. auto lets the software decide; none sets all parts alike.',
       },
       side_by_side: { type: 'integer', minimum: 0, description: 'Only for free, when the brief asks for a number of columns; 0 lets the software decide.' },
+      // From 0.8.0, and asked of no slide: one that does not say stands on the slide itself.
+      shows_on: { type: 'string', enum: ['plain', 'accent', 'tint'], description: SHOWS_ON_NOTE },
       words: WORDS,
     },
     required: ['pattern', 'purpose', 'shows', 'shows_main', 'side_by_side'],
   });
-  assert.deepEqual(Object.keys(entryOf(requests[0]).properties), ['pattern', 'purpose', 'items', 'shows', 'shows_main', 'side_by_side', 'words']);
+  assert.deepEqual(Object.keys(entryOf(requests[0]).properties), ['pattern', 'purpose', 'items', 'shows', 'shows_main', 'side_by_side', 'shows_on', 'words']);
   const declared = JSON.stringify(entryOf(requests[0]));
   for (const word of ['anyOf', 'oneOf', '"pattern":{"type":"string","pattern"', '"format"', '"enum":[]', 'minItems', 'maxItems']) assert.ok(!declared.includes(word), word);
   // Room for a plan of two slides, and for the parts each may name.
@@ -235,7 +237,7 @@ test('the outline offers free slides after the template\'s patterns, and reads t
   const numbers = scripted(outlineOf(freeEntry('Sales', [['chart', 2]], 'auto', 0)));
   const graphic = { id: 'map', kind: 'graphic' as const, description: 'A map', data: new Uint8Array([1]) };
   const charted = await planOutline(template, { ...brief, prompt: 'Sales grew from 10 to 14', imageDensity: 'none', slideCount: 1 }, { llm: numbers.llm, assets: [graphic] });
-  assert.deepEqual(kindsOf(numbers.requests[0]), ['text', 'list', 'card', 'figure', 'step', 'quote', 'note', 'chart', 'table', 'graphic']);
+  assert.deepEqual(kindsOf(numbers.requests[0]), ['text', 'list', 'card', 'figure', 'step', 'phase', 'milestone', 'option', 'quote', 'note', 'chart', 'table', 'graphic']);
   assert.match(freeLineOf(numbers.requests[0]) ?? '', /figure \(one big number and what it counts\), .*chart \(a chart of numbers the brief states\), table \(a table\), graphic \(one of the supplied graphics, shown whole\)\. Only for content/);
   assert.deepEqual(charted.slides, [{ pattern: 'free', purpose: 'Sales', blocks: ['chart', 'chart'] }], 'auto and 0 leave the arrangement to the software');
   assert.equal(rulesOf(numbers.requests[0]).at(-1), '- Do not plan any photos.', 'the sentence it always was');
@@ -247,7 +249,7 @@ test('the outline offers free slides after the template\'s patterns, and reads t
     await planOutline(template, { ...brief, slideCount: 1, ...more }, { llm, ...options });
     return /Only for content that no layout above shows: (.*?)\. A slide that a layout above shows well uses that layout\./.exec(freeLineOf(requests[0]) ?? '')?.[1];
   };
-  const rest = 'more items than a layout takes, or parts that no layout combines';
+  const rest = 'a process as a chain of arrows, a timeline or a comparison of options, more items than a layout takes, or parts that no layout combines';
   assert.equal(await forWhat({ prompt: 'Sales grew from 10 to 14' }), `several charts, tables or pictures on one slide, ${rest}`);
   assert.equal(await forWhat({ prompt: 'Sales grew from 10 to 14', imageDensity: 'none' }), `several charts or tables on one slide, ${rest}`);
   assert.equal(await forWhat({ prompt: 'Sales grew from 10 to 14', imageDensity: 'none' }, { assets: [graphic] }), `several charts, tables or pictures on one slide, ${rest}`, 'a supplied graphic is a picture');
@@ -1405,7 +1407,7 @@ test('a change to a deck lists a free slide by its parts, without their data, an
     description: PARTS_NOTE,
     items: {
       type: 'object',
-      properties: { from: { type: 'integer', minimum: 0 }, kind: { type: 'string', enum: ['text', 'list', 'card', 'figure', 'step', 'quote', 'note', 'chart', 'table', 'photo'] }, rewrite: { type: 'boolean' } },
+      properties: { from: { type: 'integer', minimum: 0 }, kind: { type: 'string', enum: ['text', 'list', 'card', 'figure', 'step', 'phase', 'milestone', 'option', 'quote', 'note', 'chart', 'table', 'photo'] }, rewrite: { type: 'boolean' } },
       required: ['from', 'kind', 'rewrite'],
     },
   });
@@ -2396,7 +2398,7 @@ test('what a plan says wrongly of the parts of a free slide is asked for once mo
   const charts = { summary: 'Done.', language: 'en', title: 'Dogs', text_size: 'normal', fields, slides: [stay(1, 'cards'), stay(0, 'free', { change: 'Why dogs', parts: [part(0, 'chart', true), part(0, 'note', true)] }), stay(2, 'closing')] };
   const none = scripted(charts, { s2: { b1Text: 'Because.' } });
   const noted = await planEdit(template, wordy, 'Add a slide on why dogs', { llm: none.llm });
-  assert.deepEqual(entryOf(none.requests[0]).properties.parts?.items?.properties.kind?.enum, ['text', 'list', 'card', 'step', 'quote', 'note', 'photo']);
+  assert.deepEqual(entryOf(none.requests[0]).properties.parts?.items?.properties.kind?.enum, ['text', 'list', 'card', 'step', 'phase', 'milestone', 'option', 'quote', 'note', 'photo']);
   assert.deepEqual(noted.deck.slides[1]?.blocks, ['note']);
 });
 

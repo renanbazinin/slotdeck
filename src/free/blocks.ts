@@ -24,6 +24,9 @@ export const FREE_PARTS: Record<FreeBlockKind, readonly FreePart[]> = {
   card: [part('Icon', 'icon', false), part('Heading', 'text'), part('Text', 'text')],
   figure: [part('Value', 'text'), part('Label', 'text')],
   step: [part('Heading', 'text'), part('Text', 'text')],
+  phase: [part('Heading', 'text'), part('Text', 'text', false)],
+  milestone: [part('When', 'text'), part('Heading', 'text'), part('Text', 'text', false)],
+  option: [part('Badge', 'text', false), part('Heading', 'text'), part('Items', 'paragraphs')],
   quote: [part('Quote', 'text'), part('Source', 'text', false)],
   note: [part('Text', 'text')],
   chart: [part('Caption', 'text', false), part('Chart', 'chart')],
@@ -78,6 +81,9 @@ export type FreeBlockContent =
   | { card: { heading: string; text: string; icon?: Picture } }
   | { figure: { value: string; label: string } }
   | { step: { heading: string; text: string } }
+  | { phase: { heading: string; text?: string } }
+  | { milestone: { when: string; heading: string; text?: string } }
+  | { option: { heading: string; points: string[]; badge?: string } }
   | { quote: string; source?: string }
   | { note: string }
   | { chart: ChartValue; caption?: string }
@@ -98,6 +104,8 @@ export interface FreeSlideContent {
   colors?: DeckColors;
   /** The slide carries a long text a person asked to have whole (`FreeArrange.dense`): kept when code changes its blocks. */
   dense?: boolean;
+  /** The band of colour the blocks stand on (`FreeArrange.tone`). */
+  tone?: FreeArrange['tone'];
 }
 
 /**
@@ -140,6 +148,20 @@ export function freeSlide(content: FreeSlideContent): SlideSpec {
       blocks.push('step');
       set('Heading', given.step.heading);
       set('Text', given.step.text);
+    } else if ('phase' in given) {
+      blocks.push('phase');
+      set('Heading', given.phase.heading);
+      set('Text', given.phase.text);
+    } else if ('milestone' in given) {
+      blocks.push('milestone');
+      set('When', given.milestone.when);
+      set('Heading', given.milestone.heading);
+      set('Text', given.milestone.text);
+    } else if ('option' in given) {
+      blocks.push('option');
+      set('Badge', given.option.badge);
+      set('Heading', given.option.heading);
+      set('Items', given.option.points);
     } else if ('quote' in given) {
       blocks.push('quote');
       set('Quote', given.quote);
@@ -168,11 +190,12 @@ export function freeSlide(content: FreeSlideContent): SlideSpec {
     }
   });
   const slide: SlideSpec = { pattern: FREE_PATTERN, blocks, slots };
-  if (content.columns !== undefined || content.lead !== undefined || content.dense === true) {
+  if (content.columns !== undefined || content.lead !== undefined || content.dense === true || content.tone !== undefined) {
     slide.arrange = {};
     if (content.columns !== undefined) slide.arrange.columns = content.columns;
     if (content.lead !== undefined) slide.arrange.lead = content.lead;
     if (content.dense === true) slide.arrange.dense = true;
+    if (content.tone !== undefined) slide.arrange.tone = content.tone;
   }
   if (content.base !== undefined) slide.base = content.base;
   if (content.colors !== undefined) slide.colors = content.colors;
@@ -210,6 +233,12 @@ export function freeContent(slide: SlideSpec): FreeSlideContent {
         return { figure: { value: text(at('Value')), label: text(at('Label')) } };
       case 'step':
         return { step: { heading: text(at('Heading')), text: text(at('Text')) } };
+      case 'phase':
+        return { phase: optional({ heading: text(at('Heading')) }, 'text', at('Text')) };
+      case 'milestone':
+        return { milestone: optional({ when: text(at('When')), heading: text(at('Heading')) }, 'text', at('Text')) };
+      case 'option':
+        return { option: optional({ heading: text(at('Heading')), points: lines(at('Items')) }, 'badge', at('Badge')) };
       case 'quote':
         return optional({ quote: text(at('Quote')) }, 'source', at('Source'));
       case 'note':
@@ -231,5 +260,6 @@ export function freeContent(slide: SlideSpec): FreeSlideContent {
   if (slide.base !== undefined) content.base = slide.base;
   if (slide.colors !== undefined) content.colors = slide.colors;
   if (slide.arrange?.dense === true) content.dense = true;
+  if (slide.arrange?.tone !== undefined) content.tone = slide.arrange.tone;
   return content;
 }

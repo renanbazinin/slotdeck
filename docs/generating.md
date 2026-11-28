@@ -58,6 +58,7 @@ It runs `planDeck`, then `resolveAssets`, then `renderDeck`.
 | `composeLayouts` | number | 0 (off) | Up to this many new layouts may be made for the deck, in the template's own look, for slides that none of its layouts shows well. About 10 to 25 seconds more. None is made while free slides are on offer. See "New layouts for a deck" below. |
 | `free` | boolean | `true` | Whether a slide may be a free slide: one the software lays out itself from the parts the plan names, for content that no pattern shows. `false` turns them off. See "Free slides" below. |
 | `delivery` | `"present"` or `"read"` | `present` | How the decks are used. `read`, for decks that are mailed and read on their own: full sentences where a slot says nothing of how much to write, no closing slide of thanks or questions, and an agenda only in a deck of more than ten slides. Set it once for an app whose decks are read. From 0.7.0. |
+| `emphasis` | boolean | `true` | Whether the writer may set a phrase in bold: the two or three words or the one figure that carry a point, written `**like this**`. It is told to use the mark sparingly. `false` tells it plain text only, as before 0.8.0. See "Strong phrases" in [deck-format.md](deck-format.md). |
 | `properties` | `DeckProperties` or `false` | `{}` | What the file says of itself: its title, language, number of slides and the version that made it, in place of the template's (see "File properties" in [rendering.md](rendering.md)). `false` keeps the template's. From 0.7.0. |
 | `countSpacing` | boolean | `true` | Whether the writer of a layout's slot of paragraphs is told what its box holds, the template's own spacing counted. `false` tells every slot its stored budget, as 0.6.7 did. See "What a writer is told a layout holds" below. |
 | `cache` | `Map<string, Uint8Array>` | none | Generated pictures by asset id. Pass the same map on later calls and pictures whose description did not change are reused. |
@@ -90,6 +91,86 @@ const { pptx, deck, warnings } = await generateDeck(
   },
 );
 ```
+
+### Your own icons and pictures
+
+An app brings its own pictures in two lists. `icons` is its icon set: the small pictograms a model puts on
+cards and lists. `assets` is everything else it already has: photographs, and pictures to show whole such as
+diagrams, screenshots and logos. Both are plain lists of `{ id, description, data }`, so they can come from
+anywhere. Most apps keep them in a folder, and from 0.8.0 `slotdeck/node` reads one:
+
+```ts
+import { iconFiles, assetFiles } from 'slotdeck/node';
+
+const icons = iconFiles('/app/assets/icons');                // every PNG, JPEG and GIF in the folder
+const assets = [
+  ...assetFiles('/app/assets/photos', 'photo'),              // photographs: fill their frame, may be cropped
+  ...assetFiles('/app/assets/diagrams', 'graphic'),          // shown whole: diagrams, screenshots, logos
+];
+
+const tools = presentationTools({ template, llm, store, icons, assets });
+// or: generateDeck(template, brief, { llm, icons, assets })
+```
+
+**The folder.** One folder holds one kind of picture: keep the icons apart from the photographs.
+
+```text
+assets/icons/
+  clock.png          the id is the file name without its ending: "clock"
+  handshake.png
+  money-bag.png
+  icons.json         what each icon shows (optional, and worth writing)
+```
+
+- **Formats.** PNG, JPEG and GIF. An SVG, a WebP or an icon font is not read: save each icon as a PNG, with a
+  transparent background, at 256 pixels or more so that it stays sharp on a large card. `onSkipped` is told of
+  every file that is passed over, and why.
+- **Ids.** A picture is known by its file name without the ending. That id is what a deck's JSON stores, so a
+  file that is renamed later is another picture to every deck made before. Two pictures of one id are an
+  `Error` that names both files.
+- **Folders inside the folder** are read with `recursive: true`. The id is still the file's own name.
+
+**Descriptions decide which icon is chosen.** A model never sees the pictures: it picks an icon by its
+`description` and nothing else. Say what the icon shows and what it stands for, in the language you would
+search for it:
+
+```json
+{
+  "clock": "a clock: time, schedule, duration, deadline",
+  "handshake": "two hands shaking: agreement, partnership, a deal, trust",
+  "money-bag": "a bag of money: cost, budget, savings, price"
+}
+```
+
+- That file is `icons.json` in the icon folder, or `assets.json` in a folder read with `assetFiles`. It may be
+  an object as above, or a list of `{ "id", "description" }`. A line of a list may name its `file` where the
+  file is not named after the id: `{ "id": "handshake", "file": "IMG_0042.png", "description": "..." }`.
+- Another file is named with `descriptions: 'he.json'`, and an object can be given in code:
+  `iconFiles(folder, { descriptions: { clock: 'a clock: time' } })`.
+- An icon without a line is described by the words of its file name (`money-bag_2.png` is "money bag 2"). That
+  is a start: an icon set named `ic_24_a.png` needs its lines written.
+- Descriptions may be in any language. Write them in the language most briefs are in, or in English: a model
+  matches a Hebrew slide to an English description well.
+- A few dozen well-described icons serve better than hundreds. When a deck with icons is written, every
+  icon's line goes to the model (roughly 20 tokens each), and its id once more for every icon slot of the deck.
+
+**The same lists at every step.** A deck stores the ids of its pictures, not the pictures. Whatever makes the
+file needs them again: `presentationTools` keeps them for all its tools, `generateDeck` and `editDeck` take
+them as options, and code that renders a stored deck collects them first:
+
+```ts
+const pictures = await resolveAssets(template, deck, { icons, assets, images });
+const { pptx } = renderDeck(template, deck, { assets: pictures });
+```
+
+Read the folders once when the app starts, not for every request: the lists are held in memory. An icon that
+a stored deck names and that is gone from the folder stops the render with `asset "x" was not provided`.
+
+**What happens to an icon on a slide.** It is shown whole in its frame, not cropped, unless the template's slot
+says otherwise (`fit`). A deck in other colours
+than the template's (`colors`) recolours an icon whose pixels are the template's colours, with the rest of the
+slide. A template whose layouts have icon slots is offered those layouts only when an icon set is given (see
+[troubleshooting.md](troubleshooting.md)).
 
 ## How planning works
 
@@ -507,6 +588,13 @@ const plan = await planOutline(template, { prompt: 'Sales by quarter for each of
   as that many parts.
 - A number of things the brief asks to see on one slide is that number of parts, however many: "all twelve
   store charts on one slide" is twelve charts.
+- From 0.8.0 a slide may say what its parts stand on (`shows_on`): `plain`, the slide itself, or a band of the
+  template's colour, `accent` or `tint`. No slide has to say, and code keeps the bands few: never two such
+  slides in a row, no more than one slide in four, and none on a slide with a chart, a table, a picture or
+  options. The plan keeps it as `arrange.tone`.
+- From 0.8.0 the line also names what a free slide can draw: a process as a chain of arrows (`phase`), a
+  timeline (`milestone`) and a comparison of options (`option`). A template with a layout for one of these is
+  planned with its layout.
 - The kinds on offer follow what the deck has. Figures, charts and tables need digits in the brief
   (`numberPatterns`), a photo needs an `imageDensity` other than `none`, a graphic needs a supplied asset of kind
   `graphic`, and a card is offered an icon only with `icons`. A text-only deck is offered texts, lists,

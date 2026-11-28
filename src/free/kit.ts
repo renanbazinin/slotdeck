@@ -115,6 +115,15 @@ export interface FreeKit {
   /** How a chart is drawn: the colours of its series, its text and its lines. */
   chart: Pick<ChartSlotDef, 'colors' | 'text' | 'lineColor'>;
   palette: TemplatePalette;
+  /**
+   * The band of colour the blocks of a slide stand on (`FreeArrange.tone`): its fill, the room
+   * kept between its edge and the blocks as a fraction of the slide's width, and the template's
+   * panel it is a copy of, for its corners, where the template has one. Only on the kit a toned
+   * slide is planned with (`tonedKit` in plan.ts). `icons` says whether a card on it may carry its
+   * icon: not on a band in the template's main colour, where an icon drawn for a light page does
+   * not read.
+   */
+  ground?: { fill: string; pad: number; icons: boolean; from?: FreeShapeStyle };
 }
 
 const right = (box: Box) => box.x + box.w;

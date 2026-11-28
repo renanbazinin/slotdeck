@@ -5,7 +5,7 @@
 //
 // Lengths in this file are points on the slide.
 import { contrast, mix, readable } from '../color/space.ts';
-import { FREE_PATTERN } from '../deck/spec.ts';
+import { FREE_PATTERN, freeTone } from '../deck/spec.ts';
 import type { FreeArrange, FreeBlockKind, SlideSpec, SlotValue } from '../deck/spec.ts';
 import { isChartValue, isTableValue, isTextValue, knownValues, plainText, toParagraphs } from '../deck/spec.ts';
 import type { ChartValue } from '../deck/spec.ts';
@@ -25,7 +25,7 @@ import type { FreeLayout, LaidBlock } from './layout.ts';
 export interface MadeShape {
   id: string;
   name: string;
-  kind: 'text' | 'panel' | 'rule' | 'picture' | 'anchor' | 'table' | 'key';
+  kind: 'text' | 'panel' | 'rule' | 'picture' | 'anchor' | 'table' | 'key' | 'drawn';
   /** The template shape it is a copy of. A table without one is drawn by the code. */
   from?: { slide: number; shapeId: string };
   box: SlideBox;
@@ -33,8 +33,22 @@ export interface MadeShape {
   size?: number;
   bold?: boolean;
   italic?: boolean;
-  /** The colour of a text, or the fill of a key: the small square that stands for a series in the legend of a slide. */
+  /**
+   * The colour of a text; the fill of a key, the small square that stands for a series in the
+   * legend of a slide; the fill of a shape the code draws (`drawn`); or, on a panel, the fill it
+   * is given in place of the template's: the ground of the option a comparison picks out.
+   */
   color?: string;
+  /** A shape the code draws (`drawn`): its outline, one of PowerPoint's own. A `chevron` and a `homePlate` point where reading goes. */
+  geometry?: 'rect' | 'roundRect' | 'ellipse' | 'chevron' | 'homePlate';
+  /** Of a `chevron` or a `homePlate`: how deep its point is, in points. */
+  point?: number;
+  /** A shape the code draws is mirrored: the arrow of a phase in a deck read from the right. */
+  flip?: boolean;
+  /** It may reach past the edge of its block into the gap beside it: the point of an arrow, towards the next. */
+  loose?: boolean;
+  /** Text with bullets: its bullets take the colour of the text, whatever colour its source gives them. */
+  bulletsFollow?: boolean;
   /** `own`: the source's bullets, set for the new size. `add`: bullets the code makes. `none`: the source has bullets and the copy has none. */
   bullets?: 'own' | 'add' | 'none';
   align?: 'start' | 'ctr';
@@ -590,8 +604,8 @@ function listCapacity(width: number, height: number, size: number, points: numbe
  * While a slide is planned there is no content. Every text is then taken to be as long as texts
  * of its kind usually are, in characters, paragraph by paragraph: a card or a step says about 70
  * characters, a quotation about 100, a list has about four points of 35, running text about 300,
- * a note 110, a figure five. The parts that are not named here are short and fit by their width
- * alone.
+ * a note 110, a figure five, the text of a phase or a milestone about 60, an option four points
+ * of 30. The parts that are not named here are short and fit by their width alone.
  */
 const USUAL: Partial<Record<FreeBlockKind, Record<string, readonly number[]>>> = {
   card: { Text: [70] },
@@ -601,6 +615,9 @@ const USUAL: Partial<Record<FreeBlockKind, Record<string, readonly number[]>>> =
   text: { Text: [300] },
   note: { Text: [110] },
   figure: { Value: [5] },
+  phase: { Text: [60] },
+  milestone: { When: [8], Text: [60] },
+  option: { Badge: [11], Items: [30, 30, 30, 30] },
 };
 /** What a writer is told at the least for a text whose box holds no line: nobody can write to one character. */
 const LEAST_SAID = 12;
@@ -759,7 +776,10 @@ interface SlideLegend {
  * Works a free slide out: where its blocks go, the shapes to make, and the pattern whose slots
  * hold its content. The same slide and template always give the same plan.
  */
-export function freePlan(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 'slots' | 'headings'>, context: FreeContext): FreePlan {
+export function freePlan(given: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 'slots' | 'headings'>, context: FreeContext): FreePlan {
+  // A slide whose blocks stand on a band of colour is planned as on a frame of that colour, in the room the band leaves them.
+  const tone = freeTone(slide);
+  const kit = tone ? tonedKit(given, tone) : given;
   let plan = planWith(kit, slide, context, undefined, false) as Planned;
   // Card text longer than its budget that had to be drawn smaller to stay inside its card makes
   // the slide crowded: it is set out again in the larger room, where the cards are higher, and
@@ -783,6 +803,60 @@ export function freePlan(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrang
   delete chosen.squeezed;
   delete chosen.cramped;
   return chosen;
+}
+
+/**
+ * The colour a phrase set strong takes on a free slide when it has a number in it (`**34%** of
+ * all rides`), as six hex digits: the template's accent, the colour of its big numbers, where it
+ * reads on the slide and on its cards and is not the colour of running text already. `undefined`
+ * where it is not: such a phrase is then bold like any other. No plan holds it: a slide is laid
+ * out the same with and without such phrases, and the renderer asks when it sets one.
+ */
+export function freeStrongColor(kit: FreeKit): string | undefined {
+  const accent = (kit.styles.figure.set?.color ?? kit.styles.figure.color).toUpperCase();
+  const body = (kit.styles.body.set?.color ?? kit.styles.body.color).toUpperCase();
+  return accent !== body && contrast(accent, kit.background) >= 3 && (!kit.panel?.fill || contrast(accent, kit.panel.fill) >= 3) ? accent : undefined;
+}
+
+/** How much room a band of colour keeps between its edge and the blocks on it, as a fraction of the slide's width. */
+const GROUND_PAD = 0.022;
+/** How much of the template's main colour a tinted band has; the rest is the slide's own background. */
+const GROUND_TINT = 0.1;
+
+/**
+ * The kit a slide is planned with whose blocks stand on a band of colour (`FreeArrange.tone`): the
+ * template's kit as if its frame had that colour behind it, in the room the band leaves. Its texts
+ * are given a colour that reads on the band where their own does not (on a band in the main
+ * colour: white where white reads, on every text). Nothing on such a slide is drawn on a panel of
+ * the template: a panel was made for the slide's own background, and so were its note and its
+ * rule. A card is then a heading and its text, and a note a line in the heading's style.
+ */
+function tonedKit(kit: FreeKit, tone: 'accent' | 'tint'): FreeKit {
+  const figure = kit.styles.figure.set?.color ?? kit.styles.figure.color;
+  const main = [kit.palette.accent, figure, kit.ink].find((hex): hex is string => !!hex && contrast(hex, kit.background) >= 2) ?? kit.ink;
+  const fill = (tone === 'accent' ? main : mix(main, kit.background, GROUND_TINT)).toUpperCase();
+  // On the main colour every text has one colour: white where white reads there, as most templates set a line on their colour.
+  const one = tone === 'accent' ? (contrast('FFFFFF', fill) >= 3 ? 'FFFFFF' : readable(kit.styles.body.color, fill, 4.5)) : undefined;
+  const restyle = (style: FreeTextStyle): FreeTextStyle => {
+    const own = style.set?.color ?? style.color;
+    const color = one ?? (contrast(own, fill) >= 3 ? undefined : readable(own, fill, 4.5));
+    return color ? { ...style, set: { ...style.set, color } } : style;
+  };
+  const { panel, notePanel: _notePanel, rule: _rule, ...rest } = kit;
+  const { note: _note, ...styles } = kit.styles;
+  const aspect = kit.slideWidth / kit.slideHeight;
+  const pad = GROUND_PAD;
+  return {
+    ...rest,
+    background: fill,
+    ink: one ?? kit.ink,
+    figureOnPanel: false,
+    styles: { body: restyle(styles.body), heading: restyle(styles.heading), figure: restyle(styles.figure), caption: restyle(styles.caption), list: restyle(styles.list), quote: restyle(styles.quote) },
+    area: { ...kit.area, x: kit.area.x + pad, w: Math.max(0.1, kit.area.w - 2 * pad) },
+    band: { top: kit.band.top + pad * aspect, bottom: kit.band.bottom - pad * aspect },
+    dense: { top: kit.dense.top + pad * aspect, bottom: kit.dense.bottom - pad * aspect },
+    ground: { fill, pad, icons: tone !== 'accent', ...(panel ? { from: panel } : {}) },
+  };
 }
 
 /** A plan, whether card text on it that is longer than its budget had to be drawn smaller, and whether a text set dense needs the larger room. */
@@ -820,6 +894,8 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
   const HARD = half(Math.max(4, 5 * k));
   const blocksOnSlide = kinds.filter((kind) => kind !== 'note').length;
 
+  // On a band in the template's main colour no card has an icon: an icon is drawn for a light page.
+  const iconsShow = kit.ground?.icons !== false;
   const at = (index: number, part: string) => slots[freeSlotName(index, part)];
   /** While planning, the number of paragraphs a text that was asked a length of will have, where the planner gives one (`planning.paragraphs`). */
   const countOf = (index: number, part: string): number | undefined => {
@@ -860,10 +936,12 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
     const entry = FREE_PARTS[kind].find((candidate) => candidate.name === part);
     if (!entry || entry.required) return true;
     if (planning.withParts?.includes(freeSlotName(index, part))) return true;
-    if (part === 'Icon') return planning.icons;
+    if (part === 'Icon') return planning.icons && iconsShow;
     if (part === 'Heading') return blocksOnSlide >= 2;
     // A caption tells like things apart: charts, tables, photos and graphics are offered one when the slide has several of the kind.
     if (part === 'Caption') return kinds.filter((other) => other === kind).length >= 2;
+    // The text under a phase or a milestone, and the badge of an option: room is kept for them, and a part left empty is not drawn.
+    if (kind === 'phase' || kind === 'milestone' || kind === 'option') return true;
     return part === 'Source';
   };
   const hasTitle = planning ? true : present(slots.title);
@@ -948,7 +1026,7 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
     const inner = w - 2 * p;
     const textSize = Math.max(HARD, Math.min(bodyN, halfDown(inner / (WIDE * 20))));
     const headSize = Math.max(HARD, Math.min(headN, Math.max(LINE * textSize, (head1 * textSize) / body1), halfDown(inner / (WIDE * 12))));
-    const everyIcon = kind === 'card' && kinds.every((other, position) => other !== 'card' || has(position + 1, 'card', 'Icon'));
+    const everyIcon = iconsShow && kind === 'card' && kinds.every((other, position) => other !== 'card' || has(position + 1, 'card', 'Icon'));
     const lead = kind === 'step' ? 1.3 * Math.min(figureN, 1.6 * headSize) : everyIcon ? clamp(0.175 * w, 0.018 * Wpt, 0.0375 * Wpt) + 0.75 * Math.max(p, 0.008 * Wpt) : 0;
     if (set && !planning) {
       const headLines = clamp(setLines(said(index, 'Heading'), inner, headSize), 1, 3);
@@ -980,6 +1058,67 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
     const heading = has(index, kind, 'Heading') ? (LINE + 0.65) * Math.min(headN, LINE * size) : 0;
     return (heading + linesHigh(style, Math.max(1, lines), size, 1) + Math.max(0, each.length - 1) * gapAt(size)) / Wpt;
   };
+  // ---- phases, milestones and options: how each is made at a width, and how high it then is
+  /** The padding of a card so wide and so high. */
+  const pad = (w: number, h: number) => Math.min(clamp(0.09 * w, 0.006 * Wpt, 0.03 * Wpt), 0.14 * h);
+  /** A phase at a width: the size of its heading and of its text, how deep the point of its arrow is, and the widths its heading and its text have. */
+  const phaseForm = (w: number) => {
+    const head = Math.max(HARD, Math.min(headN, halfDown(w / (WIDE * 12 + 1.6))));
+    const point = 0.7 * head;
+    const inner = Math.max(1, w - 2 * point - 0.2 * head);
+    const under = Math.max(1, w - point);
+    const textSize = Math.max(HARD, Math.min(bodyN, head, halfDown(under / (WIDE * 20))));
+    return { head, point, inner, under, textSize };
+  };
+  /** How high the arrow of a phase is for a heading of so many lines. */
+  const arrowHigh = (head: number, lines: number): number => linesHigh(kit.styles.heading, lines, head) + 1.1 * head;
+  /** A milestone at a width: the sizes of its date, its heading and its text, its dot, and the width its texts have. */
+  const milestoneForm = (w: number) => {
+    const inner = Math.max(1, w - 0.012 * Wpt);
+    const head = Math.max(HARD, Math.min(headN, halfDown(inner / (WIDE * 12))));
+    const textSize = Math.max(HARD, Math.min(bodyN, head, halfDown(inner / (WIDE * 20))));
+    const dot = clamp(0.7 * head, 6 * k, 14 * k);
+    // From the top of the block to the middle of the line the dots stand on: the date, and a little air.
+    const axis = LINE * head + 0.35 * head + dot / 2;
+    return { inner, head, textSize, dot, axis, headTop: axis + dot / 2 + 0.45 * head };
+  };
+  /** An option at a width: its padding, the width inside it, and the sizes of its badge, its heading and its points. */
+  const optionForm = (w: number, h = Infinity) => {
+    const p = pad(w, h);
+    const inner = Math.max(1, w - 2 * p);
+    const head = Math.max(HARD, Math.min(headN, halfDown(inner / (WIDE * 12))));
+    const size = Math.max(HARD, Math.min(bodyN, head, halfDown(inner / (WIDE * 22))));
+    const badge = Math.max(HARD, Math.min(captionN, size));
+    return { p, inner, head, size, badge };
+  };
+  /** Whether some option of the slide has a badge, and so every option keeps the line of one: their headings start on one line. */
+  const badged = kinds.some((kind, position) => kind === 'option' && has(position + 1, 'option', 'Badge'));
+  /** The lines the heading of a phase, a milestone or an option takes on lines of so many characters: one or two. */
+  const headLinesOf = (index: number, across: number): number => Math.min(2, headingLines(index, across));
+  /** How high a phase, a milestone or an option needs to be at a width: its parts one under the other, as high as what is written takes. */
+  const flowHeight = (index: number, kind: FreeBlockKind, widthU: number): number | undefined => {
+    const w = widthU * Wpt;
+    if (kind === 'phase') {
+      const form = phaseForm(w);
+      const arrow = arrowHigh(form.head, headLinesOf(index, perLine(form.inner, form.head)));
+      const text = has(index, kind, 'Text') ? 0.5 * form.textSize + cardTextHigh(said(index, 'Text'), form.under, form.textSize, kit.styles.body) + 0.4 * LINE * form.textSize : 0;
+      return (arrow + text) / Wpt;
+    }
+    if (kind === 'milestone') {
+      const form = milestoneForm(w);
+      const heading = linesHigh(kit.styles.heading, headLinesOf(index, perLine(form.inner, form.head)), form.head);
+      const text = has(index, kind, 'Text') ? 0.3 * form.head + cardTextHigh(said(index, 'Text'), form.inner, form.textSize, kit.styles.body) + 0.4 * LINE * form.textSize : 0;
+      return (form.headTop + heading + text) / Wpt;
+    }
+    if (kind === 'option') {
+      const form = optionForm(w);
+      const heading = linesHigh(kit.styles.heading, headLinesOf(index, perLine(form.inner, form.head)), form.head);
+      const each = lengthsOf(index, 'Items');
+      const list = paragraphsHigh({ chars: each.reduce((sum, chars) => sum + chars, 0), paragraphs: Math.max(1, each.length), width: form.inner, height: Infinity, style: kit.styles.list, each, bullets: true }, form.size);
+      return (2 * form.p + (badged ? 1.6 * form.badge : 0) + heading + 1.1 * form.head + list + 0.5 * LINE * form.size) / Wpt;
+    }
+    return undefined;
+  };
   // The legend of a slide of charts has a strip twice its text size high, at the top of the room.
   const legendStrip = legend ? (2 * legend.size) / Hpt : 0;
   const denseTop = Math.max((hasTitle || !kit.title ? kit.dense.top : untitled) + titleDrop, underTitle);
@@ -988,7 +1127,7 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
     arrange: slide.arrange as FreeArrange | undefined,
     rtl,
     noteHeight,
-    needed: cardHeight,
+    needed: (index, kind, width) => cardHeight(index, kind, width) ?? flowHeight(index, kind, width),
     likely: (index, kind, width) => cardHeight(index, kind, width, true),
     prose: proseHeight,
     crowded,
@@ -1006,12 +1145,27 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
   const legible = (stated: string | undefined, ground: string): string | undefined => (contrast(stated ?? kit.ink, ground) >= 3 ? undefined : readable(kit.styles.body.color, ground, 3));
   /** A line that shows on `ground` and stays quiet: a third of the text's colour in the ground's own. */
   const faint = (text: string, ground: string): string => mix(text, ground, 1 / 3);
+  /** The template's accent as its texts show it: the colour of its big numbers. */
+  const figureColor = (kit.styles.figure.set?.color ?? kit.styles.figure.color).toUpperCase();
+  /**
+   * The colour of what the software draws itself: the arrow of a phase, the dot of a milestone,
+   * the ground of the option a comparison picks out. The template's main colour where it shows on
+   * the slide, else the colour of its big numbers, else that of its text.
+   */
+  const strongFill = ([kit.palette.accent, figureColor, kit.ink].find((hex): hex is string => !!hex && contrast(hex, kit.background) >= 2) ?? kit.ink).toUpperCase();
+  /** The colour of a text that stands on it: white where white reads there, else the colour behind the slide where that does (on a band of colour the arrows are white, and their names in the band's), else the slide's own text made to read. */
+  const onStrong = contrast('FFFFFF', strongFill) >= 3 ? 'FFFFFF' : contrast(kit.background, strongFill) >= 3 ? kit.background : readable(kit.styles.body.color, strongFill, 4.5);
+  /** That colour as a text's on the slide itself (the date of a milestone, a badge), where it reads there. */
+  const strongInk = contrast(strongFill, kit.background) >= 3 ? strongFill : undefined;
 
   // ---- Shapes and slots -----------------------------------------------------------------
   const shapes: MadeShape[] = [];
   const made: SlotDef[] = [];
   let nextId = kit.firstId;
   let smallest = Infinity;
+  // The band of colour the blocks stand on (`FreeArrange.tone`) lies behind them all: it has the
+  // first id, and is made last, once it is known how far down what is drawn reaches.
+  const groundId = kit.ground ? String(nextId++) : undefined;
   // A size that is there stays there when it is rounded: a chart or a picture cannot be drawn in no area at all.
   const extent = (size: number, whole: number): number => (size > 0 ? Math.max(0.0001, Math.round((size / whole) * 10000) / 10000) : 0);
   const toBox = (x: number, y: number, w: number, h: number): SlideBox => ({ x: Math.round((x / Wpt) * 10000) / 10000, y: Math.round((y / Hpt) * 10000) / 10000, w: extent(w, Wpt), h: extent(h, Hpt) });
@@ -1025,7 +1179,6 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
     h: number;
   }
   const rectOf = (block: LaidBlock): Rect => ({ x: block.box.x * Wpt, y: block.box.y * Hpt, w: block.box.w * Wpt, h: block.box.h * Hpt });
-  const pad = (w: number, h: number) => Math.min(clamp(0.09 * w, 0.006 * Wpt, 0.03 * Wpt), 0.14 * h);
 
   const panel = (block: Rect, index: number): void => {
     if (!kit.panel) return;
@@ -1056,6 +1209,8 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
     several?: boolean;
     /** How far its spacing gave way (`GIVE`): it is drawn so. Its budgets are counted at its own spacing all the same. */
     give?: number;
+    /** It is set bold, whatever its style. */
+    bold?: boolean;
   }
   /** Makes a text shape as a copy of a style, and its slot when it holds content of the deck. */
   const text = (index: number, label: string, style: FreeTextStyle, size: number, box: SlideBox, width: number, height: number, options: TextOptions = {}): void => {
@@ -1071,6 +1226,8 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
     else if (style.bullet) shape.bullets = 'own';
     if (options.columns && options.columns > 1) shape.columns = options.columns;
     if (options.fixed !== undefined) shape.text = options.fixed;
+    if (options.color && shape.bullets) shape.bulletsFollow = true;
+    if (options.bold) shape.bold = true;
     if (options.several ?? ['text', 'list', 'quote', 'note', 'label'].includes(label)) shape.lines = 'several';
     // Lines closed up are drawn so; lines that give nothing (a template at single) keep their source's spacing.
     if (options.give && lineOf(style, size, options.give) < lineOf(style, size) - 1e-9) shape.lineSpacing = drawnLeading(style, size, options.give);
@@ -1667,7 +1824,7 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
     const blocks = blocksOf(kind);
     if (blocks.length === 0) continue;
     const onPanel = !!kit.panel;
-    const withIcon = kind === 'card' && blocks.every((block) => has(block.index, kind, 'Icon'));
+    const withIcon = iconsShow && kind === 'card' && blocks.every((block) => has(block.index, kind, 'Icon'));
     const geometry = (rect: Rect, textSize: number, headSize: number) => {
       const p = onPanel ? pad(rect.w, rect.h) : 0;
       const lying = lies;
@@ -1834,6 +1991,131 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
       // where the card has the room, so that what PowerPoint sets stays inside its own box too.
       const drawnHigh = Math.max(height, Math.min(height + hang(textSize), rect.y + rect.h - textTop));
       text(block.index, 'text', textStyle, textSize, inBlock(rect, g.x, textTop, g.w, drawnHigh), g.w, height, { slot: freeSlotName(block.index, 'Text'), required: true, most: holds, none: outside || !holdsLine(height, textSize, lineOf(textStyle, textSize), hang) });
+    }
+  }
+
+  // ---- phases: a process as a chain of arrows, each with its name on it and its text under it
+  {
+    const blocks = blocksOf('phase');
+    if (blocks.length > 0) {
+      const headStyle = kit.styles.heading;
+      const textStyle = kit.styles.body;
+      const rects = blocks.map(rectOf);
+      // Like parts of like blocks share one size: what the narrowest phase of the slide gives.
+      const form = phaseForm(Math.min(...rects.map((rect) => rect.w)));
+      const lines = Math.max(1, ...blocks.map((block) => headLinesOf(block.index, perLine(form.inner, form.head))));
+      const arrow = arrowHigh(form.head, lines);
+      const textTop = arrow + 0.5 * form.textSize;
+      const rooms = blocks.map((block, i) => {
+        const rect = rects[i] as Rect;
+        return { block, rect, width: Math.max(1, rect.w - form.point), height: Math.max(LINE * HARD, rect.h - textTop), written: has(block.index, 'phase', 'Text') };
+      });
+      const written = rooms.filter((room) => room.written);
+      const textSize = written.length > 0 ? sized(written.map((room) => ({ chars: said(room.block.index, 'Text'), paragraphs: 1, width: room.width, height: room.height, style: textStyle, card: true })), form.textSize) : form.textSize;
+      rooms.forEach((room, i) => {
+        const { block, rect } = room;
+        // The first arrow of a line starts flat; every other one takes the point of the arrow before it.
+        const before = rooms[i - 1];
+        const after = rooms[i + 1];
+        const first = !before || Math.abs(before.rect.y - rect.y) > 0.5;
+        // An arrow reaches into the gap beside it, so that it points into the next of its line.
+        const gapTo = after && Math.abs(after.rect.y - rect.y) <= 0.5 ? (rtl ? rect.x - (after.rect.x + after.rect.w) : after.rect.x - (rect.x + rect.w)) : 0;
+        const reach = Math.max(0, gapTo - 0.3 * form.head);
+        shapes.push({ id: String(nextId++), name: `Block ${block.index} arrow`, kind: 'drawn', geometry: first ? 'homePlate' : 'chevron', point: form.point, color: strongFill, box: inBlock(rect, rect.x, rect.y, rect.w + reach, arrow), ...(rtl ? { flip: true } : {}), ...(reach > 0 ? { loose: true } : {}) });
+        const from = rect.x + (first ? 0.45 * form.head : form.point + 0.1 * form.head);
+        const to = rect.x + rect.w - Math.max(0.1 * form.head, form.point + 0.1 * form.head - reach);
+        text(block.index, 'heading', headStyle, form.head, inBlock(rect, from, rect.y, Math.max(1, to - from), arrow), form.inner, arrow, { slot: freeSlotName(block.index, 'Heading'), required: true, most: perLine(form.inner, form.head) * lines, describe: 'The name of the phase, in a word or a few', several: lines > 1, align: 'ctr', anchor: 'ctr', color: onStrong });
+        if (!room.written) return;
+        const holds = planning ? capacity(room.width, room.height, textSize, hang, 1, lineOf(textStyle, textSize)) : cardCapacity(room.width, room.height, textSize, textStyle, hang);
+        text(block.index, 'text', textStyle, textSize, inBlock(rect, rect.x, rect.y + textTop, room.width, room.height), room.width, room.height, { slot: freeSlotName(block.index, 'Text'), most: holds, describe: say('What happens in this phase. Give one to every phase of the slide, or to none', target(holds)) as string });
+      });
+    }
+  }
+
+  // ---- milestones: a timeline, a dot on a line for each, its date over the line and what happened under it
+  {
+    const blocks = blocksOf('milestone');
+    if (blocks.length > 0) {
+      const headStyle = kit.styles.heading;
+      const textStyle = kit.styles.body;
+      const rects = blocks.map(rectOf);
+      const form = milestoneForm(Math.min(...rects.map((rect) => rect.w)));
+      const lines = Math.max(1, ...blocks.map((block) => headLinesOf(block.index, perLine(form.inner, form.head))));
+      const headHigh = linesHigh(headStyle, lines, form.head);
+      const textTop = form.headTop + headHigh + 0.3 * form.head;
+      const thick = Math.max(0.75, 1.5 * k);
+      const rooms = blocks.map((block, i) => {
+        const rect = rects[i] as Rect;
+        return { block, rect, width: Math.max(1, rect.w - 0.012 * Wpt), height: Math.max(LINE * HARD, rect.h - textTop), written: has(block.index, 'milestone', 'Text') };
+      });
+      const written = rooms.filter((room) => room.written);
+      const textSize = written.length > 0 ? sized(written.map((room) => ({ chars: said(room.block.index, 'Text'), paragraphs: 1, width: room.width, height: room.height, style: textStyle, card: true })), form.textSize) : form.textSize;
+      // One line for each row of milestones, from its first to the end of its last, behind their dots.
+      const rows = new Map<number, Rect[]>();
+      for (const rect of rects) rows.set(Math.round(rect.y * 10), [...(rows.get(Math.round(rect.y * 10)) ?? []), rect]);
+      let row = 0;
+      for (const line of rows.values()) {
+        const from = Math.min(...line.map((rect) => rect.x));
+        const to = Math.max(...line.map((rect) => rect.x + rect.w));
+        shapes.push({ id: String(nextId++), name: `Timeline ${++row}`, kind: 'drawn', geometry: 'rect', color: mix(strongFill, kit.background, 0.45), box: toBox(from, (line[0] as Rect).y + form.axis - thick / 2, to - from, thick) });
+      }
+      for (const room of rooms) {
+        const { block, rect } = room;
+        shapes.push({ id: String(nextId++), name: `Block ${block.index} dot`, kind: 'drawn', geometry: 'ellipse', color: strongFill, box: inBlock(rect, rect.x, rect.y + form.axis - form.dot / 2, form.dot, form.dot) });
+        text(block.index, 'when', headStyle, form.head, inBlock(rect, rect.x, rect.y, room.width, LINE * form.head), room.width, LINE * form.head, { slot: freeSlotName(block.index, 'When'), required: true, most: perLine(room.width, form.head), describe: 'When it happens, as short as it can be said: a date, a quarter, a year', bold: true, several: false, ...(strongInk ? { color: strongInk } : {}) });
+        text(block.index, 'heading', headStyle, form.head, inBlock(rect, rect.x, rect.y + form.headTop, room.width, headHigh), room.width, headHigh, { slot: freeSlotName(block.index, 'Heading'), required: true, most: perLine(form.inner, form.head) * lines, describe: 'What happens then, in a few words', several: lines > 1 });
+        if (!room.written) continue;
+        const holds = planning ? capacity(room.width, room.height, textSize, hang, 1, lineOf(textStyle, textSize)) : cardCapacity(room.width, room.height, textSize, textStyle, hang);
+        text(block.index, 'text', textStyle, textSize, inBlock(rect, rect.x, rect.y + textTop, room.width, room.height), room.width, room.height, { slot: freeSlotName(block.index, 'Text'), most: holds, describe: say('A sentence more about it. Give one to every milestone of the slide, or to none', target(holds)) as string });
+      }
+    }
+  }
+
+  // ---- options: a comparison, each option a column of points, the one with a badge picked out
+  {
+    const blocks = blocksOf('option');
+    if (blocks.length > 0) {
+      const headStyle = kit.styles.heading;
+      const listStyle = kit.styles.list;
+      const rects = blocks.map(rectOf);
+      const form = optionForm(Math.min(...rects.map((rect) => rect.w)), Math.min(...rects.map((rect) => rect.h)));
+      const lines = Math.max(1, ...blocks.map((block) => headLinesOf(block.index, perLine(form.inner, form.head))));
+      const headHigh = linesHigh(headStyle, lines, form.head);
+      const badgeHigh = badged ? 1.6 * form.badge : 0;
+      const bar = Math.max(1, 1.5 * k);
+      const barTop = form.p + badgeHigh + headHigh + 0.45 * form.head;
+      const listTop = barTop + bar + 0.55 * form.head;
+      // The option a comparison picks out is the one with a badge, where not every option has one.
+      const picked = new Set(blocks.filter((block) => !planning && present(at(block.index, 'Badge'))).map((block) => block.index));
+      const picks = picked.size > 0 && picked.size < blocks.length;
+      const rooms = blocks.map((block, i) => {
+        const rect = rects[i] as Rect;
+        const each = lengthsOf(block.index, 'Items');
+        const width = Math.max(1, rect.w - 2 * form.p);
+        const height = Math.max(LINE * HARD, rect.h - listTop - form.p);
+        const fitted: Fitted = { chars: each.reduce((sum, chars) => sum + chars, 0), paragraphs: Math.max(1, each.length), width, height, style: listStyle, each, bullets: true };
+        return { block, rect, each, width, height, fitted };
+      });
+      const size = sized(rooms.map((room) => room.fitted), form.size);
+      for (const room of rooms) {
+        const { block, rect, each, width, height } = room;
+        const chosen = picks && picked.has(block.index);
+        const ink = chosen ? onStrong : undefined;
+        if (kit.panel) shapes.push({ id: String(nextId++), name: `Block ${block.index} panel`, kind: 'panel', from: { slide: kit.panel.slide, shapeId: kit.panel.shapeId }, box: toBox(rect.x, rect.y, rect.w, rect.h), ...(chosen ? { color: strongFill } : {}) });
+        else if (chosen) shapes.push({ id: String(nextId++), name: `Block ${block.index} panel`, kind: 'drawn', geometry: 'roundRect', color: strongFill, box: toBox(rect.x, rect.y, rect.w, rect.h) });
+        const x = rect.x + form.p;
+        if (badged && has(block.index, 'option', 'Badge')) {
+          const color = ink ?? strongInk;
+          text(block.index, 'badge', kit.styles.caption, form.badge, inBlock(rect, x, rect.y + form.p, width, LINE * form.badge), width, LINE * form.badge, { slot: freeSlotName(block.index, 'Badge'), most: perLine(width, form.badge), describe: 'A word or two on the one option that is recommended, such as Recommended. Leave it empty on every other option', bold: true, several: false, ...(color ? { color } : {}) });
+        }
+        text(block.index, 'heading', headStyle, form.head, inBlock(rect, x, rect.y + form.p + badgeHigh, width, headHigh), width, headHigh, { slot: freeSlotName(block.index, 'Heading'), required: true, most: perLine(width, form.head) * lines, describe: 'The name of the option', several: lines > 1, ...(ink ? { color: ink } : {}) });
+        shapes.push({ id: String(nextId++), name: `Block ${block.index} bar`, kind: 'drawn', geometry: 'rect', color: chosen ? onStrong : strongFill, box: inBlock(rect, x, rect.y + barTop, Math.min(width, 2.5 * form.head), bar) });
+        const points = Math.max(1, each.length);
+        const held = clamp(Math.floor(height / lineOf(listStyle, size) / 1.5), 1, 12);
+        const most = listCapacity(width, height, size, planning ? Math.min(points, held) : points, listStyle, hang);
+        const fits = !planning && fitsAt(room.fitted, size, hang);
+        text(block.index, 'list', listStyle, size, inBlock(rect, x, rect.y + listTop, width, height), width, height, { slot: freeSlotName(block.index, 'Items'), required: true, paragraphs: true, lines: 1.5, most: fits ? Math.max(most, room.fitted.chars) : most, fitted: fits ? each.length : 0, describe: say(held > 1 ? `${held >= 4 ? 'Two to four' : held === 3 ? 'Two or three' : 'Two'} short points on this option, one in each item and never all in one: what speaks for it and what against. Give every option the same number of points, about the same things` : 'One short point', target(most)) as string, ...(ink ? { color: ink } : {}) });
+      }
     }
   }
 
@@ -2345,7 +2627,7 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
   made.sort((a, b) => (orderOf.get(a.name) ?? 0) - (orderOf.get(b.name) ?? 0));
   // Shapes are drawn block by block, a panel first: their ids say so, and a block's shapes stay together.
   const blockOf = (shape: MadeShape) => Number(/^Block (\d+) /.exec(shape.name)?.[1] ?? 0);
-  const rank = (shape: MadeShape) => (shape.kind === 'panel' || shape.kind === 'rule' ? 0 : 1);
+  const rank = (shape: MadeShape) => (shape.kind === 'panel' || shape.kind === 'rule' || shape.kind === 'drawn' ? 0 : 1);
   shapes.sort((a, b) => blockOf(a) - blockOf(b) || rank(a) - rank(b) || Number(a.id) - Number(b.id));
 
   // Everything stays inside its block. On a slide that holds too many blocks one of them can be
@@ -2364,11 +2646,26 @@ function planWith(kit: FreeKit, slide: Pick<SlideSpec, 'blocks' | 'arrange' | 's
   };
   for (const shape of shapes) {
     const block = placeOf.get(blockOf(shape));
-    if (!block || shape.kind === 'rule' || !(block.w > 0 && block.h > 0)) continue;
+    if (!block || shape.kind === 'rule' || shape.loose || !(block.w > 0 && block.h > 0)) continue;
     const [x, w] = within(shape.box.x, shape.box.w, block.x, block.x + block.w);
     const [y, h] = within(shape.box.y, shape.box.h, block.y, block.y + block.h);
     // The slot of a shape shares its box: both are changed in place.
     if (x !== shape.box.x || w !== shape.box.w || y !== shape.box.y || h !== shape.box.h) Object.assign(shape.box, { x, y, w, h });
+  }
+
+  // The band of colour: as wide as the template's content, and as high as what is drawn on it,
+  // with a little room around: a slide of three figures has a band around its figures, not
+  // around the room they were given.
+  if (kit.ground && groundId !== undefined) {
+    const drawn = shapes.filter((shape) => blockOf(shape) > 0 && shape.box.h > 0);
+    if (drawn.length > 0) {
+      const padY = kit.ground.pad * (Wpt / Hpt);
+      const from = Math.max(0, Math.min(...drawn.map((shape) => shape.box.y)) - padY);
+      const to = Math.min(1, Math.max(...drawn.map((shape) => shape.box.y + shape.box.h)) + padY);
+      const box: SlideBox = { x: round4(kit.area.x - kit.ground.pad), y: round4(from), w: round4(kit.area.w + 2 * kit.ground.pad), h: round4(to - from) };
+      if (kit.ground.from) shapes.unshift({ id: groundId, name: 'Ground', kind: 'panel', from: { slide: kit.ground.from.slide, shapeId: kit.ground.from.shapeId }, box, color: kit.ground.fill });
+      else shapes.unshift({ id: groundId, name: 'Ground', kind: 'drawn', geometry: 'roundRect', color: kit.ground.fill, box });
+    }
   }
 
   const frame: SlotDef[] = [];

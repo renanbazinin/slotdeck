@@ -65,9 +65,11 @@ export const FREE_PATTERN = 'free';
  * What a free slide can be made of. `text` is running text, `list` a list of points, `card` a
  * heading and a text on a panel, `figure` a big number with what it counts, `step` a numbered
  * card, `quote` a quotation, `note` a highlighted line across the slide, `chart` a native chart,
- * `table` a table, `photo` a picture that fills its frame, `graphic` a picture shown whole.
+ * `table` a table, `photo` a picture that fills its frame, `graphic` a picture shown whole. From
+ * 0.8.0: `phase` is a link of a process, drawn as a chain of arrows, `milestone` a dated point on
+ * a timeline, `option` one of the things a comparison sets side by side, a column of points.
  */
-export const FREE_BLOCK_KINDS = ['text', 'list', 'card', 'figure', 'step', 'quote', 'note', 'chart', 'table', 'photo', 'graphic'] as const;
+export const FREE_BLOCK_KINDS = ['text', 'list', 'card', 'figure', 'step', 'phase', 'milestone', 'option', 'quote', 'note', 'chart', 'table', 'photo', 'graphic'] as const;
 export type FreeBlockKind = (typeof FREE_BLOCK_KINDS)[number];
 
 /** How the blocks of a free slide are set out, where the deck says so. Left out, the software decides. */
@@ -92,6 +94,32 @@ export interface FreeArrange {
    * is set out as before.
    */
   dense?: boolean;
+  /**
+   * What the slide's blocks stand on. `accent` sets them on a band in the template's main colour,
+   * their text in a colour that reads on it (white, on most templates): for the slide or two of a
+   * deck that carry its main point, so that not every slide is the same white page. `tint` sets
+   * them on a band in a light tint of that colour, their text as it is. The band is as wide as the
+   * template's content and as high as the blocks, with a little room around them; cards stand on
+   * it without their own boxes. For slides of text, lists, cards, steps, figures, phases,
+   * milestones, quotations and notes: a slide with a chart, a table, a picture or options is set
+   * out as without it. Left out, the blocks stand on the slide itself. From 0.8.0.
+   */
+  tone?: 'accent' | 'tint';
+}
+
+/** The kinds of block a band of colour can carry (`FreeArrange.tone`): those whose text stands on the slide itself, or on a box the software may leave out. */
+const TONED: readonly FreeBlockKind[] = ['text', 'list', 'card', 'figure', 'step', 'phase', 'milestone', 'quote', 'note'];
+
+/**
+ * The band a free slide's blocks stand on (`FreeArrange.tone`), where the slide asks for one and
+ * every block of it can stand on one. A working part of the engine and the planner: the package
+ * does not export it.
+ */
+export function freeTone(slide: Pick<SlideSpec, 'blocks' | 'arrange'>): 'accent' | 'tint' | undefined {
+  const tone = slide.arrange?.tone;
+  if (tone !== 'accent' && tone !== 'tint') return undefined;
+  const kinds: readonly unknown[] = Array.isArray(slide.blocks) ? slide.blocks : [];
+  return kinds.length > 0 && kinds.every((kind) => (TONED as readonly unknown[]).includes(kind)) ? tone : undefined;
 }
 
 /**
@@ -231,15 +259,54 @@ export function isTextValue(value: unknown): value is string | string[] {
  * checks and the renderer: the package does not export it.
  */
 export function plainText(value: unknown): string {
-  return writable(String(value ?? '').replace(/\u000B/g, ' '));
+  return writable(String(value ?? '').replace(/\u000B/g, ' ')).replace(STRONG, '$1');
+}
+
+/**
+ * A phrase a text sets strong: written between two pairs of asterisks, `**like this**`, with no
+ * space inside the marks. Asterisks that are no such pair stay as they are written.
+ */
+const STRONG = /\*\*(?=\S)([\s\S]*?\S)\*\*/g;
+
+/**
+ * A paragraph of a text as a slide shows it, and the phrases of it that are set strong: where each
+ * starts and ends among its characters. From 0.8.0.
+ */
+export interface MarkedParagraph {
+  text: string;
+  strong: Array<[start: number, end: number]>;
+}
+
+/**
+ * The paragraphs of a text value, each with the phrases it sets strong (`**like this**`) taken out
+ * of its marks. A working part of the checks and the renderer: the package does not export it.
+ */
+export function markedParagraphs(value: string | string[]): MarkedParagraph[] {
+  const parts: unknown[] = Array.isArray(value) ? value : [value];
+  return parts
+    .flatMap((part) => (typeof part === 'string' ? part : '').split(/\r?\n|\u000B/))
+    .map((line) => {
+      const written = writable(line).trim();
+      const strong: MarkedParagraph['strong'] = [];
+      let text = '';
+      let from = 0;
+      for (const found of written.matchAll(STRONG)) {
+        text += written.slice(from, found.index);
+        strong.push([text.length, text.length + (found[1] as string).length]);
+        text += found[1] as string;
+        from = found.index + found[0].length;
+      }
+      return { text: text + written.slice(from), strong };
+    });
 }
 
 /**
  * Normalises a text value to paragraphs. A vertical tab breaks a line as a newline does, and
- * characters that no file can hold are left out. A part that is no string (a number, an object)
- * counts as empty here and never throws: validation is what says "expected text" of it.
+ * characters that no file can hold are left out. The marks of a phrase set strong (`**like this**`)
+ * are no part of its text: every count of a text is a count of what the slide shows. A part that
+ * is no string (a number, an object) counts as empty here and never throws: validation is what
+ * says "expected text" of it.
  */
 export function toParagraphs(value: string | string[]): string[] {
-  const parts: unknown[] = Array.isArray(value) ? value : [value];
-  return parts.flatMap((part) => (typeof part === 'string' ? part : '').split(/\r?\n|\u000B/)).map((line) => writable(line).trim());
+  return markedParagraphs(value).map((paragraph) => paragraph.text);
 }

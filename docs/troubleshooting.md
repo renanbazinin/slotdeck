@@ -121,7 +121,7 @@ Reasons a pattern is not offered:
 | --- | --- |
 | `is built around numbers, and the brief gives none` | Put figures in the brief, or set `numberPatterns: 'always'`. |
 | `needs a photo, and images are turned off` | Give an `ImageProvider` or photo assets, and an `imageDensity` other than `none`. |
-| `needs icons, and no icon set was supplied` | Pass `icons`. |
+| `needs icons, and no icon set was supplied` | Pass `icons`: a list of `{ id, description, data }`, which `iconFiles` from `slotdeck/node` reads from a folder (see "Your own icons and pictures" in [generating.md](generating.md)). |
 | `needs a graphic asset, and none was supplied` | Pass an asset of kind `graphic`. |
 | `needs the deck field "x"` | Add it to `brief.fields`. |
 

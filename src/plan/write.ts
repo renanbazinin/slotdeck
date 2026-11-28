@@ -24,7 +24,7 @@ import type { FreeJob, PartRange, RangeAnswer } from './parts.ts';
  * The rules every planning and writing call is given. `document` says the deck is made from a
  * document: its text is then said in its own words, and its figures may be used.
  */
-export function systemPrompt(language: string, source: 'brief' | 'deck', document = false, delivery: Delivery = 'present'): string {
+export function systemPrompt(language: string, source: 'brief' | 'deck', document = false, delivery: Delivery = 'present', emphasis = true): string {
   // A deck that is read on its own says what a speaker would have said: in sentences.
   const short = delivery === 'read' ? 'elsewhere write full sentences: the deck is read on its own, with no one to present it.' : 'elsewhere keep slide text short: a phrase beats a sentence.';
   const limits = document
@@ -43,6 +43,7 @@ export function systemPrompt(language: string, source: 'brief' | 'deck', documen
     `- Write all slide text in the language with BCP 47 tag "${language}".`,
     limits,
     '- Plain text only: no markdown, no bullet characters, no line breaks inside a string, no placeholder text.',
+    ...(emphasis ? [STRONG_RULE] : []),
     figures,
     // Thin briefs grew into decks with an incident procedure, a hotline open day and night and a tax claim that no one gave.
     `- Never state the organisation's own procedures, terms, prices, contacts (people, phone numbers, email or web addresses), results or plans that ${given} do not give.`,
@@ -51,6 +52,15 @@ export function systemPrompt(language: string, source: 'brief' | 'deck', documen
     ...(delivery === 'read' ? ['- The deck is read, not presented: no closing slide of thanks or questions, and an agenda only in a deck of more than ten slides.'] : []),
   ].join('\n');
 }
+
+/**
+ * The one mark a writer may use (`PlanOptions.emphasis`): a phrase between two pairs of asterisks
+ * is set in bold, and on a slide the software lays out a figure so marked takes the template's
+ * accent. Said sparingly on purpose: a slide where every line has a bold phrase has none.
+ */
+export const STRONG_RULE =
+  '- One mark is allowed: in running text, in an item of a list and in the text of a card, the two or three words or the one figure that carry the point may stand between double asterisks, **like this**, and are then set in bold. ' +
+  'Use it where it helps a reader find the point at a glance: at most one phrase in a paragraph or an item, on some slides and not on all, never a whole sentence, and never in a title, a heading, a caption, a table or a number that stands alone.';
 
 /**
  * How a deck is used: `present`ed by a speaker, whose slides carry short phrases, or `read` on its

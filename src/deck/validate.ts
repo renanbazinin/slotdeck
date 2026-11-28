@@ -14,7 +14,7 @@ import { said } from '../messages/en.ts';
 import type { Told } from '../messages/en.ts';
 import { DesignError, withLayouts } from '../template/compose.ts';
 import { measurerFor } from '../text/measure.ts';
-import { FREE_BLOCK_KINDS, FREE_PATTERN, isChartValue, isFreeSlide, isImageRef, isTableValue, isTextValue, plainText, toParagraphs } from './spec.ts';
+import { FREE_BLOCK_KINDS, FREE_PATTERN, isChartValue, isFreeSlide, isImageRef, isTableValue, isTextValue, markedParagraphs, plainText, toParagraphs } from './spec.ts';
 import type { ChartValue, DeckSpec, ImageRef, SlideSpec, TableValue } from './spec.ts';
 
 export type LayoutMode = 'strict' | 'adaptive';
@@ -103,7 +103,7 @@ export function deckShapeIssues(deck: unknown): Issue[] {
 
 /** What the renderer should do with one slot on one slide. */
 export type SlotAction =
-  | { type: 'text'; paragraphs: string[] }
+  | { type: 'text'; paragraphs: string[]; strong?: Array<Array<[start: number, end: number]>> }
   | { type: 'image'; image: ImageRef }
   | { type: 'table'; table: TableValue }
   | { type: 'chart'; chart: ChartValue }
@@ -250,9 +250,11 @@ export function resolveSlot(
   if (slot.kind === 'text') {
     // A number, an object or a list that holds one is no text, wherever it came from.
     if (!isTextValue(value)) return { error: 'expected text' };
-    const paragraphs = toParagraphs(value).filter((paragraph) => paragraph !== '');
+    const marked = markedParagraphs(value).filter((paragraph) => paragraph.text !== '');
+    const paragraphs = marked.map((paragraph) => paragraph.text);
     if (paragraphs.length === 0) return { error: 'this slot is required' };
-    return { action: { type: 'text', paragraphs } };
+    // The phrases a text sets strong (`**like this**`), paragraph by paragraph, where it has any.
+    return { action: { type: 'text', paragraphs, ...(marked.some((paragraph) => paragraph.strong.length > 0) ? { strong: marked.map((paragraph) => paragraph.strong) } : {}) } };
   }
 
   if (!isImageRef(value)) return { error: 'expected an image reference such as { "asset": "id" }' };

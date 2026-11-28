@@ -3,6 +3,81 @@
 What changed in each version, newest first, with what to do when upgrading. The version you have installed is
 in `node_modules/slotdeck/package.json`.
 
+## 0.8.0
+
+Slides that say more at a glance. A text can set the words that carry its point in bold. A free slide can
+draw a process, a timeline and a comparison, where it had cards and lists for all three. And a slide can
+stand on a band of the template's colour, so that a deck is not one white page after another. Nothing changes
+for a deck that uses none of it: such a deck gives the file it gave.
+
+### Added
+
+- **Strong phrases.** A phrase written between two pairs of asterisks, `**like this**`, is set in bold, in a
+  run of its own that is otherwise the paragraph's: in every text slot of every slide, a layout's and a free
+  slide's. On a free slide a strong phrase with a number in it (`**34%**`) also takes the template's accent,
+  the colour of its big numbers, where that reads on the slide and on its cards. The marks are no part of the
+  text: every length, budget and check counts what the slide shows. In a cell of a table, a label of a chart
+  and a picture's alternative text the marks are taken off and the words stay. See "Strong phrases" in
+  [deck-format.md](deck-format.md).
+- **`emphasis`** (on `PlanOptions` and the chat tools, `true` unless set): whether the writer is told of that
+  mark. It is told to use it sparingly: the two or three words or the one figure that carry a point, at most
+  one phrase in a paragraph, on some slides and not on all. `false` tells it plain text only, as before.
+- **Three kinds of block that are drawn** on a free slide, in the template's colours and its own text styles,
+  as native shapes a person can edit:
+  - `phase`: a link of a process. Phases stand as a chain of arrows, each with its name on it and a short
+    text under it.
+  - `milestone`: a point on a timeline. A line with a dot for each, its date over the line, what happened
+    under it.
+  - `option`: one of the things a comparison sets side by side: a name and a few points. The option with a
+    `badge` (a word or two, such as `Recommended`) is picked out: its ground is the template's main colour
+    and its text white.
+
+  Up to six phases or milestones stand on one line, and up to four options. In a deck read from the right the
+  arrows point left and the first stands at the right. The planner offers them with cards, in every deck
+  that is not text only. See "A process, a timeline and a comparison" in [free-slides.md](free-slides.md).
+- **`arrange.tone`** on a free slide: `accent` sets its blocks on a band in the template's main colour, their
+  text in a colour that reads on it (white, on most templates); `tint` on a pale band of that colour. For the
+  slide or two of a deck that carry its point: key figures, a quotation, a conclusion. `freeSlide` takes it as
+  `tone`. A plan may ask for it (`shows_on` in an outline's answer), and code keeps it rare: never two such
+  slides in a row, and no more than one slide in four. See "A band of colour" in
+  [free-slides.md](free-slides.md).
+
+- **`iconFiles` and `assetFiles`** from `slotdeck/node`: an app's own icons and pictures read from a folder.
+  `iconFiles('/app/assets/icons')` gives the list that `icons` takes, and
+  `assetFiles(folder, 'photo' | 'graphic')` the list that `assets` takes. Every PNG, JPEG and GIF in the folder
+  is a picture, known by its file name without the ending. What each one shows is read from the folder's
+  `icons.json` or `assets.json` (an object of id and description, or a list of `{ id, description, file? }`),
+  from a file named in `descriptions`, or from an object given there; a picture without a line is described
+  by the words of its file name. `recursive: true` reads the folders inside. `onSkipped` is told of every file
+  that is passed over: an SVG or a WebP, which are not read, a file named as a picture that is none, a line
+  that describes no picture. Two pictures of one id are an `Error`. Until now an app read its folder with code
+  of its own, and the guides did not say how.
+- **A guide to an app's own pictures**, "Your own icons and pictures" in [generating.md](generating.md): the
+  folder, the formats, how an icon's description decides whether it is chosen, and that the same lists are
+  given again wherever a stored deck is rendered.
+
+### Changed
+
+- **`FREE_BLOCK_KINDS` has three more kinds**, after `step`: `phase`, `milestone`, `option`. Code that lists
+  every kind (a `Record<FreeBlockKind, ...>`) needs an entry for each.
+- **The line that offers free slides to a planner names what they can draw**: "a process as a chain of arrows,
+  a timeline or a comparison of options" stands among the content no layout shows. A template that has a layout
+  for one of these is still planned with its own layout.
+- **A deck that holds `**` around a phrase shows that phrase in bold**, where it showed the asterisks. Asterisks
+  that are no such pair (a footnote mark, `2 ** 3`, marks with a space inside) stay as written.
+
+### Upgrading from 0.7.1
+
+- Nothing to do for decks, manifests and stored plans.
+- An app that does not want bold phrases in its decks sets `emphasis: false` on the chat tools or on the
+  planning calls. Decks written before have none.
+- An app that shows a slide's text itself (a preview, a search index) reads it with the marks: take pairs of
+  `**` off, or show them as bold.
+- An app that reads its icon folder with code of its own may keep it, or use `iconFiles` in its place: a
+  folder with an `icons.json` of `{ id, description }` and a file `<id>.png` for each gives the same list.
+- A prompt for a coding agent that does the upgrade in an app is in
+  [prompts/upgrade-0.8.0.md](prompts/upgrade-0.8.0.md).
+
 ## 0.7.1
 
 A text too long for one presentation is no longer a dead end. The plan tool used to tell the chat model to ask
