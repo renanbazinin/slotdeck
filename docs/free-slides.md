@@ -1002,7 +1002,9 @@ the conditions above decide only what a new slide may be.
   list style of every level, the insets, the anchor), running text taken from a bulleted body has no bullet,
   and a body set larger than seven tenths of the title's size stands in at under half that size. Placeholders
   are taken only where the template has no text box to copy, or where `free.styles` names one. Before 0.10.0
-  such a template could carry no free slide. A title in a placeholder is fine.
+  such a template could carry no free slide. A title in a placeholder is fine. From 0.10.1 the room of such a
+  template is where its layout puts the body, and no room is widened into what the slide layout or the master
+  draws under the title, nor does the larger room of a crowded slide reach over the edge of such a drawing.
 - A line of text is counted from its size and the line spacing of the shape it is a copy of. A line spacing
   under 100% is counted as 100%, so such text leaves a little of its room unused. The space a shape sets
   before and after its paragraphs is not copied: the paragraphs of a free slide are half their size apart, in
