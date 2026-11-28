@@ -9,9 +9,9 @@
 import { pageColor, paletteOf, schemeOf } from '../color/recolor.ts';
 import { freeKitOrReason } from '../free/kit.ts';
 import { PptxPackage } from '../pptx/package.ts';
-import { NS, childElement, childElements, parseXml, path, rootElement } from '../pptx/xml.ts';
-import type { Element } from '../pptx/xml.ts';
+import { parseXml, rootElement } from '../pptx/xml.ts';
 import { TextStyles } from '../text/styles.ts';
+import { drawnBoxes } from './drawn.ts';
 import { inspectTemplate } from './inspect.ts';
 import type { Box, ShapeInfo, SlideInfo, TemplateInfo } from './inspect.ts';
 import type { Direction, PatternDef, SlotDef, TemplateManifest } from './manifest.ts';
@@ -169,9 +169,11 @@ export function styleManifest(pptx: Uint8Array | PptxPackage, options: StyleMani
     const title = placeholderTitle ?? largest(upper.filter((shape) => !FIGURE.test(shapeText(shape)))) ?? largest(anywhere);
     const titleBox = title ? placeOf(slide, title) : undefined;
     // The line under it: the nearest text below the title, beside nothing, smaller than it.
+    // A subtitle placeholder is the line under the title whatever its sample holds (a presenter's name over a date).
     const subtitle =
       title && titleBox
-        ? content
+        ? content.find((shape) => shape !== title && shape.placeholder === 'subTitle') ??
+          content
             .filter((shape) => shape !== title && sizeOf(shape) < sizeOf(title) && (shape.paragraphs ?? []).filter(Boolean).length <= 1 && shapeText(shape).length <= 140)
             .map((shape) => ({ shape, box: placeOf(slide, shape) }))
             .filter(({ box }) => box.y >= titleBox.y + titleBox.h * 0.5 && box.y <= bottom(titleBox) + 0.1 && box.x < right(titleBox) && right(box) > titleBox.x)
@@ -246,7 +248,14 @@ export function styleManifest(pptx: Uint8Array | PptxPackage, options: StyleMani
   }
 
   // The cover and the closing slide: the template's first and last slide, where each has a title.
-  const titled = (pattern: PatternDef | undefined) => pattern?.slots.some((slot) => slot.name === 'title') === true;
+  // A cover or a closing slide is a title with little beside it: the line under it, the deck's own
+  // texts, a photograph, a text or two. A slide of content that happens to come first or last (a
+  // table, a list, headed columns) is neither: a deck would have to fill it to open or to end.
+  const titled = (pattern: PatternDef | undefined) => {
+    if (!pattern?.slots.some((slot) => slot.name === 'title')) return false;
+    const others = pattern.slots.filter((slot) => slot.name !== 'title' && slot.name !== 'subtitle' && slot.kind !== 'image' && !(slot.kind === 'text' && slot.deckField));
+    return others.length <= 2 && others.every((slot) => slot.kind === 'text' && !/^(list|heading)\d+$/.test(slot.name));
+  };
   const first = patterns.find((pattern) => pattern.sourceSlide === 1);
   const last = patterns.find((pattern) => pattern.sourceSlide === info.slides.length);
   const result: StyleManifest = { manifest: { version: 1, name: options.name ?? 'style', language, direction, patterns }, patterns: [], fields, notes };
@@ -254,12 +263,12 @@ export function styleManifest(pptx: Uint8Array | PptxPackage, options: StyleMani
     first.id = 'cover';
     first.description = 'The opening slide: the title of the deck and one line under it';
     result.cover = 'cover';
-  } else notes.push('the first slide has no text that reads as a title, so the deck has no cover of the template');
+  } else notes.push('the first slide is no title slide (it has no text that reads as a title, or it is a slide of content), so the deck has no cover of the template');
   if (last && last !== first && titled(last)) {
     last.id = 'closing';
     last.description = 'The closing slide: a few words and one line under them';
     result.closing = 'closing';
-  } else notes.push('the last slide has no text that reads as a title, so the deck has no closing slide of the template');
+  } else notes.push('the last slide is no title slide (it has no text that reads as a title, or it is a slide of content), so the deck has no closing slide of the template');
   // The frame of the slides the software lays out: of the slides whose title sits where most
   // titles sit, the one whose room under the title is clearest. A slide can show a drawing there
   // that is no shape of its own (it is drawn by its slide layout) or that repeats on many slides,
@@ -282,7 +291,7 @@ export function styleManifest(pptx: Uint8Array | PptxPackage, options: StyleMani
   const drawn = new Map<string, Box[]>();
   const layoutDraws = (part: string): Box[] => {
     let boxes = drawn.get(part);
-    if (!boxes) drawn.set(part, (boxes = part && pkg.has(part) ? drawnBoxes(rootElement(parseXml(pkg.readText(part))), info) : []));
+    if (!boxes) drawn.set(part, (boxes = part && pkg.has(part) ? drawnBoxes(rootElement(parseXml(pkg.readText(part))), info.slideWidth, info.slideHeight) : []));
     return boxes;
   };
   const clutter = (pattern: PatternDef, title: Box): number => {
@@ -349,28 +358,3 @@ export function styleManifest(pptx: Uint8Array | PptxPackage, options: StyleMani
 }
 
 const overlap = (a: Box, b: Box): number => Math.max(0, Math.min(right(a), right(b)) - Math.max(a.x, b.x)) * Math.max(0, Math.min(bottom(a), bottom(b)) - Math.max(a.y, b.y));
-
-/**
- * Where a slide layout draws something of its own: the boxes of its pictures, shapes and groups
- * that are no placeholders, as fractions of the slide. Every slide on the layout shows them, and
- * no slide can take them off.
- */
-function drawnBoxes(root: Element, info: TemplateInfo): Box[] {
-  const tree = path(root, [NS.p, 'cSld'], [NS.p, 'spTree']);
-  if (!tree) return [];
-  const boxes: Box[] = [];
-  for (const child of childElements(tree)) {
-    if (!['sp', 'pic', 'grpSp', 'cxnSp', 'graphicFrame'].includes(child.localName ?? '')) continue;
-    const nonVisual = childElements(child).find((entry) => /^nv\w+Pr$/.test(entry.localName ?? ''));
-    const application = nonVisual && childElement(nonVisual, NS.p, 'nvPr');
-    if (application && childElement(application, NS.p, 'ph')) continue;
-    const properties = childElement(child, NS.p, child.localName === 'grpSp' ? 'grpSpPr' : 'spPr');
-    const transform = properties ? childElement(properties, NS.a, 'xfrm') : child.localName === 'graphicFrame' ? childElement(child, NS.p, 'xfrm') : undefined;
-    const off = transform && childElement(transform, NS.a, 'off');
-    const ext = transform && childElement(transform, NS.a, 'ext');
-    if (!off || !ext) continue;
-    const box = { x: Number(off.getAttribute('x') ?? 0) / info.slideWidth, y: Number(off.getAttribute('y') ?? 0) / info.slideHeight, w: Number(ext.getAttribute('cx') ?? 0) / info.slideWidth, h: Number(ext.getAttribute('cy') ?? 0) / info.slideHeight };
-    if (box.w > 0 && box.h > 0) boxes.push(box);
-  }
-  return boxes;
-}

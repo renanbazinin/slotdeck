@@ -5,6 +5,7 @@
 // template's own layouts use their shapes.
 import { contrast, luminance } from '../color/space.ts';
 import { chartColors, fillColor, isColor, literalOf, pageColor, paletteOf, schemeOf } from '../color/recolor.ts';
+import { drawnBehind } from '../template/drawn.ts';
 import type { Scheme } from '../color/recolor.ts';
 import type { TemplatePalette } from '../color/palette.ts';
 import type { PptxPackage } from '../pptx/package.ts';
@@ -385,6 +386,9 @@ function scan(template: Template): Scan {
       // A placeholder is read as the shape it is once it states what its layout and master give it.
       const stated = held ? styles.standalone(number, shapeId) : element;
       if (!stated || hasRelationship(stated)) continue;
+      // A placeholder its layout draws a line round (a boxed caption) is a box with a text in it: its look is no text style.
+      const line = held ? path(stated, [NS.p, 'spPr'], [NS.a, 'ln']) : undefined;
+      if (line && childElements(line, NS.a).some((child) => /Fill$/.test(child.localName ?? '') && child.localName !== 'noFill')) continue;
       const frame = styles.frame(number, shapeId, slot.styleRun);
       const paragraph = frame?.paragraphs[0];
       if (!frame || !paragraph || frame.vertical) continue;
@@ -439,9 +443,17 @@ function scan(template: Template): Scan {
     const title = titleBox;
     const framed = new Set(patterns.flatMap((pattern) => pattern.slots.filter((slot) => slot.kind === 'text' && slot.deckField).map((slot) => slot.shapeId)));
     const subtitles = new Set(patterns.flatMap((pattern) => pattern.slots.filter((slot) => slot.kind === 'text' && SUBTITLE.test(slot.name)).map((slot) => slot.shapeId)));
-    const under = slide.shapes.filter(
+    let under = slide.shapes.filter(
       (shape) => shape.kind !== 'group' && shape.placeholder === undefined && !framed.has(shape.id) && shape.box.w < 0.98 && shape.box.w > 0 && shape.box.h > 0 && !(title && shape.box === title) && (!title || shape.box.y >= bottom(title) - TOL) && !inFrameBand(shape.box),
     );
+    // A slide whose content is all placeholders (from 0.10.1): its content sits where they stand,
+    // which for a placeholder that states no place is where its layout or its master puts it.
+    if (under.length === 0 && title) {
+      under = slide.shapes
+        .filter((shape) => shape.kind === 'text' && shape.placeholder !== undefined && !['title', 'ctrTitle', 'dt', 'ftr', 'sldNum', 'hdr'].includes(shape.placeholder) && !framed.has(shape.id))
+        .map((shape) => ({ ...shape, box: placeOf(number, shape) }))
+        .filter((shape) => shape.box.w < 0.98 && shape.box.w > 0 && shape.box.h > 0 && shape.box.y >= bottom(title) - TOL && !inFrameBand(shape.box));
+    }
     const body = under.filter((shape) => !subtitles.has(shape.id));
     if (title && body.length > 0) result.content.push({ slide: number, top: Math.min(...body.map((shape) => shape.box.y)), under: Math.min(...under.map((shape) => shape.box.y)), bottom: Math.max(...body.map((shape) => bottom(shape.box))), title });
   }
@@ -479,18 +491,29 @@ function chooseStyles(found: Scan, base: { titleSize: number; titleShape: { slid
   const plain = found.candidates.filter((candidate) => !candidate.fill && !candidate.names.includes('title') && reads(candidate));
   const best = <T>(list: T[], ...by: Array<(a: T, b: T) => number>): T | undefined => list.slice().sort((a, b) => by.reduce((result, compare) => result || compare(a, b), 0))[0];
 
+  if (base.large) {
+    // Where placeholders are copied (`large`), running text is the text most of the template's
+    // content is set in: its body placeholder, bulleted as a rule. The one line under a cover's
+    // title has no bullet and would be taken before it, and gives every slide the look of a
+    // subtitle. A template whose every running text is set large, as the 32 pt body under a 44 pt
+    // title of an old default is, still has a text to stand in: it is set at under half the
+    // title's size, which is what running text is beside such a title.
+    const content = plain.filter((candidate) => !named(candidate, /^subtitle$/i));
+    const pool = content.length > 0 ? content : plain;
+    const fitting = pool.filter((candidate) => candidate.size <= 0.7 * T);
+    const most = best(fitting.length > 0 ? fitting : pool, (a, b) => b.budgets - a.budgets, order);
+    if (!most) return undefined;
+    const size = fitting.length > 0 ? most.size : Math.min(most.size, Math.max(10, Math.round(0.45 * T * 2) / 2));
+    if (!most.bullet && !most.bold && !most.italic && size === most.size) return rolesFrom(found, most, T, reads, base.rtl);
+    return fallbackStyles(found, { ...most, size }, T, reads, base.rtl);
+  }
   const bodies = plain.filter((candidate) => !candidate.bullet && !candidate.bold && !candidate.italic && candidate.size <= 0.6 * T);
   const body = best(bodies.filter((candidate) => candidate.budget >= 80), (a, b) => b.budgets - a.budgets, (a, b) => b.uses - a.uses, order) ?? best(bodies, (a, b) => b.budgets - a.budgets, (a, b) => b.uses - a.uses, order);
   if (!body) {
     // A template whose running text is all bold, bulleted or large still has a text to stand in.
     const any = best(plain.filter((candidate) => candidate.size <= 0.7 * T), (a, b) => b.budgets - a.budgets, order);
-    if (any) return fallbackStyles(found, any, T, reads, base.rtl);
-    // Where placeholders are copied (`large`): a template whose every running text is set large,
-    // as the 32 pt body under a 44 pt title of an old default is, still has a text to stand in.
-    // It is set at under half the title's size, which is what running text is beside such a title.
-    const large = base.large ? best(plain, (a, b) => b.budgets - a.budgets, order) : undefined;
-    if (!large) return undefined;
-    return fallbackStyles(found, { ...large, size: Math.min(large.size, Math.max(10, Math.round(0.45 * T * 2) / 2)) }, T, reads, base.rtl);
+    if (!any) return undefined;
+    return fallbackStyles(found, any, T, reads, base.rtl);
   }
   return rolesFrom(found, body, T, reads, base.rtl);
 }
@@ -743,11 +766,14 @@ function frameKit(template: Template, found: Scan, id: string | undefined): Free
   // margins. Its room is then widened at that side: as far as the margin at the start side, no
   // further than what stays above the title reaches (a logo, a rule, the page number), and only
   // when nothing that stays lies in the strip that is added.
+  // What the frame's slide layout and master draw behind every slide: a decoration down one side, a banner under the title.
+  const behind = ref ? drawnBehind(pkg, ref.part, info.slideWidth, info.slideHeight).filter((box) => !(box.w >= 0.95 && box.h >= 0.95)) : [];
   const area = widened(
     kit.area,
     manifest.direction,
     slide.shapes.filter((shape) => stays.has(shape.id) && shape.kind !== 'group' && shape.id !== titleShape?.id && !(shape.box.w >= 0.98 && shape.box.h >= 0.98)),
     titleBox,
+    behind,
   );
   // The band the template's own layouts keep their content in. Its top is where the first thing
   // under their title starts. Where the frame of a free slide draws something on the line a
@@ -771,6 +797,14 @@ function frameKit(template: Template, found: Scan, id: string | undefined): Free
   const low = bottoms.length > 0 ? (bottoms[Math.min(bottoms.length - 1, Math.ceil(0.75 * (bottoms.length - 1)))] as number) : usual;
   const end = Math.min(areaBottom, Math.max(top + 0.3, Math.min(low, usual + lowered)));
   const gap = clamp(median(found.gaps) ?? 0.02, 0.012, 0.03);
+  // The larger room starts just under the title. Where the slide layout or the master draws
+  // something that starts or ends between that line and the band (a banner behind the title, the
+  // top of a panel the content stands on), it starts with the band (from 0.10.1): text set in
+  // that gap stood on the edge of the drawing.
+  const closest = Math.min(top, titleBottom + 0.02);
+  const inGap = (y: number) => y > closest + TOL && y < top - TOL;
+  const edged = behind.some((box) => box.x < right(area) - TOL && right(box) > area.x + TOL && (inGap(box.y) || inGap(bottom(box))));
+  const denseTop = edged ? top : closest;
 
   const result: FreeKit = {
     base: base.id,
@@ -782,7 +816,7 @@ function frameKit(template: Template, found: Scan, id: string | undefined): Free
     frameSlots: base.slots.filter((slot) => slot.kind === 'text' && slot.deckField !== undefined && stays.has(slot.shapeId)).map((slot) => structuredClone(slot)),
     area,
     band: { top: round(top), bottom: round(end) },
-    dense: { top: round(Math.min(top, titleBottom + 0.02)), bottom: round(areaBottom) },
+    dense: { top: round(denseTop), bottom: round(areaBottom) },
     gap: round(gap),
     background,
     ink: found.inks.get(slide.number) ?? '000000',
@@ -861,7 +895,7 @@ function frameKit(template: Template, found: Scan, id: string | undefined): Free
  * ends where it leaves a hundredth of the slide's width more margin there than at the side
  * reading starts. See where it is called.
  */
-export function widened(area: SlideBox, direction: Direction, staying: ShapeInfo[], title: Box | undefined): SlideBox {
+export function widened(area: SlideBox, direction: Direction, staying: ShapeInfo[], title: Box | undefined, behind: Box[] = []): SlideBox {
   const rtl = direction === 'rtl';
   const start = rtl ? 1 - right(area) : area.x;
   const endNow = rtl ? area.x : 1 - right(area);
@@ -875,6 +909,11 @@ export function widened(area: SlideBox, direction: Direction, staying: ShapeInfo
   const strip: Box = rtl ? { x: margin, y: head, w: area.x - margin, h: bottom(area) - head } : { x: right(area), y: head, w: 1 - margin - right(area), h: bottom(area) - head };
   const blocked = staying.some((shape) => shape.box.x < right(strip) - TOL && right(shape.box) > strip.x + TOL && shape.box.y < bottom(strip) - TOL && bottom(shape.box) > strip.y + TOL);
   if (blocked) return area;
+  // Nor when the slide layout or the master draws there, under the title (from 0.10.1): the
+  // margin is then a decoration's, not empty room. What is drawn beside the title alone, a logo
+  // in a corner, takes nothing from the content under it.
+  const under = title ? bottom(title) : strip.y;
+  if (behind.some((box) => box.x < right(strip) - TOL && right(box) > strip.x + TOL && box.y < bottom(strip) - TOL && bottom(box) > under + TOL)) return area;
   return rtl ? { ...area, x: round(margin), w: round(right(area) - margin) } : { ...area, w: round(1 - margin - area.x) };
 }
 

@@ -242,18 +242,28 @@ function runsThrough(shape: ShapeInfo, area: Box): boolean {
 }
 
 /** The area the composed content may use: within the margins the template's content keeps, under the header and above the footer. */
-function contentArea(manifest: TemplateManifest, info: TemplateInfo, slide: SlideInfo, stays: Set<string>, title: Box): Box {
+function contentArea(manifest: TemplateManifest, info: TemplateInfo, slide: SlideInfo, stays: Set<string>, title: Box, placed?: (slide: number, shape: ShapeInfo) => Box): Box {
   const lefts: number[] = [];
   const rights: number[] = [];
   const used = new Set(manifest.patterns.map((pattern) => pattern.sourceSlide));
   const frame = frameFacts(info);
+  const within = (box: Box) => box.w > 0 && box.w < 0.9 && box.x > 0.005 && right(box) < 0.995;
   for (const number of used) {
-    const shapes = (info.slides[number - 1]?.shapes ?? []).filter(
-      (shape) => shape.kind !== 'group' && !frame.isFrame(shape) && !isFramePlaceholder(shape) && shape.box.w > 0 && shape.box.w < 0.9 && shape.box.x > 0.005 && right(shape.box) < 0.995,
-    );
-    if (shapes.length === 0) continue;
-    lefts.push(Math.min(...shapes.map((shape) => shape.box.x)));
-    rights.push(Math.max(...shapes.map((shape) => right(shape.box))));
+    const all = (info.slides[number - 1]?.shapes ?? []).filter((shape) => shape.kind !== 'group' && !isFramePlaceholder(shape));
+    let boxes = all.filter((shape) => !frame.isFrame(shape)).map((shape) => shape.box).filter(within);
+    // A slide whose every text is a placeholder that takes its place from the slide layout states
+    // no box at all (from 0.10.1): its content stands where the layout, or the master, puts its
+    // body. Such a body often spans nine tenths of the slide, which is its content area and no
+    // band across the page. A title slide says nothing of where content stands.
+    if (boxes.length === 0 && placed && !all.some((shape) => shape.placeholder === 'ctrTitle')) {
+      boxes = all
+        .filter((shape) => shape.kind === 'text' && shape.placeholder !== undefined && shape.placeholder !== 'title' && !(shape.box.w > 0 || shape.box.h > 0))
+        .map((shape) => placed(number, shape))
+        .filter((box) => box.w > 0 && box.w < 0.98 && box.x > 0.005 && right(box) < 0.995);
+    }
+    if (boxes.length === 0) continue;
+    lefts.push(Math.min(...boxes.map((box) => box.x)));
+    rights.push(Math.max(...boxes.map((box) => right(box))));
   }
   const x = Math.max(0.02, Math.min(median(lefts) || 0.06, title.w > 0 ? title.x : 1));
   const xEnd = Math.min(0.98, Math.max(median(rights) || 0.94, title.w > 0 ? right(title) : 0));
@@ -369,7 +379,12 @@ function kitWith(template: Template, info: TemplateInfo, wanted?: string): KitPa
   const { pattern: base, slide, title } = picked;
   const { stays, laid } = staying(base, slide, info);
   const titleShape = slide.shapes.find((shape) => shape.id === title.shapeId) as ShapeInfo;
-  const area = contentArea(manifest, info, slide, laid, slotBox(title, titleShape));
+  const text = new TextStyles(template.pkg);
+  const placed = (number: number, shape: ShapeInfo): Box => {
+    const from = text.inheritedBox(number, shape.id);
+    return from && from.cx > 0 && from.cy > 0 ? { x: round(from.x / info.slideWidth), y: round(from.y / info.slideHeight), w: round(from.cx / info.slideWidth), h: round(from.cy / info.slideHeight) } : shape.box;
+  };
+  const area = contentArea(manifest, info, slide, laid, slotBox(title, titleShape), placed);
   for (const shape of slide.shapes) if (stays.has(shape.id) && runsThrough(shape, area)) stays.delete(shape.id);
 
   const taken = Array.from({ length: GRID }, () => Array.from({ length: GRID }, () => false));

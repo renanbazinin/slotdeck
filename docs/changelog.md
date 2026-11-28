@@ -3,6 +3,43 @@
 What changed in each version, newest first, with what to do when upgrading. The version you have installed is
 in `node_modules/slotdeck/package.json`.
 
+## 0.10.1
+
+Style-only mode on the themes and templates that ship with an office suite: eleven themes with an ordinary deck
+on each, and six designed templates. Thirteen of the seventeen carry a deck; the fixes below are what they
+showed. A template that carried free slides before 0.10.0 renders as it did.
+
+### Fixed
+
+- **The content of a slide of placeholders stands where its layout puts it.** A slide whose every text is a
+  placeholder states no place of its own, and the room of free slides was the usual margins (6% to 94% of the
+  slide) whatever the template drew there. It is now where the layout, or the master, puts the body: on a theme
+  with a decoration down one side, or a paper card in the middle of the page, the blocks stand where the
+  theme's own text does. The band the blocks are kept in starts and ends where that body does, where it was
+  a guess from the title's place.
+- **The room is not widened into what the slide layout or the master draws.** A free slide's room is widened
+  at the side reading ends to match the margin where reading starts. It is no longer widened where the layout
+  or the master draws something in that strip under the title. Shapes inside a group are read one by one: a
+  group that spans the slide draws where its children are.
+- **The larger room of a crowded slide starts with the band where something is drawn in between.** It started
+  just under the title. Where the layout or the master draws something that starts or ends between that line
+  and the band (a banner behind the title, the top of a panel the content stands on), it starts with the band:
+  text set in that gap stood on the edge of the drawing.
+- **Where placeholders are copied, running text is the body of the content slides.** The line under a cover's
+  title is plain, small and has no bullet, and was taken for running text before the bulleted body was: every
+  slide then had the look of a subtitle (capitals, the accent colour). Running text is now the text most of
+  the template's content is set in, without its bullet, and a subtitle is the last choice.
+- **A placeholder its layout draws a line round is no text style.** A boxed caption was copied with its box
+  round every text.
+- **`styleManifest`: a cover and a closing slide are title slides.** A first or last slide of content (a table,
+  a list, headed columns) is no longer taken for one: a deck had to fill its table to end. A subtitle
+  placeholder is the line under the title whatever its sample holds, such as a presenter's name over a date.
+
+### Known
+
+- A theme whose title stands under its content (a title at the foot of the slide) cannot carry free slides:
+  `styleManifest` gives the reason. So does a photo album, which has no slide of content.
+
 ## 0.10.0
 
 Style-only mode: a deck in the style of a file nobody prepared. `styleManifest` makes a manifest from a `.pptx`

@@ -8,7 +8,8 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { pageColor } from '../src/color/recolor.ts';
-import { freeKitOrReason } from '../src/free/kit.ts';
+import { freeKitOrReason, widened } from '../src/free/kit.ts';
+import { drawnBoxes } from '../src/template/drawn.ts';
 import { PptxPackage } from '../src/pptx/package.ts';
 import { parseXml, rootElement } from '../src/pptx/xml.ts';
 import { checkManifest, freeSlide, loadTemplate, renderDeck, styleManifest, validateDeck } from '../src/index.ts';
@@ -265,4 +266,100 @@ test('a file that cannot carry such slides says why, and offers none', () => {
   assert.equal(style.manifest.free, false);
   assert.match(style.notes.join('\n'), /the template cannot carry slides the software lays out: no slide has a title/);
   assert.deepEqual(errors(checkManifest(loadTemplate(zipSync(zip), style.manifest))), []);
+});
+
+// 0.10.1: what decks on the themes of an office suite showed. Each case is the fixture with one part changed.
+const plainWith = (edits: Record<string, (xml: string) => string>): Uint8Array => {
+  const zip = unzipSync(plainPptx);
+  for (const [part, edit] of Object.entries(edits)) {
+    const before = strFromU8(zip[part] as Uint8Array);
+    const after = edit(before);
+    assert.notEqual(after, before, `${part} was not changed`);
+    zip[part] = strToU8(after);
+  }
+  return zipSync(zip);
+};
+const kitOf = (pptx: Uint8Array) => {
+  const kit = freeKitOrReason(loadTemplate(pptx, styleManifest(pptx).manifest));
+  assert.ok(typeof kit !== 'string', String(kit));
+  return kit as Exclude<typeof kit, string>;
+};
+const LAYOUT = 'ppt/slideLayouts/slideLayout2.xml';
+const MASTER = 'ppt/slideMasters/slideMaster1.xml';
+// The body of the content layout drawn over the left seven tenths of the slide, as a theme with a decoration down its right side has it.
+const narrowBody = (xml: string) => xml.replace('<p:ph idx="1"/></p:nvPr></p:nvSpPr><p:spPr/>', '<p:ph idx="1"/></p:nvPr></p:nvSpPr><p:spPr><a:xfrm><a:off x="457200" y="1600200"/><a:ext cx="5943600" cy="4525963"/></a:xfrm></p:spPr>');
+// A decoration of the master down the right fifth of the slide, inside a group that spans the slide and draws its children at half size.
+const SIDE =
+  '<p:grpSp><p:nvGrpSpPr><p:cNvPr id="90" name="Decoration"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="9144000" cy="6858000"/><a:chOff x="0" y="0"/><a:chExt cx="18288000" cy="13716000"/></a:xfrm></p:grpSpPr>' +
+  '<p:sp><p:nvSpPr><p:cNvPr id="91" name="Side"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="14630400" y="0"/><a:ext cx="3657600" cy="13716000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="4F81BD"/></a:solidFill></p:spPr></p:sp></p:grpSp>';
+const drawnOnMaster = (shape: string) => (xml: string) => xml.replace('</p:spTree>', `${shape}</p:spTree>`);
+
+test('the content of a slide of placeholders stands where its layout puts it, and the room is not widened into what the master draws', () => {
+  // What a master draws is read shape by shape: a group that spans the slide draws where its children are.
+  const pkg = PptxPackage.load(plainWith({ [MASTER]: drawnOnMaster(SIDE) }));
+  const boxes = drawnBoxes(rootElement(parseXml(pkg.readText(MASTER))), 9144000, 6858000);
+  assert.deepEqual(boxes, [{ x: 0.8, y: 0, w: 0.2, h: 1 }]);
+
+  // With nothing drawn beside it, a body that leaves the right of the slide free has its room widened to match the left margin.
+  const open = kitOf(plainWith({ [LAYOUT]: narrowBody }));
+  assert.ok(Math.abs(open.area.x - 0.05) < 0.005, String(open.area.x));
+  assert.ok(open.area.x + open.area.w > 0.9, `to ${open.area.x + open.area.w}`);
+  // With the master's decoration there, the room ends where the template's own body ends: nothing is set on the decoration.
+  const beside = kitOf(plainWith({ [LAYOUT]: narrowBody, [MASTER]: drawnOnMaster(SIDE) }));
+  assert.ok(Math.abs(beside.area.x - 0.05) < 0.005);
+  assert.ok(Math.abs(beside.area.x + beside.area.w - 0.7) < 0.01, `to ${beside.area.x + beside.area.w}`);
+
+  // The rule by itself: a strip is added at the side reading ends, unless something is drawn in it under the title.
+  const area = { x: 0.05, y: 0.04, w: 0.65, h: 0.9 };
+  const title = { x: 0.05, y: 0.04, w: 0.9, h: 0.17 };
+  assert.ok(widened(area, 'ltr', [], title).w > 0.85);
+  assert.deepEqual(widened(area, 'ltr', [], title, [{ x: 0.8, y: 0, w: 0.2, h: 1 }]), area);
+  // What is drawn beside the title alone, a logo in the corner, takes nothing from the room under it.
+  assert.ok(widened(area, 'ltr', [], title, [{ x: 0.85, y: 0.02, w: 0.1, h: 0.12 }]).w > 0.85);
+  assert.deepEqual(widened({ ...area, x: 0.3 }, 'rtl', [], title, [{ x: 0, y: 0, w: 0.2, h: 1 }]), { ...area, x: 0.3 });
+});
+
+test('the band starts where the template\'s own body starts, and the larger room does not reach over a banner behind the title', () => {
+  // The band starts where the master puts the body: 0.233 of the way down.
+  const plain = kitOf(plainPptx);
+  assert.ok(Math.abs(plain.band.top - 1600200 / 6858000) < 0.002, String(plain.band.top));
+  assert.ok(plain.dense.top <= plain.band.top);
+  // A layout that puts its body lower, three tenths of the way down: the band starts there, and a
+  // crowded slide may start just under the title, in the larger room.
+  const lowBody = (xml: string) => xml.replace('<p:ph idx="1"/></p:nvPr></p:nvSpPr><p:spPr/>', '<p:ph idx="1"/></p:nvPr></p:nvSpPr><p:spPr><a:xfrm><a:off x="457200" y="2057400"/><a:ext cx="8229600" cy="4069080"/></a:xfrm></p:spPr>');
+  const low = kitOf(plainWith({ [LAYOUT]: lowBody }));
+  assert.ok(Math.abs(low.band.top - 0.3) < 0.01, String(low.band.top));
+  assert.ok(low.dense.top < low.band.top - 0.05, `${low.dense.top} and ${low.band.top}`);
+  // With a banner of the master from the top of the slide to between the title and that body, the
+  // larger room starts with the band: text set in the gap stood on the banner's edge.
+  const banner = '<p:sp><p:nvSpPr><p:cNvPr id="92" name="Banner"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="9144000" cy="1783080"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="4F81BD"/></a:solidFill></p:spPr></p:sp>';
+  const under = kitOf(plainWith({ [LAYOUT]: lowBody, [MASTER]: drawnOnMaster(banner) }));
+  assert.equal(under.dense.top, under.band.top);
+  assert.equal(under.band.top, low.band.top);
+});
+
+test('running text is the body of the content slides, not the line under the cover\'s title, and not a boxed caption', () => {
+  // The subtitle of the cover at 18 pt: plain, small and with no bullet, it was taken for running text before the body was.
+  const small = kitOf(plainWith({ 'ppt/slides/slide1.xml': (xml) => xml.replace('<a:r><a:t>The plan for 2027</a:t></a:r>', '<a:r><a:rPr sz="1800"/><a:t>The plan for 2027</a:t></a:r>') }));
+  assert.deepEqual([small.styles.body.slide, small.styles.body.shapeId], [2, '3']);
+  // A body placeholder its layout draws a line round is a box with a text in it: its look is no text style.
+  const boxed = (xml: string) => xml.replace('<p:ph idx="1"/></p:nvPr></p:nvSpPr><p:spPr/>', '<p:ph idx="1"/></p:nvPr></p:nvSpPr><p:spPr><a:ln w="38100"><a:solidFill><a:srgbClr val="C0504D"/></a:solidFill></a:ln></p:spPr>');
+  const outlined = freeKitOrReason(loadTemplate(plainWith({ [LAYOUT]: boxed }), styleManifest(plainWith({ [LAYOUT]: boxed })).manifest));
+  if (typeof outlined !== 'string') assert.notDeepEqual([outlined.styles.body.slide, outlined.styles.body.shapeId], [2, '3']);
+});
+
+test('a cover and a closing slide are title slides: a slide of content that comes last is no closing slide', () => {
+  // The fixture without its last slide: the deck ends on a title and a bulleted body.
+  const zip = unzipSync(plainPptx);
+  const presentation = strFromU8(zip['ppt/presentation.xml'] as Uint8Array);
+  const ids = [...presentation.matchAll(/<p:sldId [^>]*\/>/g)].map((match) => match[0]);
+  zip['ppt/presentation.xml'] = strToU8(presentation.replace(ids[4] as string, ''));
+  const style = styleManifest(zipSync(zip));
+  assert.equal(style.closing, undefined);
+  assert.deepEqual(style.patterns, ['cover', 'free']);
+  assert.match(style.notes.join('\n'), /the last slide is no title slide/);
+  // A subtitle placeholder is the line under the title whatever its sample holds: a presenter's name over a date.
+  const twoLines = styleManifest(plainWith({ 'ppt/slides/slide1.xml': (xml) => xml.replace('<a:p><a:r><a:t>The plan for 2027</a:t></a:r></a:p>', '<a:p><a:r><a:t>Dana Levi</a:t></a:r></a:p><a:p><a:r><a:t>November 2026</a:t></a:r></a:p>') }));
+  assert.equal(twoLines.cover, 'cover');
+  assert.ok(twoLines.manifest.patterns[0]?.slots.some((slot) => slot.name === 'subtitle'));
 });

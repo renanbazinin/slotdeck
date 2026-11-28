@@ -77,12 +77,12 @@ Nothing is asked of a model. Everything is measured on the file:
 | --- | --- |
 | Direction and language | By the letters of the file's texts: right to left where most are Hebrew or Arabic. |
 | The title of a slide | Its title placeholder; else its largest text in the upper half; else, on a slide with nothing up there (a cover), its largest text when that is clearly larger than running text. |
-| The line under a title | The nearest smaller single line under the title. It is optional: a deck that leaves it out has it removed. |
+| The line under a title | A subtitle placeholder; else the nearest smaller single line under the title. It is optional: a deck that leaves it out has it removed. |
 | A heading | A short line with a longer text right under it, in its column. |
 | A big number | A few characters with a digit, set far larger than running text. |
 | The deck's own texts | Footer, header and date placeholders with text, and short texts that repeat in the margins of many slides. They become `fields`. The page number stays the software's. |
 | Photographs and tables | A picture that fills 3% of the slide or more and is no pictogram is a photo slot that keeps the file's own picture; a table is a table slot. |
-| The cover and the closing slide | The first and the last slide, where each has a title. |
+| The cover and the closing slide | The first and the last slide, where each is a title slide: a title, the line under it, a text or two. A slide of content that comes first or last (a table, a list, headed columns) is neither. |
 | The frame of free slides | Of the slides whose title sits where most titles sit, in the upper part of the slide: the one with the least drawn under its title by its slide layout, then one whose page keeps the file's glow in a corner, then the one with the fewest shapes. |
 | Text that is too small to read | Running text under what 14 pt is on a slide 13.33 inches wide is enlarged on every slide (`manifest.textScale`), by no more than half. |
 | Colours | By how much the slides use each colour, as for every template. A file whose slides draw nothing in a colour takes the first two accents of its theme (`manifest.colors`). |
@@ -101,6 +101,10 @@ them as they are drawn:
 - Running text taken from a bulleted body has no bullet; a list keeps the file's bullets.
 - A body set large (the 32 pt under a 44 pt title of an old default template) stands in at under half the title's
   size: that is what running text is beside such a title.
+- Running text is the text most of the content is set in, the body of the content slides. The line under a
+  cover's title is the last choice, and a placeholder its layout draws a line round (a boxed caption) is none.
+- The blocks stand where the file's own body stands: beside a decoration its layout draws down one side, inside
+  a card in the middle of the page, under a banner behind the title.
 
 This is the engine's doing, not only this mode's: from 0.10.0 any template whose running text is all in
 placeholders can carry free slides. A template with a text box to copy keeps the styles it always had; the
@@ -113,7 +117,7 @@ placeholders are copied only where there is nothing else, or where the manifest 
 
 | Reason | What it means |
 | --- | --- |
-| `no slide has a title in its upper part with room under it ...` | The file is all covers, dividers and full-page pictures. Slides the software lays out need one slide with a title at the top and content under it. |
+| `no slide has a title in its upper part with room under it ...` | The file is all covers, dividers and full-page pictures (a photo album), or its titles stand under the content, at the foot of the slide. Slides the software lays out need one slide with a title at the top and content under it. |
 | `the template's layouts have no running text that reads on this layout's background ...` | No text of the file can be copied as running text on the frame: every text is a title or a picture of text, or its colour does not read on the frame's page. |
 | another sentence of the engine | As `validateDeck` would say it of a free slide: see "Limits" in [free-slides.md](free-slides.md). |
 
