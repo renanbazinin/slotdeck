@@ -8,8 +8,9 @@ import { ContentTypes, readRels, relsOwner, resolveTarget } from '../src/pptx/pa
 import { readPresentation } from '../src/pptx/presentation.ts';
 import { NS, childElement, childElements, descendants, parseXml, path, rootElement } from '../src/pptx/xml.ts';
 import type { Element } from '../src/pptx/xml.ts';
+import { placeShape } from '../src/render/repeat.ts';
 import { writable } from '../src/util/chars.ts';
-import { buildFixturePptx, fixtureManifest } from './fixture.ts';
+import { buildFixturePptx, fixtureManifest, fixtureWithSlide } from './fixture.ts';
 
 const fixture = buildFixturePptx();
 const square = placeholderPhoto(100, 100, [10, 20, 30], [200, 210, 220]);
@@ -281,4 +282,63 @@ test('content types list exactly the parts that exist', () => {
   assert.ok(!text.includes('/ppt/slides/slide2.xml'));
   assert.ok(!text.includes('notesSlide'));
   ContentTypes.read(pkg); // still parses
+});
+
+// 0.10.2: a box for a shape that states no place of its own. Before, the render refused it as if
+// the shape were inside a group.
+const withBox = (slotName: string, box: { x: number; y: number; w: number; h: number }): TemplateManifest => ({
+  ...fixtureManifest,
+  patterns: fixtureManifest.patterns.map((pattern) => (pattern.id === 'content' ? { ...pattern, slots: pattern.slots.map((slot) => (slot.name === slotName && (slot.kind === 'text' || slot.kind === 'image') ? { ...slot, box } : slot)) } : pattern)),
+});
+
+test('a box set on a placeholder that takes its place from its layout gives it a place of its own', () => {
+  // The title as a placeholder that states nothing of its own: where it stands is its slide layout's to say.
+  const bare = fixtureWithSlide(1, (xml) => xml.replace(/(<p:cNvPr id="2" name="Title"\/>)<p:cNvSpPr txBox="1"\/><p:nvPr\/><\/p:nvSpPr><p:spPr>.*?<\/p:spPr>/, '$1<p:cNvSpPr/><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr><p:spPr/>'));
+  const box = { x: 0.1, y: 0.2, w: 0.5, h: 0.25 };
+  const result = renderDeck(loadTemplate(bare, withBox('title', box)), { version: 1, slides: [contentSlide()] }, { assets });
+  const pkg = PptxPackage.load(result.pptx);
+  const title = shape(rootElement(parseXml(pkg.readText('ppt/slides/slide1.xml'))), '2') as Element;
+  const props = childElement(title, NS.p, 'spPr') as Element;
+  const xfrm = childElement(props, NS.a, 'xfrm') as Element;
+  const { slideWidth, slideHeight } = readPresentation(pkg);
+  assert.deepEqual(childElements(xfrm).map((child) => child.localName), ['off', 'ext'], 'where it starts, then how large it is');
+  assert.deepEqual(
+    [path(props, [NS.a, 'xfrm'], [NS.a, 'off'])?.getAttribute('x'), path(props, [NS.a, 'xfrm'], [NS.a, 'off'])?.getAttribute('y'), path(props, [NS.a, 'xfrm'], [NS.a, 'ext'])?.getAttribute('cx'), path(props, [NS.a, 'xfrm'], [NS.a, 'ext'])?.getAttribute('cy')],
+    [box.x * slideWidth, box.y * slideHeight, box.w * slideWidth, box.h * slideHeight].map((value) => String(Math.round(value))),
+  );
+  // It is the placeholder it was, with the deck's text: only its place is its own now.
+  assert.equal(descendants(title, NS.p, 'ph')[0]?.getAttribute('type'), 'title');
+  assert.equal(textOf(title), 'שלום');
+  assert.doesNotMatch(pkg.readText('ppt/slides/slide1.xml'), /<a:xfrm[^>]*xmlns/, 'written in the namespace the slide already names');
+  // Without a box the same placeholder is left as it is: it states no place.
+  const plain = renderDeck(loadTemplate(bare, fixtureManifest), { version: 1, slides: [contentSlide()] }, { assets });
+  assert.match(PptxPackage.load(plain.pptx).readText('ppt/slides/slide1.xml'), /<p:ph type="title"\/><\/p:nvPr><\/p:nvSpPr><p:spPr\/>/);
+});
+
+test('a place is made where a shape states its properties, and a box is refused with the reason where none can be', () => {
+  const tree = (inner: string) => rootElement(parseXml(`<p:spTree xmlns:a="${NS.a}" xmlns:p="${NS.p}">${inner}</p:spTree>`));
+  const box = { x: 0.25, y: 0.5, w: 0.5, h: 0.25 };
+  const placed = (inner: string) => {
+    const el = childElements(tree(inner))[0] as Element;
+    placeShape(el, box, 1000, 400);
+    const props = childElement(el, NS.p, 'spPr') as Element;
+    const xfrm = childElement(props, NS.a, 'xfrm') as Element;
+    const at = (name: string, attribute: string) => childElement(xfrm, NS.a, name)?.getAttribute(attribute);
+    return { props: childElements(props).map((child) => child.localName), xfrm: childElements(xfrm).map((child) => child.localName), rot: xfrm.getAttribute('rot'), area: [at('off', 'x'), at('off', 'y'), at('ext', 'cx'), at('ext', 'cy')] };
+  };
+  const area = ['250', '200', '500', '100'];
+  // The place comes before the outline of the shape, as a file must have it.
+  assert.deepEqual(placed('<p:sp><p:nvSpPr/><p:spPr><a:prstGeom prst="rect"/><a:noFill/></p:spPr></p:sp>'), { props: ['xfrm', 'prstGeom', 'noFill'], xfrm: ['off', 'ext'], rot: null, area });
+  // A shape that states only how it is turned keeps that, and one that states only its size has its start set before it.
+  assert.deepEqual(placed('<p:sp><p:nvSpPr/><p:spPr><a:xfrm rot="5400000"/></p:spPr></p:sp>'), { props: ['xfrm'], xfrm: ['off', 'ext'], rot: '5400000', area });
+  assert.deepEqual(placed('<p:sp><p:nvSpPr/><p:spPr><a:xfrm><a:ext cx="7" cy="7"/></a:xfrm></p:spPr></p:sp>'), { props: ['xfrm'], xfrm: ['off', 'ext'], rot: null, area });
+  // A shape with a place of its own has it set, as before.
+  assert.deepEqual(placed('<p:sp><p:nvSpPr/><p:spPr><a:xfrm><a:off x="1" y="2"/><a:ext cx="3" cy="4"/></a:xfrm></p:spPr></p:sp>'), { props: ['xfrm'], xfrm: ['off', 'ext'], rot: null, area });
+  // A group without a place places its children itself: there is nowhere to state one.
+  assert.throws(() => placeShape(childElements(tree('<p:grpSp><p:nvGrpSpPr/><p:grpSpPr/></p:grpSp>'))[0] as Element, box, 1000, 400), /can state a place of its own/);
+  // A shape inside a group is still refused, and by its true reason.
+  const inside = childElements(childElements(tree('<p:grpSp><p:nvGrpSpPr/><p:grpSpPr/><p:sp><p:nvSpPr/><p:spPr/></p:sp></p:grpSp>'))[0] as Element, NS.p, 'sp')[0] as Element;
+  assert.throws(() => placeShape(inside, box, 1000, 400), /not inside a group/);
+  // In a deck the refusal names its slide and its slot: the icon stays as drawn (`empty: 'keep'`), in a group, and is given a box.
+  assert.throws(() => render({ slides: [contentSlide()] }, {}, withBox('icon', box)), /^Error: slide 1 \/ icon: a box can only be set for a shape that is not inside a group$/);
 });
