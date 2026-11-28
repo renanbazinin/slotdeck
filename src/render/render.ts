@@ -285,7 +285,7 @@ ${colors?.key}` : assetId;
         removeNode(shape);
       } else if (action.type === 'keep') {
         // A part of the design that a derived pattern shows in another place.
-        if ((slot.kind === 'text' || slot.kind === 'image') && slot.box) moveShape(shape, slot.box, pres.slideWidth, pres.slideHeight);
+        if ((slot.kind === 'text' || slot.kind === 'image') && slot.box) inSlot(number, slot.name, () => moveShape(shape, slot.box as SlideBox, pres.slideWidth, pres.slideHeight));
       } else if (action.type === 'text' && slot.kind === 'text') {
         const align = slot.alignOnDirectionChange ?? manifest.alignOnDirectionChange ?? 'flip';
         const text: TextOptions = { flipAlign: directionChanged && align === 'flip', ...writing };
@@ -296,7 +296,7 @@ ${colors?.key}` : assetId;
           if (accent) text.strongColor = accent;
         }
         setShapeText(shape, action.paragraphs, slot.styleRun ? { ...text, styleRun: slot.styleRun } : text);
-        if (slot.box) placeShape(shape, slot.box, pres.slideWidth, pres.slideHeight);
+        if (slot.box) inSlot(number, slot.name, () => placeShape(shape, slot.box as SlideBox, pres.slideWidth, pres.slideHeight));
         const change: Parameters<typeof adjustText>[1] = {};
         if (slot.fontSize !== undefined) change.size = slot.fontSize;
         if (textScale !== 1 && scalesWithText(slot)) change.scale = textScale;
@@ -348,7 +348,7 @@ ${colors?.key}` : assetId;
         const frameArea = !box && slot.fill ? tableArea(shape) : undefined;
         const sampleRows = frameArea ? descendants(shape, NS.a, 'tr').length : 0;
         const aligns = box ? planned.columnAligns : frameArea ? numberAligns(action.table, writing.direction ?? 'ltr') : undefined;
-        setTable(shape, action.table, tableAtScale(slot, textScale), deck.direction ?? manifest.direction, aligns, writing);
+        inSlot(number, slot.name, () => setTable(shape, action.table, tableAtScale(slot, textScale), deck.direction ?? manifest.direction, aligns, writing));
         // What a screen reader says of it: its headings and how many rows it has.
         path(shape, [NS.p, 'nvGraphicFramePr'], [NS.p, 'cNvPr'])?.setAttribute('descr', tableAlt(action.table, language, writing.direction));
         // Its rows share the frame as the sample's rows do: a heading drawn lower than the rows stays lower.
@@ -454,6 +454,21 @@ ${colors?.key}` : assetId;
   types.save(out);
 
   return { pptx: out.save(), warnings: issues.filter((issue) => issue.severity === 'warning'), shrunk };
+}
+
+
+/**
+ * Fills a slot and, where that cannot be done, says of which slide and which slot: what a table or
+ * a box cannot be made of is a matter of one shape of the template, and an error without its place
+ * leaves a person to find it. An error that names its slide already is passed on as it is.
+ */
+function inSlot<T>(slide: number, slot: string, fill: () => T): T {
+  try {
+    return fill();
+  } catch (error) {
+    if (!(error instanceof Error) || error instanceof DeckValidationError || error.message.startsWith(`slide ${slide} / `)) throw error;
+    throw new Error(`slide ${slide} / ${slot}: ${error.message}`, { cause: error });
+  }
 }
 
 /**

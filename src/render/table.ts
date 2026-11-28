@@ -12,6 +12,8 @@ import type { TextOptions } from './text.ts';
  * - The first sample row is the header; the body rows that follow are reused in turn.
  * - Columns share the table's width equally.
  * - The table runs in the deck's reading direction, with text aligned to its start.
+ * - A sample with merged cells gives its styles like any other, and the table that is built has
+ *   none merged (see {@link sampleCell}). From 0.10.2; before, such a sample was refused.
  *
  * `aligns` sets the cells of single columns otherwise: `'r'` for a column of numbers, which are
  * read by their last digits. A column it does not name starts where reading starts.
@@ -28,9 +30,6 @@ export function setTable(frame: Element, table: TableValue, slot: TableSlotDef, 
   const sampleColumns = grid ? childElements(grid, NS.a, 'gridCol') : [];
   const headerSample = sampleRows[0];
   if (!grid || !headerSample || sampleColumns.length === 0) throw new Error('the sample table has no rows or columns to copy');
-  if (descendants(tbl, NS.a, 'tc').some((cell) => ['gridSpan', 'rowSpan', 'hMerge', 'vMerge'].some((name) => cell.hasAttribute(name)))) {
-    throw new Error('sample tables with merged cells are not supported');
-  }
   // With two or more body rows the first two carry the banding; a single one is simply repeated.
   const bodySamples = sampleRows.slice(1, 3);
   if (bodySamples.length === 0) bodySamples.push(headerSample);
@@ -56,11 +55,12 @@ export function setTable(frame: Element, table: TableValue, slot: TableSlotDef, 
     // Row ids must be unique, and a copied row would repeat its sample's.
     for (const extension of childElements(row, NS.a, 'extLst')) removeNode(extension);
     const sampleCells = childElements(row, NS.a, 'tc');
-    const lastSample = sampleCells[sampleCells.length - 1];
-    if (!lastSample) throw new Error('a sample table row has no cells');
+    if (sampleCells.length === 0) throw new Error('a sample table row has no cells');
+    // The sample's rows above this one: a cell merged down from one of them looks there for its text (see `sampleCell`).
+    const above = sampleRows.slice(0, Math.max(0, sampleRows.indexOf(sample))).map((other) => childElements(other, NS.a, 'tc'));
     for (const cell of sampleCells) removeNode(cell);
     cells.forEach((text, index) => {
-      const cell = (sampleCells[index] ?? lastSample).cloneNode(true) as Element;
+      const cell = sampleCell(sampleCells, Math.min(index, sampleCells.length - 1), above);
       const body = childElement(cell, NS.a, 'txBody');
       const cellAlign = aligns?.[index] ?? align;
       const options: TextOptions = { flipAlign: false, align: cellAlign, direction, ...(writing.language ? { language: writing.language } : {}), ...(writing.templateDirection ? { templateDirection: writing.templateDirection } : {}) };
@@ -88,6 +88,43 @@ export function setTable(frame: Element, table: TableValue, slot: TableSlotDef, 
   const extent = descendants(frame, NS.a, 'ext').find((el) => el.parentNode && (el.parentNode as Element).localName === 'xfrm');
   const height = rows.reduce((sum, row) => sum + Number(row.getAttribute('h') ?? 0), 0);
   if (extent && height > 0) extent.setAttribute('cy', String(height));
+}
+
+/** What makes a cell part of a merged one: how far it spans, or that a neighbour's span covers it. */
+const MERGE_MARKS = ['gridSpan', 'rowSpan', 'hMerge', 'vMerge'];
+
+/** Whether a cell is covered by the span of a neighbour: PowerPoint keeps it in the grid, with its own fill and borders and an empty text. */
+const mergedAway = (cell: Element): boolean => ['hMerge', 'vMerge'].some((name) => ['1', 'true'].includes(cell.getAttribute(name) ?? ''));
+
+/**
+ * A copy of the sample cell at a place in its row, as a cell of its own: what merges it with its
+ * neighbours is left out, so the table that is built has one cell for each column of each row.
+ *
+ * A cell that a neighbour's span covers keeps what PowerPoint kept of it (its fill, its borders,
+ * the room inside it) but states no text style: its text is the covering cell's. It takes its text
+ * from the nearest cell of its row that has one of its own, the one before it first (the cell that
+ * covers it, where it is merged along the row), and where its row has none, from the cell above it
+ * that covers it.
+ */
+function sampleCell(row: readonly Element[], index: number, above: ReadonlyArray<readonly Element[]>): Element {
+  const sample = row[index] as Element;
+  const cell = sample.cloneNode(true) as Element;
+  if (mergedAway(sample)) {
+    const own = (candidate: Element | undefined): candidate is Element => candidate !== undefined && !mergedAway(candidate);
+    const lender =
+      row.slice(0, index).reverse().find(own) ??
+      row.slice(index + 1).find(own) ??
+      above
+        .map((cells) => cells[index])
+        .reverse()
+        .find(own);
+    const text = lender && childElement(lender, NS.a, 'txBody');
+    const empty = childElement(cell, NS.a, 'txBody');
+    if (text && empty) cell.replaceChild(text.cloneNode(true), empty);
+    else if (text) cell.insertBefore(text.cloneNode(true), cell.firstChild);
+  }
+  for (const name of MERGE_MARKS) cell.removeAttribute(name);
+  return cell;
 }
 
 /** The area a table's frame takes on its slide, in EMU; `undefined` for a frame that states none. */

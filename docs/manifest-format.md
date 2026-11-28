@@ -119,7 +119,7 @@ slots themselves:
 | `size` | number | Font size of the slot's text on the template slide, in points. Informational: it decides whether a deck's `textScale` applies (see `scales`). |
 | `scales` | boolean | Whether a deck's `textScale` applies to this slot. Default: yes for text of 12 pt and under that is not a deck field. |
 | `fontSize` | number | Sets the font size outright, in points. For a derived pattern that uses the shape differently. |
-| `box` | `{ x, y, w, h }` | Moves and resizes the text box, as fractions of the slide (0 to 1). Only for a shape that is not inside a group. |
+| `box` | `{ x, y, w, h }` | Moves and resizes the text box, as fractions of the slide (0 to 1). Only for a shape that is not inside a group. A placeholder that takes its place from its slide layout is given a place of its own (from 0.10.2). |
 | `paragraphGap` | number | Space after each paragraph, in points. |
 | `alignOnDirectionChange` | `"flip"` or `"keep"` | Overrides the manifest's setting for this slot. |
 | `styleRun` | `"first"` or `"last"` | Which run of the template paragraph supplies the formatting, when the template paragraph mixes styles (a bold label followed by plain text). Default `first`. |

@@ -53,13 +53,41 @@ function moveBy(shape: Element, dx: number, dy: number): void {
   off.setAttribute('y', String(Math.round(Number(off.getAttribute('y') ?? 0) + dy)));
 }
 
-/** Places a shape that is not inside a group at a given area of the slide. Sizes are in EMU. */
+/**
+ * The place a shape states on its slide, made where it states none: a placeholder takes its place
+ * from its slide layout, and one that is put somewhere else states its own from then on, as it
+ * does when a person moves it in PowerPoint. `undefined` for a shape that has nowhere to state one
+ * (a group without a place: its children are placed by it).
+ */
+function ownPlace(shape: Element): { off: Element; ext: Element } | undefined {
+  const doc = shape.ownerDocument;
+  // A shape or a picture states its place among its properties; a group and a frame state theirs elsewhere, and always do.
+  const props = childElement(shape, NS.p, 'spPr');
+  const made = (parent: Element, name: string, before: Element | null): Element => {
+    const element = (doc as NonNullable<typeof doc>).createElementNS(NS.a, `${shape.lookupPrefix(NS.a) ?? 'a'}:${name}`);
+    parent.insertBefore(element, before);
+    return element;
+  };
+  const makes = doc !== null && doc !== undefined && props !== undefined;
+  // The place comes first among the properties of a shape, and where it starts before how large it is.
+  const xfrm = shapeTransform(shape) ?? (makes ? made(props, 'xfrm', props.firstChild as Element | null) : undefined);
+  if (!xfrm) return undefined;
+  const off = childElement(xfrm, NS.a, 'off') ?? (makes ? made(xfrm, 'off', xfrm.firstChild as Element | null) : undefined);
+  const ext = childElement(xfrm, NS.a, 'ext') ?? (makes && off ? made(xfrm, 'ext', off.nextSibling as Element | null) : undefined);
+  return off && ext ? { off, ext } : undefined;
+}
+
+/**
+ * Places a shape that is not inside a group at a given area of the slide. Sizes are in EMU. A
+ * shape that takes its place from its slide layout (a placeholder that states none) is given a
+ * place of its own (from 0.10.2; before, it was refused as if it were inside a group).
+ */
 export function placeShape(shape: Element, box: SlideBox, slideWidth: number, slideHeight: number): void {
   const parent = shape.parentNode as Element | null;
-  const xfrm = shapeTransform(shape);
-  const off = xfrm && childElement(xfrm, NS.a, 'off');
-  const ext = xfrm && childElement(xfrm, NS.a, 'ext');
-  if (!parent || parent.localName !== 'spTree' || !off || !ext) throw new Error('a box can only be set for a shape that is not inside a group');
+  if (!parent || parent.localName !== 'spTree') throw new Error('a box can only be set for a shape that is not inside a group');
+  const place = ownPlace(shape);
+  if (!place) throw new Error('a box can only be set for a shape that can state a place of its own: this one has none and nowhere to state one');
+  const { off, ext } = place;
   off.setAttribute('x', String(Math.round(box.x * slideWidth)));
   off.setAttribute('y', String(Math.round(box.y * slideHeight)));
   ext.setAttribute('cx', String(Math.round(box.w * slideWidth)));

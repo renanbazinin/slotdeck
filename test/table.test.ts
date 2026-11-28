@@ -339,3 +339,81 @@ test('a table that fills its frame keeps the sample\'s height with fewer rows, a
   assert.equal('fill' in (unset.manifest.patterns.find((pattern) => pattern.id === 'table')?.slots.find((slot) => slot.name === 'table') ?? {}), false);
   assert.match(changeManifest(template, [{ op: 'setSlot', pattern: 'table', slot: 'title', fill: true }]).rejected[0]?.reason ?? '', /fill does not apply to it/);
 });
+
+// 0.10.2: a sample table with merged cells. The rows below are merged as PowerPoint writes them:
+// the grid stays whole, a cell that spans says how far (gridSpan, rowSpan), and a cell it covers
+// stays in its row (hMerge, vMerge) with its own fill and an empty text that states no style.
+const sampleRun = (size: number, bold: boolean, text = 'SAMPLE') => `<a:r><a:rPr lang="en-US" sz="${size}"${bold ? ' b="1"' : ''}/><a:t>${text}</a:t></a:r>`;
+const sampleCellXml = (marks: string, runs: string, fill: string) =>
+  `<a:tc${marks}><a:txBody><a:bodyPr/><a:lstStyle/><a:p>${runs}<a:endParaRPr/></a:p></a:txBody><a:tcPr>${fill ? `<a:solidFill><a:srgbClr val="${fill}"/></a:solidFill>` : ''}</a:tcPr></a:tc>`;
+const sampleRowXml = (cells: string[]) => `<a:tr h="300000">${cells.join('')}</a:tr>`;
+/** The fixture with the rows of its sample table replaced. */
+const withSampleRows = (rows: string[][]): Uint8Array => fixtureWithSlide(3, (xml) => `${xml.slice(0, xml.indexOf('<a:tr '))}${rows.map(sampleRowXml).join('')}${xml.slice(xml.lastIndexOf('</a:tr>') + '</a:tr>'.length)}`);
+/** The table pattern with no text styles of its own: what a cell's text looks like is the sample's to say. */
+const plainTableManifest: TemplateManifest = {
+  ...tableManifest,
+  patterns: tableManifest.patterns.map((pattern) => (pattern.id === 'table' ? { ...pattern, slots: pattern.slots.map((slot) => (slot.kind === 'table' ? { name: slot.name, kind: slot.kind, shapeId: slot.shapeId } : slot)) } : pattern)),
+};
+const builtFrom = (sample: Uint8Array, header: string[], rows: string[][]) => {
+  const result = renderDeck(loadTemplate(sample, plainTableManifest), { version: 1, slides: [tableSlide(header, rows)] });
+  const tbl = descendants(rootElement(parseXml(PptxPackage.load(result.pptx).readText('ppt/slides/slide1.xml'))), NS.a, 'tbl')[0] as Element;
+  const sizeOf = (cell: Element) => descendants(cell, NS.a, 'rPr')[0]?.getAttribute('sz') ?? null;
+  const boldOf = (cell: Element) => descendants(cell, NS.a, 'rPr')[0]?.getAttribute('b') ?? null;
+  return {
+    tbl,
+    texts: rowsOf(tbl).map((row) => cellsOf(row).map(cellText)),
+    fills: rowsOf(tbl).map((row) => cellsOf(row).map(fillOf)),
+    sizes: rowsOf(tbl).map((row) => cellsOf(row).map(sizeOf)),
+    bolds: rowsOf(tbl).map((row) => cellsOf(row).map(boldOf)),
+    marks: descendants(tbl, NS.a, 'tc').flatMap((cell) => ['gridSpan', 'rowSpan', 'hMerge', 'vMerge'].filter((name) => cell.hasAttribute(name))),
+  };
+};
+
+test('a sample table with merged cells gives its styles, and the table built from it has none merged', () => {
+  const merged = withSampleRows([
+    // A heading over two columns, and a third.
+    [sampleCellXml(' gridSpan="2"', sampleRun(1600, true) + sampleRun(1600, true), '00683A'), sampleCellXml(' hMerge="1"', '', '00683A'), sampleCellXml('', sampleRun(1600, true), '00683A')],
+    // A label over two rows; the row under it is shaded, the covered cell too.
+    [sampleCellXml(' rowSpan="2"', sampleRun(1500, false), ''), sampleCellXml('', sampleRun(1400, false), ''), sampleCellXml('', sampleRun(1400, false), '')],
+    [sampleCellXml(' vMerge="1"', '', 'DCDDDE'), sampleCellXml('', sampleRun(1400, false), 'DCDDDE'), sampleCellXml('', sampleRun(1400, false), 'DCDDDE')],
+  ]);
+  const built = builtFrom(merged, ['Breed', 'Size', 'Coat'], [['Labrador', 'Large', 'Short'], ['Bulldog', 'Small', 'Short'], ['Collie', 'Medium', 'Long']]);
+  assert.deepEqual(built.texts, [['Breed', 'Size', 'Coat'], ['Labrador', 'Large', 'Short'], ['Bulldog', 'Small', 'Short'], ['Collie', 'Medium', 'Long']], 'one cell for each column of each row, with its own text');
+  assert.deepEqual(built.marks, [], 'no cell of the table is merged');
+  // Every cell keeps the fill PowerPoint kept for it: the heading across, the shading of every second row down.
+  assert.deepEqual(built.fills, [['00683A', '00683A', '00683A'], [null, null, null], ['DCDDDE', 'DCDDDE', 'DCDDDE'], [null, null, null]]);
+  // A covered cell states no text style. The heading's second cell takes the heading's; the shaded row's first cell takes its row's.
+  assert.deepEqual(built.sizes, [['1600', '1600', '1600'], ['1500', '1400', '1400'], ['1400', '1400', '1400'], ['1500', '1400', '1400']]);
+  assert.deepEqual(built.bolds[0], ['1', '1', '1']);
+  // A table with more columns than the sample copies the last cell of each row, covered or not.
+  const last = withSampleRows([
+    [sampleCellXml('', sampleRun(1600, true), '00683A'), sampleCellXml(' gridSpan="2"', sampleRun(1600, true), '00683A'), sampleCellXml(' hMerge="1"', '', '00683A')],
+    [sampleCellXml('', sampleRun(1400, false), ''), sampleCellXml('', sampleRun(1400, false), ''), sampleCellXml('', sampleRun(1400, false), '')],
+  ]);
+  const wider = builtFrom(last, ['A', 'B', 'C', 'D'], [['1', '2', '3', '4']]);
+  assert.deepEqual([wider.texts[0], wider.sizes[0], wider.fills[0], wider.marks], [['A', 'B', 'C', 'D'], ['1600', '1600', '1600', '1600'], ['00683A', '00683A', '00683A', '00683A'], []]);
+});
+
+test('a sample row that is all covered from above takes its text from the row above', () => {
+  const covered = withSampleRows([
+    [sampleCellXml('', sampleRun(1600, true), '00683A'), sampleCellXml('', sampleRun(1600, true), '00683A'), sampleCellXml('', sampleRun(1600, true), '00683A')],
+    [sampleCellXml(' rowSpan="2"', sampleRun(1500, false), ''), sampleCellXml(' rowSpan="2"', sampleRun(1400, false), ''), sampleCellXml(' rowSpan="2"', sampleRun(1300, false), '')],
+    [sampleCellXml(' vMerge="1"', '', 'DCDDDE'), sampleCellXml(' vMerge="1"', '', 'DCDDDE'), sampleCellXml(' vMerge="1"', '', 'DCDDDE')],
+  ]);
+  const built = builtFrom(covered, ['A', 'B', 'C'], [['1', '2', '3'], ['4', '5', '6']]);
+  assert.deepEqual(built.marks, []);
+  assert.deepEqual(built.texts[2], ['4', '5', '6']);
+  // Each covered cell takes the text of the cell that covers it, in its own column, and keeps its own shading.
+  assert.deepEqual([built.sizes[2], built.fills[2]], [['1500', '1400', '1300'], ['DCDDDE', 'DCDDDE', 'DCDDDE']]);
+
+});
+
+test('what a table cannot be built from is said with its slide and its slot', () => {
+  // A table slot that points at a text box: a render that goes ahead names the place.
+  const wrong: TemplateManifest = {
+    ...tableManifest,
+    patterns: tableManifest.patterns.map((pattern) => (pattern.id === 'table' ? { ...pattern, slots: pattern.slots.filter((slot) => slot.kind === 'table').map((slot) => ({ ...slot, shapeId: '2' })) } : pattern)),
+  };
+  const slide: SlideSpec = { pattern: 'table', slots: { table: { header: ['A'], rows: [['1']] } } };
+  assert.throws(() => renderDeck(loadTemplate(pptx, wrong), { version: 1, slides: [slide, slide] }), /^Error: slide 1 \/ table: table slots must point at a table$/);
+});

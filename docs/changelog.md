@@ -3,6 +3,38 @@
 What changed in each version, newest first, with what to do when upgrading. The version you have installed is
 in `node_modules/slotdeck/package.json`.
 
+## 0.10.2
+
+Two things that failed when a deck was rendered, with errors that did not say where. No part of a manifest or
+a deck changes, and a deck that rendered before renders as it did.
+
+### Fixed
+
+- **A sample table with merged cells is a sample like any other.** A template whose sample table had a heading
+  across two columns, or a label down two rows, passed every check and then failed when a deck used it:
+  `sample tables with merged cells are not supported`, with no slide named. Its cells are now read for their
+  styles, and the table that is built has none merged: one cell for each column of each row, as a deck's table
+  has. Every cell keeps the fill, the borders and the room PowerPoint kept for it. A cell that a neighbour's span
+  covers states no text style of its own, so it takes its text from the nearest cell of its row that does (the
+  one that covers it, where it is merged along the row), and from the cell above it where its whole row is
+  covered. Nothing has to be unmerged in the template. Free slides still draw a table of their own on a template
+  whose only sample table has merged cells, as they did.
+- **A `box` on a placeholder that states no place of its own.** A placeholder takes its place from its slide
+  layout, and most titles of real templates are such placeholders. `changeManifest` (`setSlot` with a `box`)
+  and a manifest written by hand could give one a `box`, and the render then failed with `a box can only be set
+  for a shape that is not inside a group`, of a shape that was in no group. Such a shape is now given a place of
+  its own at the box, as PowerPoint gives it one when a person moves it: it stays the placeholder it was, with
+  its typeface, size and bullets from its layout. A shape inside a group is refused as before, and so is a
+  group that states no place (its children are placed by it).
+- **What a table or a box cannot be made of names its slide and its slot.** `slide 3 / table: table slots must
+  point at a table`, where the message stood alone before. The messages themselves are the same.
+
+### Known
+
+- Budgets, the studio's view and the drafts of a template whose text is in such placeholders still read a
+  placeholder without a place as a shape at the corner of the slide with no size (`inspectTemplate`): a budget
+  drafted for it is the length of its sample. That is the next release.
+
 ## 0.10.1
 
 Style-only mode on the themes and templates that ship with an office suite: eleven themes with an ordinary deck

@@ -192,7 +192,8 @@ Plain `Error`s from `renderDeck`. They mean the manifest and the pptx disagree, 
 | `Pattern "x": slot "y" points at shape #12, which is not on template slide 3` | Fix the manifest (see above). |
 | `Pattern "x" points at slide 9, but the template has 5 slides` | Fix `sourceSlide`. |
 | `Unsupported image format: expected PNG, JPEG or GIF` | Convert the picture (WebP, SVG, HEIC and others are not supported). |
-| `sample tables with merged cells are not supported` | The template's sample table has merged cells. Unmerge them in the template. |
+| `sample tables with merged cells are not supported` | Before 0.10.2: the template's sample table has merged cells. Upgrade, or unmerge them in the template. |
+| `a box can only be set for a shape that is not inside a group` | The slot has a `box` and its shape is inside a group: take the `box` away, or ungroup the shape in the template. Before 0.10.2 the same was said of a placeholder that takes its place from its slide layout; from 0.10.2 such a shape is placed. |
 | `a chart slot must point at a shape that is not inside a group` | Ungroup the sample picture in the template. |
 
 ## Gemini adapter errors (`GeminiError`)
@@ -278,7 +279,7 @@ Plain `Error`s from `renderDeck`. They mean the manifest and the pptx disagree, 
   of text with no stop at its end, or one over two short lines with no stops. A short line over one other short
   line is read as a heading over it.
 - **Charts:** `column`, `bar`, `line` and `pie` only. No stacked or combined charts.
-- **Tables:** the sample table must not have merged cells.
+- **Tables:** a deck's table has one cell for each column of each row: no cell of it is merged. A sample table with merged cells is read for its styles (from 0.10.2).
 - **Pictures:** PNG, JPEG and GIF only.
 - **Not carried over from the template:** speaker notes, named sections and revision history.
 - **Animations** on template slides were not tested. A slide whose animated shape is removed may make PowerPoint
