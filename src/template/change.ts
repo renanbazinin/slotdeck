@@ -316,7 +316,7 @@ function apply(manifest: TemplateManifest, change: ManifestChange, info: Templat
           const used = role === 'panel' ? kit.panel : kit.styles[role as (typeof FREE_STYLE_ROLES)[number]];
           if (used && used.slide === source.slide && used.shapeId === source.shape) continue;
           const shape = info.slides[source.slide - 1]?.shapes.find((entry) => entry.id === source.shape);
-          const why = role === 'panel' ? 'it is not a box that the template sets text on' : shape?.placeholder !== undefined ? 'it is a placeholder, which takes its look from the slide layout, and a free slide copies a text box that states its own' : "it is not a text of one of the template's layouts";
+          const why = role === 'panel' ? 'it is not a box that the template sets text on' : shape?.placeholder === 'title' || shape?.placeholder === 'ctrTitle' ? 'it is the title of its slide, and a free slide keeps the title of its own frame' : "it is not a text of one of the template's layouts";
           reject(`shape #${source.shape} of slide ${source.slide} cannot be the ${role} of a free slide: ${why}`);
         }
         done.push(`lays out free slides ${said.join(', ')}`);

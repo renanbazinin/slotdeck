@@ -177,6 +177,12 @@ interface Area extends FreeShapeStyle {
 interface Scan {
   info: TemplateInfo;
   candidates: Candidate[];
+  /**
+   * The text styles of placeholders (from 0.10.0), read as the shapes they are once they state
+   * what their layout and master give them. Held apart: they are taken where the template has
+   * no text box to copy a style from, or where its manifest names one of them.
+   */
+  held: Candidate[];
   areas: Area[];
   rules: Area[];
   /** Per slide number: the colour behind it, and the colour of text that states none. */
@@ -186,6 +192,8 @@ interface Scan {
   placeholders: number;
   /** Where a shape of a slide stands: its own box, or, for a placeholder that states none, the one its layout or its master gives it. */
   stands: (slide: number, shape: ShapeInfo) => Box;
+  /** The size a shape's text is set at, with what it inherits: for a placeholder that states none. */
+  sizeOf: (slide: number, shapeId: string) => number | undefined;
   /**
    * Top and bottom of the content of each pattern slide, and its title box when it has one. The
    * line under a title (a slot named as a subtitle) belongs to the title: `top` is where the
@@ -202,7 +210,9 @@ interface Scan {
 const scans = new WeakMap<PptxPackage, Map<string, Scan>>();
 
 const runColor = (shape: Element, scheme: Scheme): string => {
-  for (const props of [...descendants(shape, NS.a, 'rPr'), ...descendants(shape, NS.a, 'endParaRPr')]) {
+  // The colour of its runs; of a placeholder that states what it inherits, else the colour its first level gives them.
+  const level = path(shape, [NS.p, 'txBody'], [NS.a, 'lstStyle'], [NS.a, 'lvl1pPr'], [NS.a, 'defRPr']);
+  for (const props of [...descendants(shape, NS.a, 'rPr'), ...descendants(shape, NS.a, 'endParaRPr'), ...(level ? [level] : [])]) {
     const fill = childElement(props, NS.a, 'solidFill');
     const color = fill && childElements(fill, NS.a).find(isColor);
     const hex = color && literalOf(color, scheme);
@@ -232,8 +242,9 @@ function scan(template: Template): Scan {
     if (!from || !(from.cx > 0 && from.cy > 0)) return shape.box;
     return { x: round(from.x / info.slideWidth), y: round(from.y / info.slideHeight), w: round(from.cx / info.slideWidth), h: round(from.cy / info.slideHeight) };
   };
-  const result: Scan = { info, candidates: [], areas: [], rules: [], backgrounds: new Map(), inks: new Map(), placeholders: 0, stands: placeOf, content: [], gaps: [] };
+  const result: Scan = { info, candidates: [], held: [], areas: [], rules: [], backgrounds: new Map(), inks: new Map(), placeholders: 0, stands: placeOf, sizeOf: (slide, shapeId) => styles.frame(slide, shapeId)?.paragraphs[0]?.run.size, content: [], gaps: [] };
   const bySignature = new Map<string, Candidate>();
+  const heldBySignature = new Map<string, Candidate>();
   const seen = new Set<string>();
   const areaBySignature = new Map<string, Area>();
   const ruleBySignature = new Map<string, Area>();
@@ -368,22 +379,28 @@ function scan(template: Template): Scan {
       const shape = shapeOf.get(shapeId);
       const element = elements.get(shapeId);
       // A placeholder takes its look from its layout and master: there is nothing on the slide to copy it from.
-      if (shape && !skip.has(shapeId) && shape.placeholder !== undefined && !slot.title) result.placeholders++;
-      if (!shape || !element || skip.has(shapeId) || element.localName !== 'sp' || shape.placeholder !== undefined || hasRelationship(element)) continue;
+      const held = !!shape && shape.placeholder !== undefined;
+      if (shape && !skip.has(shapeId) && held && !slot.title) result.placeholders++;
+      if (!shape || !element || skip.has(shapeId) || element.localName !== 'sp' || hasRelationship(element) || (held && slot.title)) continue;
+      // A placeholder is read as the shape it is once it states what its layout and master give it.
+      const stated = held ? styles.standalone(number, shapeId) : element;
+      if (!stated || hasRelationship(stated)) continue;
       const frame = styles.frame(number, shapeId, slot.styleRun);
       const paragraph = frame?.paragraphs[0];
       if (!frame || !paragraph || frame.vertical) continue;
-      const fill = fillColor(childElement(element, NS.p, 'spPr'), scheme);
-      const under = filled.filter((entry) => entry.shape.id !== shapeId && within(shape.box, entry.shape.box)).sort((a, b) => a.shape.box.w * a.shape.box.h - b.shape.box.w * b.shape.box.h)[0];
-      const onPanel = slideAreas.some((entry) => within(shape.box, entry.shape.box));
+      const stands = held ? placeOf(number, shape) : shape.box;
+      const fill = fillColor(childElement(stated, NS.p, 'spPr'), scheme);
+      const under = filled.filter((entry) => entry.shape.id !== shapeId && within(stands, entry.shape.box)).sort((a, b) => a.shape.box.w * a.shape.box.h - b.shape.box.w * b.shape.box.h)[0];
+      const onPanel = slideAreas.some((entry) => within(stands, entry.shape.box));
       const size = Math.round(paragraph.run.size * 2) / 2;
-      const color = runColor(element, scheme);
+      const color = runColor(stated, scheme);
       const face = paragraph.run.latin.name || paragraph.run.cs.name;
       const signature = [size, paragraph.run.bold, paragraph.run.italic, face, color, paragraph.bullet, fill ?? '', slot.title].join('|');
       const at = `${number}|${shapeId}`;
       if (seen.has(at)) continue;
       seen.add(at);
-      const known = bySignature.get(signature);
+      const signatures = held ? heldBySignature : bySignature;
+      const known = signatures.get(signature);
       if (known) {
         known.uses++;
         known.budgets += slot.budget;
@@ -413,7 +430,7 @@ function scan(template: Template): Scan {
       if ('points' in spacing ? spacing.points > 0 : spacing.percent > 1) candidate.leading = spacing;
       if (under) candidate.panelFill = under.fill;
       if (slot.title) candidate.names.unshift('title');
-      bySignature.set(signature, candidate);
+      signatures.set(signature, candidate);
     }
 
     // Where this slide's content sits: under its title, apart from what repeats on every slide.
@@ -430,6 +447,7 @@ function scan(template: Template): Scan {
   }
 
   result.candidates = [...bySignature.values()];
+  result.held = [...heldBySignature.values()];
   result.areas = [...areaBySignature.values()];
   result.rules = [...ruleBySignature.values()];
   const picture = [...pictures.values()].sort((a, b) => b.uses - a.uses || a.slide - b.slide)[0];
@@ -455,7 +473,7 @@ const isHeading = (candidate: Candidate) => candidate.names.some((name) => /head
  * Chooses a shape of the template for every part of a free slide. A style is taken only where
  * its text reads on what it will be drawn on: the base slide's background.
  */
-function chooseStyles(found: Scan, base: { titleSize: number; titleShape: { slide: number; shapeId: string } | undefined; background: string; rtl: boolean }): FreeKit['styles'] | undefined {
+function chooseStyles(found: Scan, base: { titleSize: number; titleShape: { slide: number; shapeId: string } | undefined; background: string; rtl: boolean; large?: boolean }): FreeKit['styles'] | undefined {
   const T = base.titleSize;
   const reads = (candidate: Candidate) => contrast(candidate.color, base.background) >= 3;
   const plain = found.candidates.filter((candidate) => !candidate.fill && !candidate.names.includes('title') && reads(candidate));
@@ -466,8 +484,13 @@ function chooseStyles(found: Scan, base: { titleSize: number; titleShape: { slid
   if (!body) {
     // A template whose running text is all bold, bulleted or large still has a text to stand in.
     const any = best(plain.filter((candidate) => candidate.size <= 0.7 * T), (a, b) => b.budgets - a.budgets, order);
-    if (!any) return undefined;
-    return fallbackStyles(found, any, T, reads, base.rtl);
+    if (any) return fallbackStyles(found, any, T, reads, base.rtl);
+    // Where placeholders are copied (`large`): a template whose every running text is set large,
+    // as the 32 pt body under a 44 pt title of an old default is, still has a text to stand in.
+    // It is set at under half the title's size, which is what running text is beside such a title.
+    const large = base.large ? best(plain, (a, b) => b.budgets - a.budgets, order) : undefined;
+    if (!large) return undefined;
+    return fallbackStyles(found, { ...large, size: Math.min(large.size, Math.max(10, Math.round(0.45 * T * 2) / 2)) }, T, reads, base.rtl);
   }
   return rolesFrom(found, body, T, reads, base.rtl);
 }
@@ -687,14 +710,19 @@ function frameKit(template: Template, found: Scan, id: string | undefined): Free
   const fixed = !!titleShape && placeless(titleShape.box);
   const titleBox: Box | undefined = !titleShape ? undefined : fixed ? found.stands(slide.number, titleShape) : title && title.kind === 'text' && title.box ? title.box : titleShape.box;
   if (titleBox && placeless(titleBox)) return `the title of the layout "${base.id}" takes its place from the slide layout, and neither that nor the master states one`;
-  const titleSize = (title && title.kind === 'text' ? (title.fontSize ?? title.size) : undefined) ?? titleShape?.fontSizes?.[0] ?? 28;
-  const styles = chooseStyles(found, { titleSize, titleShape: titleShape ? { slide: slide.number, shapeId: titleShape.id } : undefined, background, rtl: manifest.direction === 'rtl' });
-  if (!styles) {
-    // Text in placeholders is passed over, so a template that keeps all its running text in them has no style to offer.
-    const boxed = found.candidates.some((candidate) => !candidate.fill && !candidate.names.includes('title'));
-    if (!boxed && found.placeholders > 0) return "the template's running text is in placeholders, which a free slide cannot copy: there is no text style to take unless some of it is set in text boxes of their own";
-    return "the template's layouts have no running text that reads on this layout's background, so there is no text style to copy";
+  const statedSize = (title && title.kind === 'text' ? (title.fontSize ?? title.size) : undefined) ?? titleShape?.fontSizes?.[0];
+  let titleSize = statedSize ?? 28;
+  const chosenFor = { titleSize, titleShape: titleShape ? { slide: slide.number, shapeId: titleShape.id } : undefined, background, rtl: manifest.direction === 'rtl' };
+  let styles = chooseStyles(found, chosenFor);
+  if (!styles && found.held.length > 0) {
+    // A template that sets its running text in placeholders has no text box to copy a style from:
+    // its placeholders are then copied, as the shapes they are once they state what they inherit.
+    // A template with a text box of its own to copy keeps the styles it always had. The title of
+    // such a template is a placeholder too, as a rule, and its size is what it inherits.
+    if (statedSize === undefined && titleShape) titleSize = found.sizeOf(slide.number, titleShape.id) ?? titleSize;
+    styles = chooseStyles({ ...found, candidates: [...found.candidates, ...found.held] }, { ...chosenFor, titleSize, large: true });
   }
+  if (!styles) return "the template's layouts have no running text that reads on this layout's background, so there is no text style to copy";
 
   // What stays: the frame as a composed layout keeps it, and on a small template, where too few
   // slides say what repeats, whatever of the slide no layout fills and lies in its margins.
@@ -818,7 +846,7 @@ function frameKit(template: Template, found: Scan, id: string | undefined): Free
   for (const [role, source] of Object.entries(stated ?? {})) {
     // A manifest written by hand may hold anything here; `checkManifest` says so.
     if (!source || typeof source !== 'object') continue;
-    const candidate = found.candidates.find((entry) => entry.slide === source.slide && entry.shapeId === source.shape);
+    const candidate = found.candidates.find((entry) => entry.slide === source.slide && entry.shapeId === source.shape) ?? found.held.find((entry) => entry.slide === source.slide && entry.shapeId === source.shape);
     if (candidate && (FREE_STYLE_ROLES as readonly string[]).includes(role)) result.styles[role as FreeStyleRole] = style(candidate);
     else if (role === 'panel') {
       const panel = found.areas.find((entry) => entry.slide === source.slide && entry.shapeId === source.shape);

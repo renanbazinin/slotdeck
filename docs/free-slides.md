@@ -997,8 +997,12 @@ the conditions above decide only what a new slide may be.
 - A template whose patterns have no running text that reads on the frame's background cannot carry free
   slides; `validateDeck` says so.
 - The styles of a free slide are copied from text boxes that state their own look. Text in a placeholder takes
-  its look from the slide layout and cannot be copied: a template whose running text is all in placeholders
-  cannot carry free slides, and `validateDeck` says that too. A title in a placeholder is fine.
+  its look from the slide layout and the master. From 0.10.0 a template whose running text is all in
+  placeholders carries free slides too: a placeholder is copied as a shape that states what it inherits (the
+  list style of every level, the insets, the anchor), running text taken from a bulleted body has no bullet,
+  and a body set larger than seven tenths of the title's size stands in at under half that size. Placeholders
+  are taken only where the template has no text box to copy, or where `free.styles` names one. Before 0.10.0
+  such a template could carry no free slide. A title in a placeholder is fine.
 - A line of text is counted from its size and the line spacing of the shape it is a copy of. A line spacing
   under 100% is counted as 100%, so such text leaves a little of its room unused. The space a shape sets
   before and after its paragraphs is not copied: the paragraphs of a free slide are half their size apart, in

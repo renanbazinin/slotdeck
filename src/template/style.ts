@@ -5,8 +5,9 @@
 // text. It does not say what a slide is for, so only three of its layouts are meant to be used as
 // they are: a cover, a closing slide, and the frame that free slides stand on.
 //
-// A prototype (0.9.0 in the making): not exported from the package yet.
-import { pageColor } from '../color/recolor.ts';
+// Style-only mode (from 0.10.0): see docs/style-only.md.
+import { pageColor, paletteOf, schemeOf } from '../color/recolor.ts';
+import { freeKitOrReason } from '../free/kit.ts';
 import { PptxPackage } from '../pptx/package.ts';
 import { NS, childElement, childElements, parseXml, path, rootElement } from '../pptx/xml.ts';
 import type { Element } from '../pptx/xml.ts';
@@ -16,8 +17,30 @@ import type { Box, ShapeInfo, SlideInfo, TemplateInfo } from './inspect.ts';
 import type { Direction, PatternDef, SlotDef, TemplateManifest } from './manifest.ts';
 import { frameFacts, inFrameBand, isFramePlaceholder, isPictogram, shapeText, slotFromShape } from './measure.ts';
 
+/** What `styleManifest` is told. */
+export interface StyleManifestOptions {
+  /** The manifest's name. Left out, `style`. */
+  name?: string;
+}
+
+/** What `styleManifest` makes of a pptx. */
 export interface StyleManifest {
+  /** A manifest like any other: `loadTemplate(pptx, manifest)` takes it, and `checkManifest` passes it. */
   manifest: TemplateManifest;
+  /**
+   * The layouts a deck in the template's style is planned from: the cover where there is one,
+   * `free` (the slides the software lays out) where the template can carry them, and the closing
+   * slide where there is one. Give it as `patterns` to a brief or to `presentationTools`: the
+   * manifest's other layouts are the template's slides as they are drawn, with slots that no
+   * person named, and are there for their text styles.
+   */
+  patterns: string[];
+  /**
+   * Why the template cannot carry slides the software lays out, in a sentence; left out where it
+   * can. With a reason, `patterns` has no `free` in it and there is no style-only mode for this
+   * file: it needs a manifest that a person prepares (`prepareManifest`).
+   */
+  reason?: string;
   /** The id of the layout a deck opens with, where the template's first slide can be one. */
   cover?: string;
   /** The id of the layout a deck ends with, where the template's last slide can be one. */
@@ -37,23 +60,44 @@ const round = (value: number) => Math.round(value * 10000) / 10000;
 const FIGURE = /^[\s\d.,:%+\-−–/$€₪£xXKMBkmb°]+$/;
 
 /**
- * Makes a manifest for a template from the pptx alone (see the top of this file). `name` is the
- * manifest's name. Deterministic: the same file always gives the same manifest.
+ * Makes a manifest for a template from the pptx alone, by rules: no model is called and nobody
+ * prepares anything (from 0.10.0; see docs/style-only.md). The software takes the template's
+ * style (the frame of its slides, its text styles, its colours) and lays the slides out itself,
+ * between the template's own cover and closing slide.
+ *
+ * ```ts
+ * const style = styleManifest(pptx, { name: 'Our deck' });
+ * if (style.reason) throw new Error(style.reason);          // the file needs a prepared manifest
+ * const template = loadTemplate(pptx, style.manifest);
+ * const { pptx: deck } = await generateDeck(template, { prompt, patterns: style.patterns, fields: { field1: 'Sales' } }, { llm, layout: 'adaptive' });
+ * ```
+ *
+ * Deterministic: the same file always gives the same manifest, so it may be stored or made again.
  */
-export function styleManifest(pptx: Uint8Array | PptxPackage, options: { name?: string } = {}): StyleManifest {
+export function styleManifest(pptx: Uint8Array | PptxPackage, options: StyleManifestOptions = {}): StyleManifest {
   const pkg = pptx instanceof PptxPackage ? pptx : PptxPackage.load(pptx);
-  const info = inspectTemplate(pkg);
-  const frame = frameFacts(info);
+  const read = inspectTemplate(pkg);
   const styles = new TextStyles(pkg);
   const notes: string[] = [];
 
-  // Where a shape stands: a placeholder that states no place takes the one its layout or master gives it.
-  const placeOf = (slide: SlideInfo, shape: ShapeInfo): Box => {
-    if (shape.box.w > 0 || shape.box.h > 0) return shape.box;
-    const from = styles.inheritedBox(slide.number, shape.id);
-    if (!from || !(from.cx > 0 && from.cy > 0)) return shape.box;
-    return { x: round(from.x / info.slideWidth), y: round(from.y / info.slideHeight), w: round(from.cx / info.slideWidth), h: round(from.cy / info.slideHeight) };
+  // A placeholder that states no place and no size of text takes them from its layout and its
+  // master: it is seen here where it stands and at the size it is set, as a text box is.
+  let inherits = 0;
+  const seen = (slide: SlideInfo, shape: ShapeInfo): ShapeInfo => {
+    if (shape.kind !== 'text' || shape.placeholder === undefined) return shape;
+    let box = shape.box;
+    if (!(box.w > 0 || box.h > 0)) {
+      const from = styles.inheritedBox(slide.number, shape.id);
+      if (from && from.cx > 0 && from.cy > 0) box = { x: round(from.x / read.slideWidth), y: round(from.y / read.slideHeight), w: round(from.cx / read.slideWidth), h: round(from.cy / read.slideHeight) };
+    }
+    const size = shape.fontSizes?.length ? undefined : styles.frame(slide.number, shape.id)?.paragraphs[0]?.run.size;
+    if (box === shape.box && size === undefined) return shape;
+    inherits++;
+    return { ...shape, box, ...(size === undefined ? {} : { fontSizes: [Math.round(size * 2) / 2] }) };
   };
+  const info: TemplateInfo = { ...read, slides: read.slides.map((slide) => ({ ...slide, shapes: slide.shapes.map((shape) => seen(slide, shape)) })) };
+  const frame = frameFacts(info);
+  const placeOf = (_slide: SlideInfo, shape: ShapeInfo): Box => shape.box;
 
   // The direction and the language of the template: by the letters of its sample texts.
   let rtl = 0;
@@ -205,7 +249,7 @@ export function styleManifest(pptx: Uint8Array | PptxPackage, options: { name?: 
   const titled = (pattern: PatternDef | undefined) => pattern?.slots.some((slot) => slot.name === 'title') === true;
   const first = patterns.find((pattern) => pattern.sourceSlide === 1);
   const last = patterns.find((pattern) => pattern.sourceSlide === info.slides.length);
-  const result: StyleManifest = { manifest: { version: 1, name: options.name ?? 'style', language, direction, patterns }, fields, notes };
+  const result: StyleManifest = { manifest: { version: 1, name: options.name ?? 'style', language, direction, patterns }, patterns: [], fields, notes };
   if (first && titled(first)) {
     first.id = 'cover';
     first.description = 'The opening slide: the title of the deck and one line under it';
@@ -262,7 +306,23 @@ export function styleManifest(pptx: Uint8Array | PptxPackage, options: { name?: 
   if (best) {
     result.manifest.free = { base: best.pattern.id };
     notes.push(`free slides stand on the frame of slide ${best.pattern.sourceSlide}: its title sits where the titles of ${most} slides sit${best.clutter > 0.002 ? `, and ${Math.round(best.clutter * 100)}% of the slide under it is drawn on by its layout` : ', and nothing is drawn under it'}${best.glow > 0 ? `; its page is one colour over ${Math.round(best.glow * 100)}% of it, with the template's glow in the rest` : ''}`);
-  } else notes.push('no slide has a title in its upper part with room under it, so the template cannot carry slides the software lays out');
+  } else {
+    // With no such slide the engine would stand them on a cover, under a title in the middle of the slide: no place for content.
+    result.manifest.free = false;
+    result.reason = 'no slide has a title in its upper part with room under it: slides the software lays out need one slide with a title at the top and content under it';
+  }
+  // The template's colours are found by how much its slides use each. A deck whose slides draw
+  // nothing in a colour (titles and bullets alone) has its colours in its theme: the first two accents.
+  const first1 = info.slides[0];
+  if (first1 && patterns.length > 0 && !paletteOf(pkg, { patterns }).accent) {
+    const scheme = schemeOf(pkg, first1.part);
+    const accent = scheme.resolve('accent1')?.toUpperCase();
+    const accent2 = scheme.resolve('accent2')?.toUpperCase();
+    if (accent) {
+      result.manifest.colors = { accent, ...(accent2 && accent2 !== accent ? { accent2 } : {}) };
+      notes.push(`no slide draws anything in a colour, so the main colour is the first accent of the theme, ${accent}`);
+    }
+  }
   // A template drawn with small running text (an agency's 9 pt) is drawn for a designer's eye. The
   // slides the software lays out carry a person's own words, to be read: their running text is
   // enlarged to what 14 pt is on a slide 13.33 inches wide, by no more than half.
@@ -272,7 +332,19 @@ export function styleManifest(pptx: Uint8Array | PptxPackage, options: { name?: 
     notes.push(`running text is ${bodySize} pt on a slide ${Math.round((info.slideWidth / 914400) * 100) / 100} inches wide: it is enlarged ${result.manifest.textScale} times on every slide`);
   }
   notes.push(`${patterns.length} of ${info.slides.length} slides were read; running text is set at ${bodySize} pt; the template reads ${direction === 'rtl' ? 'right to left' : 'left to right'}`);
+  if (inherits > 0) notes.push(`${inherits} texts are placeholders that take their place or their size from the slide layout: they were read where they stand and at the size they are set`);
   if (frame.often === Infinity) notes.push('the template has fewer than six slides: too few to tell what repeats, so nothing but page numbers and footers is taken as its frame');
+  // Whether the template can carry the slides the software lays out is the engine's to say: it
+  // needs a frame to stand on and a text style it can copy.
+  if (!result.reason) {
+    const kit = patterns.length > 0 ? freeKitOrReason({ pkg, manifest: result.manifest }) : 'no slide of the file has a text to take a style from';
+    if (typeof kit === 'string') result.reason = kit;
+  }
+  if (result.reason) {
+    result.manifest.free = false;
+    notes.push(`the template cannot carry slides the software lays out: ${result.reason}`);
+  }
+  result.patterns = [result.cover, result.reason ? undefined : 'free', result.closing].filter((id): id is string => id !== undefined);
   return result;
 }
 

@@ -44,6 +44,7 @@ slotdeck makes new PowerPoint files from an existing PowerPoint template.
 | [text-fit.md](text-fit.md) | Measure text with the template's fonts: overflow in lines, shrinking to fit, budgets from measurement |
 | [preview.md](preview.md) | Get a picture of each slide without PowerPoint, and know how close it is |
 | [design-checks.md](design-checks.md) | Find empty boxes, uneven cards and orphan words by measurement, and have drafts reviewed while a deck is written |
+| [style-only.md](style-only.md) | Make decks in the style of a file nobody prepared: its cover, its closing slide, and slides the software lays out in its typefaces and colours |
 | [template-studio.md](template-studio.md) | Draft a manifest with a model, check it, change it by hand or by instruction |
 | [api-reference.md](api-reference.md) | Look up any export: its signature and what it does |
 | [troubleshooting.md](troubleshooting.md) | Find the meaning of an error or warning, and the known limits |
@@ -79,6 +80,7 @@ slotdeck makes new PowerPoint files from an existing PowerPoint template.
 | Change a manifest by operations | `changeManifest` | none |
 | Add a mirrored or text-only variant of a pattern | `changeManifest` with `derivePattern`; `patternVariants` lists what is possible | none |
 | Add a layout the template does not have, in its own look (a text-only slide, three points, an agenda) | `composePattern`; `buildPattern` for a design you already have | 1 or 2 |
+| Use a file nobody prepared, for its style alone | `styleManifest`, then `patterns: style.patterns` | none |
 | Make a drafted manifest ready to use in one step, or repair one that is in use | `prepareManifest` | none |
 | Find what a template's slides allow that its manifest does not use (rows that take more, icons, variants) | `suggestChanges`, then `changeManifest` with the changes it returns | none |
 | Change a manifest by instruction | `editManifest` | 1 or 2 |
@@ -92,7 +94,7 @@ slotdeck makes new PowerPoint files from an existing PowerPoint template.
 - All binary data is `Uint8Array`. In Node a `Buffer` is a `Uint8Array`, so `fs.readFileSync(path)` can be
   passed directly.
 - Functions that call a model are `async`. `renderDeck`, `validateDeck`, `slideAlternatives`, `checkManifest`,
-  `sampleDeck`, `changeManifest`, `prepareManifest`, `suggestChanges`, `patternVariants`, `inspectTemplate`,
+  `sampleDeck`, `changeManifest`, `prepareManifest`, `styleManifest`, `suggestChanges`, `patternVariants`, `inspectTemplate`,
   `studioView`, `freeSlide`, `recolorDeck`, `templatePalette`, `planTextFit` and `documentPassages` are
   synchronous.
 - A deck never contains binary data. Pictures are referenced by an **asset id** and passed to the renderer as

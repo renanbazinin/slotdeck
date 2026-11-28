@@ -5,8 +5,8 @@ import { isRelType, readRels, resolveTarget } from '../pptx/package.ts';
 import type { PptxPackage } from '../pptx/package.ts';
 import { readPresentation } from '../pptx/presentation.ts';
 import type { PresentationInfo } from '../pptx/presentation.ts';
-import { NS, childElement, childElements, descendants, parseXml, path, rootElement } from '../pptx/xml.ts';
-import type { Element } from '../pptx/xml.ts';
+import { NS, childElement, childElements, descendants, parseXml, path, removeNode, rootElement } from '../pptx/xml.ts';
+import type { Document, Element } from '../pptx/xml.ts';
 import { applyRepeat } from '../render/repeat.ts';
 import type { RepeatDef } from '../template/manifest.ts';
 
@@ -154,6 +154,7 @@ export class TextStyles {
   private readonly layouts = new Map<string, { root: Element; master?: MasterPart }>();
   private readonly frames = new Map<string, TextFrame | undefined>();
   private readonly rows = new Map<string, Map<string, Element> | undefined>();
+  private readonly standalones = new Map<string, Element | undefined>();
 
   constructor(pkg: PptxPackage) {
     this.pkg = pkg;
@@ -215,6 +216,119 @@ export class TextStyles {
       if (off && ext) return { x: Number(off.getAttribute('x') ?? 0), y: Number(off.getAttribute('y') ?? 0), cx: Number(ext.getAttribute('cx') ?? 0), cy: Number(ext.getAttribute('cy') ?? 0) };
     }
     return undefined;
+  }
+
+  /**
+   * A placeholder of a template slide as a shape that states its own look (from 0.10.0): a copy
+   * that is no placeholder any more, with what the placeholder takes from its layout, its master
+   * and the master's text styles written into it: its place and outline, the insets and anchor of
+   * its text, and a list style for each level, the nearest statement of each property kept. Put
+   * on any slide of the template, the copy reads as the placeholder does on its own slide.
+   * `undefined` for a shape that is no placeholder or holds no text. The copy is made once and
+   * is the caller's to import, never to change.
+   *
+   * A slide the software lays out copies its text styles from the template's shapes. This is
+   * what it copies where the template sets its running text in placeholders.
+   */
+  standalone(slideNumber: number, shapeId: string): Element | undefined {
+    const key = `${slideNumber}|${shapeId}`;
+    if (this.standalones.has(key)) return this.standalones.get(key);
+    const made = this.stated(slideNumber, shapeId);
+    this.standalones.set(key, made);
+    return made;
+  }
+
+  private stated(slideNumber: number, shapeId: string): Element | undefined {
+    const slide = this.slide(slideNumber);
+    const shape = slide?.shapes.get(shapeId);
+    if (!slide || !shape || shape.localName !== 'sp') return undefined;
+    const placeholder = descendants(shape, NS.p, 'ph')[0];
+    const doc = shape.ownerDocument;
+    if (!placeholder || !doc || !childElement(shape, NS.p, 'txBody')) return undefined;
+    const layoutShape = slide.layout ? findPlaceholder(slide.layout, placeholder, false) : undefined;
+    const masterShape = slide.master ? findPlaceholder(slide.master.root, layoutShape ? (descendants(layoutShape, NS.p, 'ph')[0] ?? placeholder) : placeholder, true) : undefined;
+    const inherited = [layoutShape, masterShape].filter((entry): entry is Element => !!entry);
+
+    const copy = shape.cloneNode(true) as Element;
+    for (const mark of descendants(copy, NS.p, 'ph')) removeNode(mark);
+    // A placeholder may not be grouped; the copy is a shape like any other.
+    for (const locks of descendants(copy, NS.a, 'spLocks')) removeNode(locks);
+    const body = childElement(copy, NS.p, 'txBody') as Element;
+    const p = shape.prefix ? `${shape.prefix}:` : '';
+    const a = (childElement(body, NS.a, 'bodyPr') ?? childElements(body, NS.a)[0])?.prefix;
+    const drawing = (name: string) => doc.createElementNS(NS.a, `${a ? `${a}:` : 'a:'}${name}`);
+
+    // The shape: where it stands, its outline, its fill and its line, each from the nearest that states it.
+    let props = childElement(copy, NS.p, 'spPr');
+    if (!props) {
+      props = doc.createElementNS(NS.p, `${p}spPr`);
+      copy.insertBefore(props, childElement(copy, NS.p, 'style') ?? body);
+    }
+    const SHAPE: string[][] = [['xfrm'], ['custGeom', 'prstGeom'], ['noFill', 'solidFill', 'gradFill', 'pattFill', 'grpFill'], ['ln'], ['effectLst', 'effectDag']];
+    const own = (group: string[]) => childElements(props as Element, NS.a).some((child) => group.includes(child.localName ?? ''));
+    for (const group of SHAPE) {
+      if (own(group) || (group[0] === 'noFill' && childElement(props, NS.a, 'blipFill'))) continue;
+      for (const source of inherited) {
+        const from = childElement(source, NS.p, 'spPr');
+        const found = from && childElements(from, NS.a).find((child) => group.includes(child.localName ?? ''));
+        if (found) {
+          props.appendChild(doc.importNode(found, true));
+          break;
+        }
+      }
+    }
+    if (!own(['custGeom', 'prstGeom'])) {
+      const outline = drawing('prstGeom');
+      outline.setAttribute('prst', 'rect');
+      outline.appendChild(drawing('avLst'));
+      props.appendChild(outline);
+    }
+    // A shape's properties keep an order: its place, its outline, its fill, its line, its effects, and then the rest.
+    const rank = (child: Element) => {
+      const at = [...SHAPE.slice(0, 2), [...(SHAPE[2] as string[]), 'blipFill'], ...SHAPE.slice(3)].findIndex((group) => group.includes(child.localName ?? ''));
+      return at < 0 ? SHAPE.length : at;
+    };
+    const ordered = childElements(props).slice().sort((x, y) => rank(x) - rank(y));
+    for (const child of ordered) props.appendChild(child);
+
+    // The box of the text: every attribute from the nearest that states it, and how the text is fitted.
+    let box = childElement(body, NS.a, 'bodyPr');
+    if (!box) {
+      box = drawing('bodyPr');
+      body.insertBefore(box, body.firstChild);
+    }
+    const FIT = ['noAutofit', 'normAutofit', 'spAutoFit'];
+    for (const source of inherited) {
+      const from = path(source, [NS.p, 'txBody'], [NS.a, 'bodyPr']);
+      if (!from) continue;
+      for (let index = 0; index < from.attributes.length; index++) {
+        const attribute = from.attributes.item(index);
+        if (attribute && !attribute.name.startsWith('xmlns') && !box.hasAttribute(attribute.name)) box.setAttribute(attribute.name, attribute.value);
+      }
+      const fit = childElements(from, NS.a).find((child) => FIT.includes(child.localName ?? ''));
+      if (fit && !childElements(box, NS.a).some((child) => FIT.includes(child.localName ?? ''))) box.insertBefore(doc.importNode(fit, true), childElement(box, NS.a, 'scene3d') ?? childElement(box, NS.a, 'sp3d') ?? childElement(box, NS.a, 'flatTx') ?? childElement(box, NS.a, 'extLst') ?? null);
+    }
+
+    // The list style: for each level, what the shape, its layout, its master and the master's text styles say, the nearest first.
+    const lists: Element[] = [];
+    for (const source of [shape, ...inherited]) {
+      const list = path(source, [NS.p, 'txBody'], [NS.a, 'lstStyle']);
+      if (list) lists.push(list);
+    }
+    const type = placeholder.getAttribute('type') ?? 'body';
+    const textStyles = slide.master ? childElement(slide.master.root, NS.p, 'txStyles') : undefined;
+    const styleName = type === 'title' || type === 'ctrTitle' ? 'titleStyle' : type === 'body' || type === 'subTitle' || type === 'obj' ? 'bodyStyle' : 'otherStyle';
+    const ofKind = textStyles && childElement(textStyles, NS.p, styleName);
+    if (ofKind) lists.push(ofKind);
+    const merged = drawing('lstStyle');
+    for (let level = 1; level <= 9; level++) {
+      const sources = lists.map((list) => childElement(list, NS.a, `lvl${level}pPr`)).filter((entry): entry is Element => !!entry);
+      if (sources.length > 0) merged.appendChild(mergedProperties(doc, drawing, `lvl${level}pPr`, sources, PARAGRAPH_PARTS));
+    }
+    const old = childElement(body, NS.a, 'lstStyle');
+    if (old) body.replaceChild(merged, old);
+    else body.insertBefore(merged, box.nextSibling);
+    return copy;
   }
 
   /** The shapes of a slide after its row is laid out, on a copy that nothing else reads. */
@@ -427,6 +541,44 @@ function textArea(outline: Element | undefined, width: number, height: number): 
 }
 
 /** The placeholder on a layout or master that a slide's placeholder stands for. */
+/**
+ * The parts of a paragraph's properties and of a run's, in the order a file keeps them. Of the
+ * parts on one line a paragraph or a run has one: a bullet is a character, a number or none.
+ */
+const PARAGRAPH_PARTS: string[][] = [['lnSpc'], ['spcBef'], ['spcAft'], ['buClrTx', 'buClr'], ['buSzTx', 'buSzPct', 'buSzPts'], ['buFontTx', 'buFont'], ['buNone', 'buAutoNum', 'buChar', 'buBlip'], ['tabLst'], ['defRPr']];
+const RUN_PARTS: string[][] = [['ln'], ['noFill', 'solidFill', 'gradFill', 'blipFill', 'pattFill', 'grpFill'], ['effectLst', 'effectDag'], ['highlight'], ['uLnTx', 'uLn'], ['uFillTx', 'uFill'], ['latin'], ['ea'], ['cs'], ['sym'], ['rtl']];
+/** What points at a file of the part it was read in (a picture as a bullet or as a fill): it cannot be carried to another part. */
+const TIED = ['buBlip', 'blipFill'];
+
+/**
+ * One element of text properties out of several that state them, the nearest first: each
+ * attribute and each part from the nearest that has it. The default properties of a run are
+ * merged the same way, part by part.
+ */
+function mergedProperties(doc: Document, drawing: (name: string) => Element, name: string, sources: Element[], parts: string[][]): Element {
+  const made = drawing(name);
+  for (const source of sources.slice().reverse()) {
+    for (let index = 0; index < source.attributes.length; index++) {
+      const attribute = source.attributes.item(index);
+      if (attribute && !attribute.name.startsWith('xmlns')) made.setAttribute(attribute.name, attribute.value);
+    }
+  }
+  for (const part of parts) {
+    if (part[0] === 'defRPr') {
+      const runs = sources.map((source) => childElement(source, NS.a, 'defRPr')).filter((entry): entry is Element => !!entry);
+      if (runs.length > 0) made.appendChild(mergedProperties(doc, drawing, 'defRPr', runs, RUN_PARTS));
+      continue;
+    }
+    for (const source of sources) {
+      const found = childElements(source, NS.a).find((child) => part.includes(child.localName ?? ''));
+      if (!found) continue;
+      if (!TIED.includes(found.localName ?? '')) made.appendChild(doc.importNode(found, true));
+      break;
+    }
+  }
+  return made;
+}
+
 function findPlaceholder(root: Element, wanted: Element, onMaster: boolean): Element | undefined {
   const type = wanted.getAttribute('type') ?? (wanted.getAttribute('idx') ? 'body' : 'obj');
   const index = wanted.getAttribute('idx');

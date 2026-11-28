@@ -350,6 +350,18 @@ template's colour (`tone`), and any text of any slide sets a phrase in bold (`**
 free slides for content that no pattern shows, and the chat tools take a colour as an argument. See [docs/free-slides.md](docs/free-slides.md) and
 [docs/colors.md](docs/colors.md).
 
+From 0.10.0 a file nobody prepared can be used for its style alone. `styleManifest(pptx)` makes a manifest by
+rules, with no model, and a deck takes the file's cover, its closing slide and free slides in its typefaces and
+colours between them:
+
+```ts
+const style = styleManifest(pptx);
+const template = loadTemplate(pptx, style.manifest);
+const { pptx: deck } = await generateDeck(template, { prompt, patterns: style.patterns }, { llm, layout: 'adaptive' });
+```
+
+It works on ordinary decks, whose text is all in placeholders. See [docs/style-only.md](docs/style-only.md).
+
 ### Another layout for a slide
 
 `slideAlternatives(manifest, deck, slideNumber)` takes a slide that already has its content and lists the
